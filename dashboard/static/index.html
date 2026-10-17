@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Pre-Sign Guard · demo</title>
+  <meta name="description" content="Panel de la demo del Pre-Sign Guard: escenario B lado a lado, flujo en vivo, veredicto, recibo firmado, ficha del pedido y benchmark.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l7.5 3v6.2c0 4.7-3.2 8.1-7.5 9.8-4.3-1.7-7.5-5.1-7.5-9.8V5.5z' fill='%231f5fae'/%3E%3Cpath d='M8.2 12.3l2.6 2.6 5-5.2' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.8L2.8 19.5h18.4z"/><path d="M12 10v4.6"/><path d="M12 17.2v.1"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19.5V5"/><path d="M6 11l6-6 6 6"/></symbol>
+      <symbol id="i-block" viewBox="0 0 24 24"><path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2z"/><path d="M7.5 12h9"/></symbol>
+      <symbol id="i-dash" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+      <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5" fill="currentColor"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/><path d="M8.8 12.2l2.3 2.3 4.2-4.4"/></symbol>
+      <symbol id="i-shield-off" viewBox="0 0 24 24"><path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/><path d="M8.5 12h7"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l1-4.2L15.8 5a2 2 0 012.8 0l.4.4a2 2 0 010 2.8L8.2 19z"/><path d="M14 6.8l3.2 3.2"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5"/><path d="M16.5 6.5l2 2"/><path d="M14.3 8.7l2 2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></symbol>
+      <symbol id="i-cart" viewBox="0 0 24 24"><path d="M3 4h2.5l2.2 10.5h10.6L20.5 7H6.4"/><circle cx="9" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/></symbol>
+      <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5"/><path d="M9 12.5h7M9 16.5h7"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4.5 12h14"/><path d="M13 6.5l5.5 5.5-5.5 5.5"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12h11"/><path d="M11 6l6 6-6 6"/><path d="M20 5v14"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 20h14"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M5.3 18.7l1.5-1.5M17.2 6.8l1.5-1.5"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 019.5 4.5a8 8 0 1010 10z"/></symbol>
+      <symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 000-17z" fill="currentColor"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M4.5 6.5h.1M4.5 12h.1M4.5 17.5h.1"/></symbol>
+    </defs>
+  </svg>
+
+  <a class="saltar" href="#principal">Saltar al contenido</a>
+
+  <header class="barra">
+    <div class="marca">
+      <svg class="marca-icono" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shield"/></svg>
+      <span class="marca-nombre">Pre-Sign Guard</span>
+      <span class="marca-sub">demo</span>
+      <button type="button" id="tema" class="boton boton-icono" title="Tema"></button>
+    </div>
+
+    <div class="barra-controles">
+      <div class="grupo-fuente" role="group" aria-label="Fuente de eventos">
+                <button type="button" id="fuente-vivo" class="segmento" aria-pressed="true">En vivo (proxy)</button>
+        <button type="button" id="fuente-replay" class="segmento" aria-pressed="false">Replay (archivo)</button>
+      </div>
+
+      <div id="replay-ctl" class="replay-ctl" hidden>
+        <label class="sr-only" for="replay-archivo">Archivo de replay</label>
+        <select id="replay-archivo"></select>
+        <button type="button" id="replay-play" class="boton"></button>
+        <span id="replay-info" class="nota"></span>
+      </div>
+
+      <p id="proxy-estado" class="estado-proxy t-neutro" role="status" aria-live="polite">
+        <span class="punto" aria-hidden="true"></span><span>consultando proxy…</span>
+      </p>
+
+      <button type="button" id="guard-switch" class="interruptor" role="switch" aria-checked="false" disabled>
+        <span class="switch-pista" aria-hidden="true"><span class="switch-perilla"></span></span>
+        <span class="switch-texto">Guard: sin proxy</span>
+      </button>
+
+    </div>
+  </header>
+
+  <p id="aviso-stub" class="aviso-stub" hidden>
+    El proxy está usando el <strong>evaluador stub</strong>: los veredictos son de prueba, no del Guard real.
+  </p>
+
+  <nav class="pestanas-nav" aria-label="Vistas">
+    <div id="pestanas" class="pestanas" role="tablist" aria-label="Vistas de la demo">
+      <button type="button" role="tab" id="tab-momento" data-vista="momento" aria-controls="panel-momento" aria-selected="true"><span class="atajo" aria-hidden="true">1</span>Momento clave</button>
+      <button type="button" role="tab" id="tab-flujo" data-vista="flujo" aria-controls="panel-flujo" aria-selected="false" tabindex="-1"><span class="atajo" aria-hidden="true">2</span>Flujo</button>
+      <button type="button" role="tab" id="tab-veredicto" data-vista="veredicto" aria-controls="panel-veredicto" aria-selected="false" tabindex="-1"><span class="atajo" aria-hidden="true">3</span>Veredicto</button>
+      <button type="button" role="tab" id="tab-recibo" data-vista="recibo" aria-controls="panel-recibo" aria-selected="false" tabindex="-1"><span class="atajo" aria-hidden="true">4</span>Recibo</button>
+      <button type="button" role="tab" id="tab-ficha" data-vista="ficha" aria-controls="panel-ficha" aria-selected="false" tabindex="-1"><span class="atajo" aria-hidden="true">5</span>Ficha</button>
+      <button type="button" role="tab" id="tab-benchmark" data-vista="benchmark" aria-controls="panel-benchmark" aria-selected="false" tabindex="-1"><span class="atajo" aria-hidden="true">6</span>Benchmark</button>
+    </div>
+  </nav>
+
+  <main id="principal">
+    <section id="panel-momento" class="panel" role="tabpanel" aria-labelledby="tab-momento"></section>
+    <section id="panel-flujo" class="panel" role="tabpanel" aria-labelledby="tab-flujo" hidden></section>
+    <section id="panel-veredicto" class="panel" role="tabpanel" aria-labelledby="tab-veredicto" hidden></section>
+    <section id="panel-recibo" class="panel" role="tabpanel" aria-labelledby="tab-recibo" hidden></section>
+    <section id="panel-ficha" class="panel" role="tabpanel" aria-labelledby="tab-ficha" hidden></section>
+    <section id="panel-benchmark" class="panel" role="tabpanel" aria-labelledby="tab-benchmark" hidden></section>
+    <noscript><p class="vacio">Este panel necesita JavaScript.</p></noscript>
+  </main>
+
+  <div id="anuncios" class="sr-only" aria-live="polite"></div>
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+</body>
+</html>

@@ -1,0 +1,298 @@
+// Eventos del proxy (contrato `Evento`) → compras agrupadas por contexto_id.
+// Sin DOM: se testea con node --test.
+
+const TS_INVALIDO = Number.POSITIVE_INFINITY;
+
+function tiempo(evento) {
+  const t = Date.parse(evento?.ts);
+  return Number.isNaN(t) ? TS_INVALIDO : t;
+}
+
+/** Une eventos sin duplicar por `id` y los ordena por `ts` (estable). */
+export function fusionarEventos(existentes, nuevos) {
+  const vistos = new Set();
+  const todos = [];
+  for (const e of [...(existentes || []), ...(nuevos || [])]) {
+    if (!e || typeof e !== "object") continue;
+    const clave = e.id ?? `${e.ts}|${e.tipo}|${e.contexto_id}`;
+    if (vistos.has(clave)) continue;
+    vistos.add(clave);
+    todos.push(e);
+  }
+  return todos
+    .map((e, i) => [e, i])
+    .sort((a, b) => tiempo(a[0]) - tiempo(b[0]) || a[1] - b[1])
+    .map(([e]) => e);
+}
+
+// Una búsqueda sin contexto se asocia a la compra que empieza después, si
+// empieza dentro de esta ventana.
+export const VENTANA_BUSQUEDA_MS = 60_000;
+
+/**
+ * Agrupa por `contexto_id` (una compra). Devuelve las compras de la más
+ * reciente a la más vieja, y aparte los eventos sin contexto (interruptor,
+ * errores del proxy).
+ *
+ * El proxy emite `busqueda_enviada` antes de conocer el context_id (lo asigna
+ * el comercio en la respuesta), así que llega con `contexto_id: null`. Se
+ * asocia a la primera compra del mismo escenario que empieza después, dentro
+ * de VENTANA_BUSQUEDA_MS. La vista lo marca como asociado por tiempo.
+ */
+export function agruparCompras(eventos) {
+  const porContexto = new Map();
+  const sueltos = [];
+  for (const e of eventos || []) {
+    if (!e.contexto_id) {
+      sueltos.push(e);
+      continue;
+    }
+    if (!porContexto.has(e.contexto_id)) porContexto.set(e.contexto_id, []);
+    porContexto.get(e.contexto_id).push(e);
+  }
+
+  const inicios = [...porContexto.entries()]
+    .map(([id, evs]) => ({ id, inicio: tiempo(evs[0]), escenario: evs.find((x) => x.escenario)?.escenario ?? null }))
+    .sort((a, b) => a.inicio - b.inicio);
+  const conBusqueda = new Set();
+  const sistema = [];
+  for (const e of sueltos) {
+    if (e.tipo !== "busqueda_enviada") {
+      sistema.push(e);
+      continue;
+    }
+    const t = tiempo(e);
+    const destino = inicios.find((c) => !conBusqueda.has(c.id) && c.inicio >= t &&
+      c.inicio - t <= VENTANA_BUSQUEDA_MS && (!e.escenario || !c.escenario || c.escenario === e.escenario));
+    if (!destino) {
+      sistema.push(e);
+      continue;
+    }
+    conBusqueda.add(destino.id);
+    porContexto.get(destino.id).unshift(e);
+  }
+
+  const compras = [...porContexto.entries()].map(([id, evs]) => armarCompra(id, evs));
+  compras.sort((a, b) => b.ultimoTs - a.ultimoTs);
+  return { compras, sistema };
+}
+
+function ultimoDeTipo(eventos, tipo) {
+  for (let i = eventos.length - 1; i >= 0; i--) if (eventos[i].tipo === tipo) return eventos[i];
+  return null;
+}
+
+export function armarCompra(contextoId, eventos) {
+  const datos = (tipo) => ultimoDeTipo(eventos, tipo)?.datos ?? null;
+  const checkoutEvento = ultimoDeTipo(eventos, "checkout_recibido");
+  const veredictoEvento = ultimoDeTipo(eventos, "veredicto");
+  // El estado del interruptor que importa es el del momento de la decisión.
+  const decisivo = veredictoEvento || checkoutEvento || eventos[eventos.length - 1];
+  const escenario = [...eventos].reverse().find((e) => e.escenario)?.escenario ?? null;
+  const ofertas = datos("ofertas_recibidas");
+  return {
+    contextoId,
+    eventos,
+    escenario,
+    guardActivo: typeof decisivo?.guard_activo === "boolean" ? decisivo.guard_activo : null,
+    inicioTs: tiempo(eventos[0]),
+    ultimoTs: tiempo(eventos[eventos.length - 1]),
+    busqueda: datos("busqueda_enviada")?.catalog_search ?? null,
+    ofertas: ofertas
+      ? { carts: ofertas.carts || [], offer_details: ofertas.offer_details || [] }
+      : null,
+    checkoutPedido: datos("checkout_pedido")?.cart_id ?? null,
+    checkout: checkoutEvento?.datos ?? null,
+    veredicto: datos("veredicto")?.veredicto ?? null,
+    bloqueo: datos("bloqueado"),
+    checkoutTs: checkoutEvento ? tiempo(checkoutEvento) : null,
+    reenviados: eventos.filter((e) => e.tipo === "reenviado"),
+    errores: eventos.filter((e) => e.tipo === "error").map((e) => e.datos?.mensaje ?? ""),
+  };
+}
+
+/** cart_id elegido por el agente: el del checkout (paso 6 del flujo AP2). */
+export function cartIdElegido(compra) {
+  return compra?.checkout?.cart_id ?? compra?.checkoutPedido ??
+    compra?.veredicto?.cart_id_elegido ?? compra?.bloqueo?.cart_id ?? null;
+}
+
+export function cartDe(compra, cartId) {
+  if (!compra?.ofertas || !cartId) return { cart: null, detalle: null };
+  return {
+    cart: compra.ofertas.carts.find((c) => c.cart_id === cartId) ?? null,
+    detalle: compra.ofertas.offer_details.find((d) => d.cart_id === cartId) ?? null,
+  };
+}
+
+/** Mandatos que vio el proxy al reenviar el pago (si los registró). */
+export function mandatosDe(compra) {
+  const out = [];
+  for (const r of compra?.reenviados || []) {
+    const m = r.datos?.mandatos;
+    const metodo = r.datos?.metodo ?? null;
+    if (!m) continue;
+    if (typeof m === "string") out.push({ nombre: "mandato", token: m, metodo });
+    else if (Array.isArray(m)) m.forEach((t, i) => out.push({ nombre: `mandato ${i + 1}`, token: t, metodo }));
+    else if (typeof m === "object") {
+      for (const [nombre, token] of Object.entries(m)) out.push({ nombre, token, metodo });
+    }
+  }
+  return out;
+}
+
+/** Nombre legible de la clave A2A de un mandato. */
+export function nombreMandato(clave) {
+  const c = String(clave).toLowerCase();
+  if (c.includes("checkout")) return "CheckoutMandate";
+  if (c.includes("payment")) return "PaymentMandate";
+  return String(clave);
+}
+
+/**
+ * En qué terminó la compra, desde el punto de vista de la firma:
+ * - bloqueado: el proxy cortó antes de que el usuario firme.
+ * - firmado: el pago se reenvió con mandatos firmados por el usuario.
+ * - para_firmar: el checkout firmado llegó intacto al agente.
+ */
+export function estadoCompra(compra) {
+  if (compra.bloqueo) return { clave: "bloqueado", texto: "Bloqueado antes de la firma" };
+  if (mandatosDe(compra).length > 0) return { clave: "firmado", texto: "El usuario firmó los mandatos" };
+  const metodo = (r) => String(r.datos?.metodo ?? "");
+  if (compra.reenviados.some((r) => /payment|pago/i.test(metodo(r)))) {
+    return { clave: "firmado", texto: "Pago reenviado al comercio" };
+  }
+  if (compra.veredicto?.status === "escalar") return { clave: "escalar", texto: "Escalado: decide el humano" };
+  const checkoutReenviado = compra.reenviados.some((r) =>
+    /checkout/i.test(metodo(r)) || (compra.checkoutTs !== null && tiempo(r) >= compra.checkoutTs));
+  if (compra.checkout && checkoutReenviado) {
+    return { clave: "para_firmar", texto: "Checkout presentado para firmar" };
+  }
+  if (compra.errores.length > 0) return { clave: "error", texto: "Error en el proxy" };
+  return { clave: "en_curso", texto: "En curso" };
+}
+
+/**
+ * Para el momento clave: la compra más reciente del escenario con el Guard
+ * apagado y la más reciente con el Guard prendido. Se prefieren las que ya
+ * tienen checkout firmado (las completas).
+ */
+export function parLadoALado(compras, escenario) {
+  const delEscenario = (compras || []).filter((c) => c.escenario === escenario);
+  const elegir = (activo) => {
+    const candidatas = delEscenario.filter((c) => c.guardActivo === activo);
+    return candidatas.find((c) => c.checkout) ?? candidatas[0] ?? null;
+  };
+  return { sin: elegir(false), con: elegir(true) };
+}
+
+/** Tope del pedido (requisito precio/máximo de la ficha). */
+export function topeDeFicha(ficha) {
+  const r = (ficha?.requisitos || []).find((q) => q.campo === "precio" && q.operador === "maximo");
+  return typeof r?.valor === "number" ? r.valor : null;
+}
+
+/** Monto del checkout firmado (centavos del JWT → unidades), o del evento. */
+export function montoCheckout(checkout) {
+  const totales = checkout?.jwt_payload?.totals;
+  if (Array.isArray(totales)) {
+    const total = totales.find((t) => t.type === "total");
+    if (typeof total?.amount === "number") return total.amount / 100;
+  }
+  if (typeof checkout?.amount === "number") return checkout.amount;
+  return null;
+}
+
+export function monedaCheckout(checkout) {
+  return checkout?.jwt_payload?.currency ?? checkout?.currency ?? null;
+}
+
+/**
+ * Parte el texto libre del vendedor en tramos: los que figuran en el
+ * catálogo público del comercio y los que no. No detecta inyecciones:
+ * solo compara contra lo que el comercio publica.
+ */
+export function partirTextoLibre(texto, textosPublicos) {
+  if (typeof texto !== "string" || texto.length === 0) return [];
+  const cubierto = new Array(texto.length).fill(false);
+  const frases = new Set();
+  for (const t of textosPublicos || []) {
+    if (typeof t !== "string" || !t.trim()) continue;
+    frases.add(t.trim());
+    for (const f of t.split(/(?<=[.!?])\s+/)) if (f.trim().length > 3) frases.add(f.trim());
+  }
+  for (const f of frases) {
+    let desde = 0;
+    for (;;) {
+      const i = texto.indexOf(f, desde);
+      if (i < 0) break;
+      cubierto.fill(true, i, i + f.length);
+      desde = i + 1;
+    }
+  }
+  const tramos = [];
+  let i = 0;
+  while (i < texto.length) {
+    const publico = cubierto[i];
+    let j = i;
+    while (j < texto.length && cubierto[j] === publico) j++;
+    tramos.push({ texto: texto.slice(i, j), publico });
+    i = j;
+  }
+  // Puntuación o espacios sueltos no cuentan como "texto que no está".
+  const normalizados = tramos.map((t) =>
+    !t.publico && !/[\p{L}\p{N}]/u.test(t.texto) ? { ...t, publico: true } : t);
+  const fusion = [];
+  for (const t of normalizados) {
+    const prev = fusion[fusion.length - 1];
+    if (prev && prev.publico === t.publico) prev.texto += t.texto;
+    else fusion.push({ ...t });
+  }
+  return fusion;
+}
+
+const TITULOS = {
+  busqueda_enviada: "Búsqueda enviada al comercio",
+  ofertas_recibidas: "Ofertas recibidas",
+  checkout_pedido: "El agente pide el checkout",
+  checkout_recibido: "Checkout firmado por el comercio",
+  veredicto: "Veredicto del Guard",
+  reenviado: "El proxy reenvía",
+  bloqueado: "Bloqueado antes de la firma",
+  guard_cambiado: "Interruptor del Guard",
+  error: "Error",
+};
+
+/** Título y resumen de una línea para la línea de tiempo. */
+export function describirEvento(e) {
+  const d = e?.datos || {};
+  const titulo = TITULOS[e?.tipo] ?? String(e?.tipo ?? "evento");
+  let resumen = "";
+  switch (e?.tipo) {
+    case "busqueda_enviada": resumen = d.catalog_search ?? ""; break;
+    case "ofertas_recibidas": {
+      const n = (d.carts || []).length;
+      resumen = `${n} ${n === 1 ? "carrito" : "carritos"} (ap2.cart) y ${(d.offer_details || []).length} fichas declaradas`;
+      break;
+    }
+    case "checkout_pedido": resumen = `cart_id ${d.cart_id ?? "—"}`; break;
+    case "checkout_recibido": {
+      const v = d.ap2_violaciones;
+      const ap2 = Array.isArray(v) ? (v.length === 0 ? "AP2: OK" : `AP2 frena: ${v.join("; ")}`) : "AP2: sin dato";
+      resumen = `${d.cart_id ?? "—"} · ${d.jwt_header?.alg ?? "?"} kid ${d.jwt_header?.kid ?? "?"} · ${ap2}`;
+      break;
+    }
+    case "veredicto": resumen = d.veredicto ? `${d.veredicto.status} · ${d.veredicto.motivo ?? ""}` : ""; break;
+    case "reenviado": resumen = `${d.metodo ?? "respuesta"}${d.mandatos ? " · con mandatos firmados" : ""}`; break;
+    case "bloqueado": resumen = d.motivo ?? ""; break;
+    case "guard_cambiado": resumen = d.guard_activo ? "Guard activado" : "Guard apagado"; break;
+    case "error": resumen = d.mensaje ?? ""; break;
+    default: resumen = "";
+  }
+  return { titulo, resumen };
+}
+
+/** Eventos como JSONL (una línea por evento), para guardar un replay. */
+export function aJsonl(eventos) {
+  return (eventos || []).map((e) => JSON.stringify(e)).join("\n") + "\n";
+}
