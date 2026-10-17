@@ -21,10 +21,11 @@ def _puerto_libre() -> int:
 
 
 @pytest.fixture
-def servidor(proxy_app) -> Iterator[str]:
+def servidor(armar_proxy) -> Iterator[str]:
+    app = armar_proxy(ping_segundos=0.2)
     puerto = _puerto_libre()
     server = uvicorn.Server(
-        uvicorn.Config(proxy_app, host="127.0.0.1", port=puerto, log_level="warning")
+        uvicorn.Config(app, host="127.0.0.1", port=puerto, log_level="warning")
     )
     hilo = threading.Thread(target=server.run, daemon=True)
     hilo.start()
