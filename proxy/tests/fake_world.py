@@ -107,9 +107,19 @@ class FakeMerchant:
         self.recibidos: list[tuple[bytes, dict[str, str]]] = []
         self.ultima_respuesta: bytes | None = None
         self.ultimo_checkout: dict[str, Any] | None = None
+        self.checkouts: list[dict[str, Any]] = []
         self.tareas: dict[str, dict[str, Any]] = {}
         self._n = 0
         self._escenario_por_contexto: dict[str, str] = {}
+        # Ganchos para que un test haga portar mal al comercio:
+        # manipular(respuesta_jsonrpc, pedido) -> dict | bytes  (message/send)
+        # manipular_sse(results, pedido) -> list[dict] | bytes   (message/stream)
+        self.manipular: Any = None
+        self.manipular_sse: Any = None
+        self.headers_extra: dict[str, str] = {}
+        self.content_type_json = "application/json"
+        self.content_type_sse = "text/event-stream"
+        self.card_headers: dict[str, str] = {}
         self.app = Starlette(
             routes=[
                 Route(
@@ -117,6 +127,12 @@ class FakeMerchant:
                     self._card,
                     methods=["GET"],
                 ),
+                Route(
+                    "/a2a/merchant_agent/.well-known/agent.json",
+                    self._card,
+                    methods=["GET"],
+                ),
+                Route("/a2a/merchant_agent/otra-cosa", self._otra, methods=["GET"]),
                 Route("/a2a/merchant_agent", self._rpc, methods=["POST"]),
             ]
         )
@@ -144,23 +160,83 @@ class FakeMerchant:
             return False
         return True
 
+    def armar_checkout(
+        self, cart: dict[str, Any], *, monto: float | None = None, cart_id: str | None = None
+    ) -> dict[str, Any]:
+        """El data part ap2.checkout, igual que merchant_agent/tools.py."""
+        cart_id = cart_id or cart["cart_id"]
+        monto = cart["amount"] if monto is None else monto
+        amount_cents = int(round(monto * 100))
+        payload = {
+            "id": cart_id,
+            "merchant": {"id": "merchant_1", "name": "Generic Merchant"},
+            "line_items": [
+                {
+                    "id": f"li_{uuid.uuid4().hex[:8]}",
+                    "item": {
+                        "id": cart_id,
+                        "title": cart["item_label"],
+                        "price": amount_cents,
+                    },
+                    "quantity": 1,
+                }
+            ],
+            "currency": cart["currency"],
+            "totals": [
+                {"type": "subtotal", "amount": amount_cents},
+                {"type": "total", "amount": amount_cents},
+            ],
+            "iat": 1700000000 + len(self.checkouts),
+            "exp": 1700003600 + len(self.checkouts),
+        }
+        jwt = self.firmar_jwt(
+            {"alg": "ES256", "typ": "JWT", "kid": "merchant-key-1"}, payload
+        )
+        return {
+            "cart_id": cart_id,
+            "checkout_jwt": jwt,
+            "checkout_hash": _b64url(hashlib.sha256(jwt.encode()).digest()),
+            "item_label": cart["item_label"],
+            "amount": monto,
+            "amount_cents": amount_cents,
+            "currency": cart["currency"],
+        }
+
     # -- rutas ---------------------------------------------------------------
 
     async def _card(self, request: Request) -> Response:
-        return JSONResponse(card_del_comercio())
+        return JSONResponse(card_del_comercio(), headers=self.card_headers)
+
+    async def _otra(self, request: Request) -> Response:
+        return Response(b"<html>no es una card</html>", media_type="text/html")
 
     async def _rpc(self, request: Request) -> Response:
         raw = await request.body()
         self.recibidos.append((raw, dict(request.headers)))
         body = json.loads(raw)
+        if body.get("method") == "tasks/resubscribe":
+            results = [self.tareas[body["params"]["id"]]]
+            if self.manipular_sse is not None:
+                results = self.manipular_sse(results, body)
+            contenido = results if isinstance(results, bytes) else sse_de(results)
+            self.ultima_respuesta = contenido
+            return Response(
+                contenido, headers={"content-type": self.content_type_sse, **self.headers_extra}
+            )
         if body.get("method") == "tasks/get":
             task_json = self.tareas[body["params"]["id"]]
-            contenido = json.dumps(
-                {"id": body.get("id"), "jsonrpc": "2.0", "result": task_json},
-                ensure_ascii=False,
-            ).encode("utf-8")
+            respuesta = {"id": body.get("id"), "jsonrpc": "2.0", "result": task_json}
+            if self.manipular is not None:
+                respuesta = self.manipular(respuesta, body)
+            contenido = (
+                respuesta
+                if isinstance(respuesta, bytes)
+                else json.dumps(respuesta, ensure_ascii=False).encode("utf-8")
+            )
             self.ultima_respuesta = contenido
-            return Response(contenido, media_type="application/json")
+            return Response(
+                contenido, headers={"content-type": self.content_type_json, **self.headers_extra}
+            )
         message = body["params"]["message"]
         data_parts = [
             p["data"] for p in message.get("parts", []) if p.get("kind") == "data"
@@ -170,17 +246,17 @@ class FakeMerchant:
         task_id = f"task-{self._n}"
         artifacts, state, status_text = self._responder(context_id, data_parts)
         history = [Message.model_validate(message)]
-        headers = {}
+        headers = dict(self.headers_extra)
         if request.headers.get("x-a2a-extensions"):
             headers["X-A2A-Extensions"] = request.headers["x-a2a-extensions"]
 
         if body.get("method") == "message/stream":
             contenido = self._sse(
-                task_id, context_id, artifacts, state, status_text, history
+                task_id, context_id, artifacts, state, status_text, history, body
             )
             self.ultima_respuesta = contenido
             return Response(
-                contenido, media_type="text/event-stream", headers=headers
+                contenido, headers={"content-type": self.content_type_sse, **headers}
             )
 
         task = Task(
@@ -193,9 +269,17 @@ class FakeMerchant:
         task_json = task.model_dump(mode="json", by_alias=True, exclude_none=True)
         self.tareas[task_id] = task_json
         respuesta = {"id": body.get("id"), "jsonrpc": "2.0", "result": task_json}
-        contenido = json.dumps(respuesta, ensure_ascii=False).encode("utf-8")
+        if self.manipular is not None:
+            respuesta = self.manipular(respuesta, body)
+        contenido = (
+            respuesta
+            if isinstance(respuesta, bytes)
+            else json.dumps(respuesta, ensure_ascii=False).encode("utf-8")
+        )
         self.ultima_respuesta = contenido
-        return Response(contenido, media_type="application/json", headers=headers)
+        return Response(
+            contenido, headers={"content-type": self.content_type_json, **headers}
+        )
 
     # -- lógica del comercio falso -------------------------------------------
 
@@ -235,38 +319,9 @@ class FakeMerchant:
             cart = carts.get(cart_id)
             if cart is None:
                 return [], TaskState.failed, f"Cart not found for cart_id: {cart_id}"
-            amount_cents = int(round(cart["amount"] * 100))
-            payload = {
-                "id": cart_id,
-                "merchant": {"id": "merchant_1", "name": "Generic Merchant"},
-                "line_items": [
-                    {
-                        "id": "li_test",
-                        "item": {
-                            "id": cart_id,
-                            "title": cart["item_label"],
-                            "price": amount_cents,
-                        },
-                        "quantity": 1,
-                    }
-                ],
-                "currency": cart["currency"],
-                "iat": 1700000000,
-                "exp": 1700003600,
-            }
-            jwt = self.firmar_jwt(
-                {"alg": "ES256", "typ": "JWT", "kid": "merchant-key-1"}, payload
-            )
-            checkout = {
-                "cart_id": cart_id,
-                "checkout_jwt": jwt,
-                "checkout_hash": _b64url(hashlib.sha256(jwt.encode()).digest()),
-                "item_label": cart["item_label"],
-                "amount": cart["amount"],
-                "amount_cents": amount_cents,
-                "currency": cart["currency"],
-            }
+            checkout = self.armar_checkout(cart)
             self.ultimo_checkout = checkout
+            self.checkouts.append(checkout)
             artifact = Artifact(
                 artifact_id=f"art-{uuid.uuid4().hex}",
                 parts=[
@@ -308,6 +363,7 @@ class FakeMerchant:
         state: TaskState,
         status_text: str | None,
         history: list[Message],
+        pedido: dict[str, Any] | None = None,
     ) -> bytes:
         eventos: list[dict[str, Any]] = [
             Task(
@@ -331,13 +387,23 @@ class FakeMerchant:
                 final=True,
             ).model_dump(mode="json", by_alias=True, exclude_none=True)
         )
-        bloques = [
-            "data: "
-            + json.dumps({"id": 1, "jsonrpc": "2.0", "result": e}, ensure_ascii=False)
-            + "\r\n\r\n"
-            for e in eventos
-        ]
-        return "".join(bloques).encode("utf-8")
+        if self.manipular_sse is not None:
+            manipulado = self.manipular_sse(eventos, pedido)
+            if isinstance(manipulado, bytes):
+                return manipulado
+            eventos = manipulado
+        return sse_de(eventos)
+
+
+def sse_de(results: list[Any]) -> bytes:
+    """Cuerpo SSE con un evento JSON-RPC por cada `result` (como el SDK)."""
+    bloques = [
+        "data: "
+        + json.dumps({"id": 1, "jsonrpc": "2.0", "result": e}, ensure_ascii=False)
+        + "\r\n\r\n"
+        for e in results
+    ]
+    return "".join(bloques).encode("utf-8")
 
 
 def _artefacto(data: dict[str, Any]) -> Artifact:

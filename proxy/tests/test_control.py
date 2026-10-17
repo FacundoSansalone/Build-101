@@ -54,13 +54,15 @@ async def test_post_state_cambia_y_emite_evento(cliente: httpx.AsyncClient):
     "body", [{}, {"guard_activo": "si"}, {"otra": True}, [], "true"]
 )
 async def test_post_state_invalido_da_400(cliente: httpx.AsyncClient, body):
-    resp = await cliente.post("/guard/state", content=json.dumps(body))
+    resp = await cliente.post("/guard/state", content=json.dumps(body),
+                              headers={"content-type": "application/json"})
     assert resp.status_code == 400
     assert (await cliente.get("/guard/state")).json()["guard_activo"] is True
 
 
 async def test_post_state_json_roto_da_400(cliente: httpx.AsyncClient):
-    resp = await cliente.post("/guard/state", content=b"{no es json")
+    resp = await cliente.post("/guard/state", content=b"{no es json",
+                              headers={"content-type": "application/json"})
     assert resp.status_code == 400
 
 

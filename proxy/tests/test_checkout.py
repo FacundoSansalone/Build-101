@@ -195,9 +195,10 @@ async def test_sse_guard_apagado_passthrough(
     assert tipos[-3:] == ["checkout_pedido", "checkout_recibido", "reenviado"]
 
 
-async def test_escalar_deja_el_checkout_y_agrega_veredicto(
+async def test_escalar_retiene_el_checkout_y_agrega_veredicto(
     armar_proxy, merchant: FakeMerchant
 ):
+    """Decisión del equipo (2026-10-17): escalar retiene hasta que decide un humano."""
     from contracts import Veredicto as V
 
     def escalar(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
@@ -214,8 +215,8 @@ async def test_escalar_deja_el_checkout_y_agrega_veredicto(
         resp = await _checkout(c, contexto, "cart_1")
 
     task = resp.json()["result"]
-    assert task["status"]["state"] == "completed"
-    assert _checkouts(task) == [merchant.ultimo_checkout]
+    assert task["status"]["state"] == "failed"
+    assert _checkouts(task) == []
     assert _veredictos(task)[0]["status"] == "escalar"
 
 
