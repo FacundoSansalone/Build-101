@@ -2,7 +2,7 @@
 
 import pytest
 
-from contracts import Oferta
+from contracts import Oferta, OfertasVistas
 from guard import evaluar
 from guard.chequeos import chequeos_evidencia
 from guard.extractor import extraer_ofertas
@@ -126,13 +126,122 @@ def test_C_escalar_por_precio_contradicho_y_nunca_bloquea(vistas, ficha, catalog
     assert "120" in veredicto.motivo
 
 
-def test_dato_solo_declarado_no_se_aprueba_en_silencio(vistas, ficha, catalogo, ahora):
+def test_sku_fuera_del_catalogo_con_obligatorios_se_escala(vistas, ficha, catalogo, ahora):
+    """Obligatorios respaldados solo por lo que declara el comercio → escalar."""
     sin_nike = {sku: p for sku, p in catalogo.items() if sku != "NK-OUT-01"}
     veredicto = evaluar(ficha(), vistas("baseline"), "cart_1", sin_nike, ahora=ahora)
+    assert veredicto.status == "escalar"
+    cumplimiento = {c.campo: c for c in veredicto.chequeos if c.tipo == "cumplimiento"}
+    for campo in ("categoria", "uso", "talle"):
+        assert cumplimiento[campo].resultado == "escalar", campo
+        assert cumplimiento[campo].origen == "declarado"
+    assert cumplimiento["marca"].resultado == "ok"  # preferido: el aviso sale de evidencia
+
+
+def test_obligatorio_sin_dato_publico_se_escala(vistas, ficha, catalogo, ahora):
+    """El SKU está en el catálogo pero el catálogo no publica el uso."""
+    catalogo_sin_uso = dict(catalogo)
+    catalogo_sin_uso["NK-OUT-01"] = {
+        k: v for k, v in catalogo["NK-OUT-01"].items() if k != "use"
+    }
+    veredicto = evaluar(ficha(), vistas("baseline"), "cart_1", catalogo_sin_uso, ahora=ahora)
+    assert veredicto.status == "escalar"
+    (uso,) = [c for c in veredicto.chequeos if c.tipo == "cumplimiento" and c.campo == "uso"]
+    assert uso.resultado == "escalar"
+
+
+@pytest.mark.parametrize("clave", ["title", "brand"])
+def test_dato_solo_declarado_que_no_es_obligatorio_es_aviso(vistas, ficha, catalogo, ahora, clave):
+    catalogo_raro = dict(catalogo)
+    catalogo_raro["NK-OUT-01"] = {k: v for k, v in catalogo["NK-OUT-01"].items() if k != clave}
+    veredicto = evaluar(ficha(), vistas("baseline"), "cart_1", catalogo_raro, ahora=ahora)
     assert veredicto.status == "con_avisos"
+
+
+# --- campos omitidos por el comercio ------------------------------------------------
+
+_ATRIBUTO = {"category": "categoria", "use": "uso", "brand": "marca", "sizes": "talles", "title": "titulo"}
+
+
+def _vistas_omitiendo(vistas, clave: str, como: str):
+    original = vistas("baseline")
+    detalles = [dict(d) for d in original.offer_details]
+    if como == "falta":
+        del detalles[0][clave]
+    else:
+        detalles[0][clave] = None
+    return OfertasVistas(carts=original.carts, offer_details=detalles, comercio_id="merchant_1")
+
+
+@pytest.mark.parametrize("clave", list(_ATRIBUTO))
+@pytest.mark.parametrize("como", ["falta", "none"])
+def test_campo_omitido_no_es_verificado_ni_se_rellena(vistas, catalogo, clave, como):
+    oferta = verificar(extraer_ofertas(_vistas_omitiendo(vistas, clave, como))[0], catalogo)
+    atributo = _ATRIBUTO[clave]
+    evidencia = oferta.evidencia[atributo]
+    assert evidencia.estado == "solo_declarado"
+    assert evidencia.declarado is None
+    assert evidencia.publico is None  # no se rellena con el dato público
+    assert getattr(oferta, atributo) in ("", [])
+
+
+@pytest.mark.parametrize("clave", ["category", "use", "sizes"])
+@pytest.mark.parametrize("como", ["falta", "none"])
+def test_obligatorio_omitido_se_escala(vistas, ficha, catalogo, ahora, clave, como):
+    veredicto = evaluar(ficha(), _vistas_omitiendo(vistas, clave, como), "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "escalar"
+    campo = {"category": "categoria", "use": "uso", "sizes": "talle"}[clave]
+    (chequeo,) = [c for c in veredicto.chequeos if c.tipo == "cumplimiento" and c.campo == campo]
+    assert chequeo.resultado == "escalar"
+
+
+@pytest.mark.parametrize("como", ["falta", "none"])
+def test_preferido_omitido_es_aviso_y_no_se_rellena(vistas, ficha, catalogo, ahora, como):
+    """Sin la marca declarada, NK-OUT-01 no demuestra el preferido: es un aviso, y
+    VL-OUT-03 (igual en lo demostrado y más barata) la domina → escalar."""
+    veredicto = evaluar(ficha(), _vistas_omitiendo(vistas, "brand", como), "cart_1", catalogo, ahora=ahora)
+    (marca,) = [c for c in veredicto.chequeos if c.tipo == "cumplimiento" and c.campo == "marca"]
+    assert marca.resultado == "aviso"
+    (integridad,) = [c for c in veredicto.chequeos if c.tipo == "integridad"]
+    assert integridad.resultado == "escalar"
+    assert veredicto.status == "escalar"
+
+
+def test_sku_tiene_su_evidencia(vistas, catalogo):
+    en_catalogo = _verificada(vistas, catalogo, "baseline", "cart_1").evidencia["sku"]
+    assert (en_catalogo.estado, en_catalogo.origen_usado) == ("verificado", "catalogo_publico")
+    fuera = verificar(_oferta(sku="DESCONOCIDO"), catalogo).evidencia["sku"]
+    assert fuera.estado == "solo_declarado"
+
+
+def test_oferta_inverificable_no_desplaza_a_una_verificada(vistas, ficha, catalogo, ahora):
+    """Una oferta más barata con SKU fuera del catálogo no 'domina' a la verificada."""
+    original = vistas("baseline")
+    falsa = dict(original.offer_details[0], cart_id="cart_9", sku="FALSO-99")
+    vistas_con_falsa = OfertasVistas(
+        carts=original.carts + [{"cart_id": "cart_9", "item_label": "", "amount": 50.0, "currency": "USD"}],
+        offer_details=original.offer_details + [falsa],
+        comercio_id="merchant_1",
+    )
+    veredicto = evaluar(ficha(), vistas_con_falsa, "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "aprobado"
+    assert veredicto.ranking[0] == "cart_1"
+    assert veredicto.ranking.index("cart_9") > veredicto.ranking.index("cart_3")
 
 
 def test_baseline_sigue_aprobado_con_evidencia(vistas, ficha, catalogo, ahora):
     veredicto = evaluar(ficha(), vistas("baseline"), "cart_1", catalogo, ahora=ahora)
     assert veredicto.status == "aprobado"
     assert any(c.tipo == "evidencia" for c in veredicto.chequeos)
+
+
+# --- precio del catálogo inválido -------------------------------------------------
+
+
+@pytest.mark.parametrize("precio", [True, 0, -1, float("inf"), "inf", "abc"])
+def test_precio_publico_invalido_no_cuenta_como_dato_publico(catalogo, precio):
+    catalogo_raro = dict(catalogo)
+    catalogo_raro["NK-OUT-01"] = dict(catalogo["NK-OUT-01"], price=precio)
+    evidencia = verificar(_oferta(), catalogo_raro).evidencia["precio"]
+    assert evidencia.estado == "solo_declarado"
+    assert evidencia.publico is None

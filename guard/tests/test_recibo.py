@@ -58,6 +58,35 @@ def test_filtradas_con_motivo(recibo_b):
     assert any("indoor" in m for m in recibo_b.filtradas["cart_2"])
 
 
+def test_filtradas_salen_de_los_chequeos_de_evaluar(veredicto_b):
+    """Los motivos de la elegida son los mismos chequeos que decidieron el veredicto."""
+    motivos = [
+        c.detalle for c in veredicto_b.chequeos
+        if c.tipo in ("mandato", "cumplimiento") and c.origen != "ficha"
+        and c.resultado in ("bloquea", "escalar")
+    ]
+    assert motivos
+    assert veredicto_b.recibo.filtradas["cart_4"] == motivos
+
+
+def test_cada_requisito_se_chequea_una_sola_vez_por_oferta(vistas, ficha, catalogo, ahora, monkeypatch):
+    """El recibo no repite la lógica de los chequeos: reusa los de evaluar()."""
+    import guard.chequeos as modulo_chequeos
+
+    original = modulo_chequeos._chequeo_requisito
+    llamadas = []
+
+    def espia(*args, **kwargs):
+        llamadas.append(args[1].cart_id)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(modulo_chequeos, "_chequeo_requisito", espia)
+    ficha_b = ficha("B")
+    evaluar(ficha_b, vistas("B"), "cart_4", catalogo, ahora=ahora)
+    assert len(llamadas) == 4 * len(ficha_b.requisitos)
+    assert sorted(set(llamadas)) == ["cart_1", "cart_2", "cart_3", "cart_4"]
+
+
 def test_verificaciones_de_la_elegida(vistas, ficha, catalogo, ahora):
     recibo = evaluar(ficha("B2"), vistas("B2"), "cart_4", catalogo, ahora=ahora).recibo
     estados = {e.campo: e.estado for e in recibo.verificaciones}

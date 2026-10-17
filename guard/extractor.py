@@ -19,47 +19,122 @@ Si un cart no tiene offer_details, sus campos quedan vacíos (`""`, `[]`,
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
-from contracts import Oferta, OfertasVistas
+from contracts import Chequeo, Oferta, OfertasVistas
+from guard.normalizar import monto_valido
+from guard.textos import acotar
 
 # Claves de texto libre que se descartan (se guardan aparte, no se leen).
 _CLAVE_TEXTO_CART = "item_label"
 _CLAVE_TEXTO_DETALLE = "description"
 
 
-def extraer_ofertas(ofertas_vistas: OfertasVistas) -> list[Oferta]:
-    """Una `Oferta` por cada ap2.cart, en el orden en que llegaron.
+@dataclass(frozen=True)
+class Descarte:
+    """Algo que llegó del comercio y no se evaluó. Nunca se descarta en silencio:
+    el chequeo (integridad, `escalar`) va al veredicto y el motivo al recibo."""
 
-    Un offer_details sin cart correspondiente se ignora: no se puede cobrar.
-    No modifica `ofertas_vistas`.
+    cart_id: str | None   # None: el cart no tenía un cart_id válido
+    chequeo: Chequeo
+
+
+@dataclass(frozen=True)
+class Extraccion:
+    ofertas: list[Oferta]
+    descartes: list[Descarte] = field(default_factory=list)
+
+
+def extraer_ofertas(ofertas_vistas: OfertasVistas) -> list[Oferta]:
+    """Una `Oferta` por cada ap2.cart, en el orden en que llegaron."""
+    return extraer(ofertas_vistas).ofertas
+
+
+def extraer(ofertas_vistas: OfertasVistas) -> Extraccion:
+    """Ofertas y descartes. No modifica `ofertas_vistas`.
+
+    - Un cart sin `cart_id` (string no vacío) no se puede elegir ni cobrar:
+      se descarta y se escala.
+    - Un `cart_id` repetido (en ap2.cart o en demo.offer_details) es
+      ambiguo: se usa la primera aparición y se escala.
+    - Un offer_details sin cart correspondiente se ignora: no se puede cobrar.
     """
     detalles_por_cart: dict[str, dict] = {}
+    repetidos_detalle: dict[str, int] = {}
     for detalle in ofertas_vistas.offer_details:
         cart_id = detalle.get("cart_id")
-        if isinstance(cart_id, str):
-            detalles_por_cart.setdefault(cart_id, detalle)
+        if not isinstance(cart_id, str):
+            continue
+        if cart_id in detalles_por_cart:
+            repetidos_detalle[cart_id] = repetidos_detalle.get(cart_id, 1) + 1
+            continue
+        detalles_por_cart[cart_id] = detalle
 
     ofertas: list[Oferta] = []
-    vistos: set[str] = set()
+    repetidos_cart: dict[str, int] = {}
+    sin_id = 0
     for cart in ofertas_vistas.carts:
-        cart_id = str(cart.get("cart_id", ""))
-        if not cart_id or cart_id in vistos:
+        cart_id = cart.get("cart_id")
+        if not isinstance(cart_id, str) or not cart_id:
+            sin_id += 1
             continue
-        vistos.add(cart_id)
-        ofertas.append(_oferta(cart, detalles_por_cart.get(cart_id, {})))
-    return ofertas
+        if any(o.cart_id == cart_id for o in ofertas):
+            repetidos_cart[cart_id] = repetidos_cart.get(cart_id, 1) + 1
+            continue
+        ofertas.append(_oferta(cart_id, cart, detalles_por_cart.get(cart_id, {})))
+
+    descartes = [
+        Descarte(cart_id, _repetido(cart_id, veces, "ap2.cart", "se evaluó la primera"))
+        for cart_id, veces in repetidos_cart.items()
+    ]
+    descartes += [
+        Descarte(cart_id, _repetido(cart_id, veces, "demo.offer_details", "se usó el primero"))
+        for cart_id, veces in repetidos_detalle.items()
+        if any(o.cart_id == cart_id for o in ofertas)
+    ]
+    if sin_id:
+        descartes.append(Descarte(None, _sin_cart_id(sin_id)))
+    return Extraccion(ofertas=ofertas, descartes=descartes)
 
 
-def _oferta(cart: dict, detalle: dict) -> Oferta:
+def _repetido(cart_id: str, veces: int, fuente: str, cual: str) -> Chequeo:
+    return Chequeo(
+        tipo="integridad",
+        resultado="escalar",
+        detalle=(
+            f"El cart_id de este carrito aparece {veces} veces en {fuente}: es "
+            f"ambiguo ({cual}); no se descarta en silencio."
+        ),
+        campo="cart_id",
+        observado=acotar(cart_id),
+        origen="cart_ap2" if fuente == "ap2.cart" else "declarado",
+    )
+
+
+def _sin_cart_id(cantidad: int) -> Chequeo:
+    return Chequeo(
+        tipo="integridad",
+        resultado="escalar",
+        detalle=(
+            f"El comercio mandó {cantidad} carrito(s) sin cart_id válido en "
+            "ap2.cart: no se pueden evaluar ni elegir; no se descartan en silencio."
+        ),
+        campo="cart_id",
+        observado=cantidad,
+        origen="cart_ap2",
+    )
+
+
+def _oferta(cart_id: str, cart: dict, detalle: dict) -> Oferta:
     return Oferta(
-        cart_id=str(cart["cart_id"]),
+        cart_id=cart_id,
         sku=_texto(detalle.get("sku")),
         titulo=_texto(detalle.get("title")),
         marca=_texto(detalle.get("brand")),
         categoria=_texto(detalle.get("category")),
         uso=_texto(detalle.get("use")),
-        precio=_numero(cart.get("amount")),
+        precio=_monto(cart.get("amount")),
         moneda=_texto(cart.get("currency")).upper(),
         stock=_entero(detalle.get("stock")),
         talles=_talles(detalle.get("sizes")),
@@ -81,12 +156,11 @@ def _texto(valor: Any) -> str:
     return valor.strip() if isinstance(valor, str) else ""
 
 
-def _numero(valor: Any) -> float:
-    """Monto como float. Un monto ilegible queda en NaN (no cumple ningún tope)."""
-    try:
-        return float(valor)
-    except (TypeError, ValueError):
-        return float("nan")
+def _monto(valor: Any) -> float:
+    """Monto como float. Uno inválido (bool, <= 0, NaN, inf, no numérico) queda
+    en NaN: es un dato faltante, no cumple ningún tope y el mandato escala."""
+    monto = monto_valido(valor)
+    return monto if monto is not None else float("nan")
 
 
 def _entero(valor: Any) -> int | None:

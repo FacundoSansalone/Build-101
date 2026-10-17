@@ -143,12 +143,25 @@ def test_comercio_fuera_de_la_politica_bloquea(vistas, ficha, catalogo, ahora):
     assert veredicto.status == "bloqueado"
 
 
-def test_comercio_no_identificado_es_aviso(vistas, ficha, catalogo, ahora):
-    veredicto = evaluar(ficha(), vistas("baseline", comercio_id=None), "cart_1", catalogo, ahora=ahora)
+@pytest.mark.parametrize("comercio_id", [None, ""])
+def test_comercio_no_identificado_se_escala(vistas, ficha, catalogo, ahora, comercio_id):
+    """Con comercios aprobados en la política, no saber quién vende no se aprueba."""
+    veredicto = evaluar(
+        ficha(), vistas("baseline", comercio_id=comercio_id), "cart_1", catalogo, ahora=ahora
+    )
     chequeo = _politica(veredicto)["comercio"]
-    assert chequeo.resultado == "aviso"
+    assert chequeo.resultado == "escalar"
     assert "no identificado" in chequeo.detalle
-    assert veredicto.status == "con_avisos"
+    assert veredicto.status == "escalar"
+
+
+def test_comercio_no_identificado_con_lista_vacia_tampoco_se_aprueba(vistas, ficha, catalogo, ahora):
+    politica = Politica(comercios_aprobados=[])
+    veredicto = evaluar(
+        ficha(), vistas("baseline", comercio_id=None), "cart_1", catalogo,
+        politica=politica, ahora=ahora,
+    )
+    assert veredicto.status in ("escalar", "bloqueado")
 
 
 def test_politica_explicita_reemplaza_la_por_defecto(vistas, ficha, catalogo, ahora):
