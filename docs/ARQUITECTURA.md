@@ -75,7 +75,7 @@ sequenceDiagram
         P-->>S: checkout intacto (+ veredicto aparte)
         S->>U: resumen (+ avisos) → firma mandatos
     else escalar
-        P-->>S: checkout intacto + evidencia: decide el humano
+        P-->>S: checkout retenido: decide el humano en el dashboard (aprobar igual → reintento pasa intacto)
     else bloqueado
         P-->>S: tarea fallida con el motivo: no se presenta para firma
     end
