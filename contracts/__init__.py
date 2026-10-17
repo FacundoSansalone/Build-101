@@ -1,0 +1,41 @@
+"""Contratos compartidos del Pre-Sign Guard. Ver contracts/models.py."""
+
+from contracts.models import (
+    GUARD_VEREDICTO_KEY,
+    STATUS_LLEGAN_A_FIRMA,
+    CampoRequisito,
+    Chequeo,
+    EstadoEvidencia,
+    Evaluador,
+    Evento,
+    Evidencia,
+    Ficha,
+    Oferta,
+    OfertasVistas,
+    Origen,
+    Politica,
+    Recibo,
+    Requisito,
+    Status,
+    Veredicto,
+)
+
+__all__ = [
+    "GUARD_VEREDICTO_KEY",
+    "STATUS_LLEGAN_A_FIRMA",
+    "CampoRequisito",
+    "Chequeo",
+    "EstadoEvidencia",
+    "Evaluador",
+    "Evento",
+    "Evidencia",
+    "Ficha",
+    "Oferta",
+    "OfertasVistas",
+    "Origen",
+    "Politica",
+    "Recibo",
+    "Requisito",
+    "Status",
+    "Veredicto",
+]

@@ -111,4 +111,43 @@ Anotá acá lo que se acuerde entre los tres (contratos, veredictos, puertos).
 Las preguntas pendientes están en `docs/CONTRATOS_PROPUESTOS.md` y
 `docs/PLAN.md`.
 
-- _(todavía ninguna)_
+Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
+
+1. **Precio contradicho (C) → `escalar`.** No bloquea y no llega a la firma.
+2. **Ranking:** obligatorios cumplidos → preferidos cumplidos (más es mejor)
+   → precio (menor es mejor). Da NK-OUT-01 sin tocar `world/`.
+3. **Integridad:** `escalar` solo si otra opción es igual o mejor en todo
+   (obligatorios, preferidos y precio) que la elegida.
+4. **Cumplimiento usa el dato público cuando existe** (B2 → `bloqueado`) y
+   además se marca la evidencia `contradicho`.
+5. **Ficha genérica:** lista de `Requisito` + `Ficha.desde_intent(intent)`.
+6. **Recibo:** JWS compacto ES256 sobre `Recibo.payload_canonico()`. Clave
+   del Guard en `.temp-db/guard_signing_key.pem` (ignorado por git),
+   `kid: guard-key-1`. `evaluar()` arma el recibo sin firmar; lo firma
+   `guard.recibo.firmar_recibo()` afuera, para que `evaluar()` siga sin I/O.
+7. **Eventos al dashboard:** SSE en `GET :8010/guard/events` y copia en JSONL
+   (`.logs/guard_events.jsonl`) para reproducir offline.
+8. **Nombres:** `guard.evaluar()` es el núcleo; `guard.benchmark_hook:evaluate`
+   es solo el adaptador del benchmark.
+9. **El proxy no limpia los carts: solo evalúa.** El veredicto viaja en un
+   artefacto A2A aparte con la clave `guard.veredicto`; `ap2.checkout` intacto.
+- **Agregados al contrato:** `evaluar(..., ahora=None)` (fecha del recibo,
+  para que sea determinística) y `OfertasVistas.comercio_id` (lo completa
+  quien llama con `merchant.id` del catálogo; lo usa el chequeo de política).
+  El tipo de evento `guard_cambiado` (interruptor sí/no).
+- **Resultados del benchmark en git:** se escriben en `results/` (raíz) con
+  `--out ../../results`. `.gitignore` no cambia.
+- **Puerto del dashboard:** 8020.
+- **Ficha en vivo:** para la demo se usa la de `scenarios.json` → `intent`
+  (`Ficha.desde_intent`), que el dashboard muestra como confirmada. La ficha
+  con LLM es opcional.
+- **Imports:** `contracts/`, `guard/`, `proxy/` y `dashboard/` corren con el
+  entorno de `world/ap2` y la raíz del repo en el path (`pytest.ini` →
+  `pythonpath = .`; el benchmark con `PYTHONPATH=../..`).
+- **Windows:** usar `PYTHONUTF8=1` (la consola cp1252 rompe el benchmark).
+
+Tests de las carpetas nuevas, desde la raíz:
+
+```sh
+PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m pytest   # Linux/macOS: world/ap2/.venv/bin/python
+```
