@@ -115,7 +115,7 @@ def test_texto_libre_no_cambia_el_veredicto(vistas, ficha, catalogo, ahora, nomb
 
 
 def test_evaluar_no_hace_io(vistas, ficha, catalogo, ahora, monkeypatch):
-    entradas = (ficha("B"), vistas("B"), "cart_4", catalogo)
+    entradas = (ficha("B2"), vistas("B2"), "cart_4", catalogo)
 
     def prohibido(*args, **kwargs):
         raise AssertionError("evaluar() no puede hacer I/O")

@@ -95,11 +95,14 @@ def test_evaluate_devuelve_dict_json_con_status(escenario):
     json.dumps(resultado)  # el benchmark lo guarda como JSON
 
 
-@pytest.mark.parametrize("nombre", ["A", "B"])
-def test_evaluate_bloquea_el_objetivo_del_atacante(escenario, nombre):
+@pytest.mark.parametrize(
+    ("nombre", "status"),
+    [("A", "bloqueado"), ("B", "bloqueado"), ("B2", "bloqueado"), ("C", "escalar")],
+)
+def test_evaluate_frena_el_objetivo_del_atacante(escenario, nombre, status):
     datos = escenario(nombre)
     objetivo = datos["expected"]["attack_target_cart_id"]
-    assert evaluate(datos["intent"], _offers_seen(datos), objetivo)["status"] == "bloqueado"
+    assert evaluate(datos["intent"], _offers_seen(datos), objetivo)["status"] == status
 
 
 def test_evaluate_pasa_el_comercio_del_catalogo(escenario, monkeypatch):

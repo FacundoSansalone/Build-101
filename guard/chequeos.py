@@ -9,15 +9,17 @@ toca acá.
 - **cumplimiento**: el resto de los requisitos de la ficha. Un obligatorio
   que falla `bloquea`; un preferido que falla es `aviso`. Si falta el dato,
   no se aprueba en silencio: `escalar` (obligatorio) o `aviso` (preferido).
+- **evidencia**: cada campo verificado contra el catálogo público. Un dato
+  `contradicho` se escala (nunca se bloquea: puede haber razones legítimas);
+  uno `solo_declarado` es `aviso`.
 """
 
 from __future__ import annotations
 
-import math
-import re
 from typing import Any
 
-from contracts import Chequeo, Ficha, Oferta, Origen, Requisito
+from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Requisito
+from guard.normalizar import EPSILON_MONTO, normalizar, numero
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
 ATRIBUTO_POR_CAMPO: dict[str, str] = {
@@ -32,20 +34,21 @@ ATRIBUTO_POR_CAMPO: dict[str, str] = {
 # Requisitos obligatorios que forman parte del mandato que firma el usuario.
 CAMPOS_MANDATO = frozenset({"precio", "moneda"})
 
-# Tolerancia para comparar montos (centavos).
-_EPSILON_MONTO = 0.005
-
 _NOMBRES = {
     "precio": "Precio",
     "moneda": "Moneda",
     "categoria": "Categoría",
     "uso": "Uso",
     "talle": "Talle",
+    "talles": "Talles",
     "marca": "Marca",
+    "titulo": "Título",
     "comercio": "Comercio",
 }
 
-_NUMERO = re.compile(r"^-?\d+(\.\d+)?$")
+
+def nombre_campo(campo: str) -> str:
+    return _NOMBRES.get(campo, campo)
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +63,7 @@ def valor_observado(campo: str, oferta: Oferta, comercio_id: str | None = None) 
     valor = getattr(oferta, ATRIBUTO_POR_CAMPO[campo])
     if valor in ("", None) or valor == []:
         return None
-    if isinstance(valor, float) and math.isnan(valor):
+    if isinstance(valor, float) and valor != valor:  # NaN: monto ilegible
         return None
     return valor
 
@@ -73,34 +76,14 @@ def cumple(
     if observado is None:
         return None
     if requisito.operador == "maximo":
-        monto, tope = _numero(observado), _numero(requisito.valor)
-        if monto is None or tope is None:
+        valor, tope = numero(observado), numero(requisito.valor)
+        if valor is None or tope is None:
             return None
-        return monto <= tope + _EPSILON_MONTO
+        return valor <= tope + EPSILON_MONTO
     if requisito.operador == "incluye":
         elementos = observado if isinstance(observado, list) else [observado]
-        return _normalizar(requisito.valor) in {_normalizar(e) for e in elementos}
-    return _normalizar(observado) == _normalizar(requisito.valor)
-
-
-def _normalizar(valor: Any) -> Any:
-    """Compara sin importar mayúsculas, espacios ni "42" frente a 42."""
-    numero = _numero(valor)
-    if numero is not None:
-        return numero
-    if isinstance(valor, str):
-        return valor.strip().casefold()
-    return valor
-
-
-def _numero(valor: Any) -> float | None:
-    if isinstance(valor, bool):
-        return None
-    if isinstance(valor, (int, float)):
-        return None if math.isnan(float(valor)) else float(valor)
-    if isinstance(valor, str) and _NUMERO.match(valor.strip()):
-        return float(valor.strip())
-    return None
+        return normalizar(requisito.valor) in {normalizar(e) for e in elementos}
+    return normalizar(observado) == normalizar(requisito.valor)
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +131,7 @@ def _chequeo_requisito(
     return Chequeo(
         tipo=tipo,
         resultado=resultado,
-        detalle=_detalle(requisito, oferta, observado, resultado_cumple, tipo),
+        detalle=_detalle_requisito(requisito, oferta, observado, resultado_cumple, tipo),
         campo=requisito.campo,
         esperado=requisito.valor,
         observado=observado,
@@ -167,12 +150,70 @@ def origen_del_campo(campo: str, oferta: Oferta) -> Origen | None:
 
 
 # ---------------------------------------------------------------------------
+# Evidencia
+# ---------------------------------------------------------------------------
+
+
+def chequeos_evidencia(oferta: Oferta) -> list[Chequeo]:
+    """Un chequeo por campo verificable de la oferta (ya verificada)."""
+    chequeos = []
+    for evidencia in oferta.evidencia.values():
+        if evidencia.estado == "no_verificable":
+            continue  # va al recibo (sin_verificar), no cambia el veredicto
+        resultado = {
+            "verificado": "ok",
+            "solo_declarado": "aviso",
+            "contradicho": "escalar",
+        }[evidencia.estado]
+        chequeos.append(
+            Chequeo(
+                tipo="evidencia",
+                resultado=resultado,
+                detalle=_detalle_evidencia(evidencia, oferta.moneda),
+                campo=evidencia.campo,
+                esperado=evidencia.publico,
+                observado=evidencia.declarado,
+                origen=evidencia.origen_usado,
+            )
+        )
+    return chequeos
+
+
+def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
+    nombre = nombre_campo(evidencia.campo)
+    if evidencia.campo == "precio":
+        cobrado = monto(evidencia.declarado, moneda)
+        publico = monto(evidencia.publico, moneda)
+        if evidencia.estado == "contradicho":
+            return f"Precio: se cobra {cobrado} pero el catálogo público dice {publico}."
+        if evidencia.estado == "solo_declarado":
+            return f"Precio {cobrado}: no está en el catálogo público para compararlo."
+        return f"Precio {cobrado} coincide con el catálogo público."
+
+    declarado = formatear(evidencia.declarado)
+    publico = formatear(evidencia.publico)
+    if evidencia.estado == "contradicho":
+        return (
+            f"{nombre}: el comercio declara {declarado} pero el catálogo "
+            f"público dice {publico}."
+        )
+    if evidencia.estado == "solo_declarado":
+        return (
+            f"{nombre} {declarado}: solo lo declara el comercio, no hay fuente "
+            "independiente para verificarlo."
+        )
+    return f"{nombre} {publico} verificado contra el catálogo público."
+
+
+# ---------------------------------------------------------------------------
 # Textos para el dashboard
 # ---------------------------------------------------------------------------
 
 
 def formatear(valor: Any) -> str:
     """Valor legible: listas separadas por comas y floats enteros sin decimales."""
+    if valor is None:
+        return "sin dato"
     if isinstance(valor, list):
         return ", ".join(formatear(v) for v in valor) or "ninguno"
     if isinstance(valor, float) and valor.is_integer():
@@ -181,18 +222,18 @@ def formatear(valor: Any) -> str:
 
 
 def monto(precio: Any, moneda: str) -> str:
-    numero = _numero(precio)
-    return f"{moneda} {numero:.2f}".strip() if numero is not None else "ilegible"
+    valor = numero(precio)
+    return f"{moneda} {valor:.2f}".strip() if valor is not None else "ilegible"
 
 
-def _detalle(
+def _detalle_requisito(
     requisito: Requisito,
     oferta: Oferta,
     observado: Any,
     resultado_cumple: bool | None,
     tipo: str,
 ) -> str:
-    nombre = _NOMBRES.get(requisito.campo, requisito.campo)
+    nombre = nombre_campo(requisito.campo)
     if tipo == "mandato":
         referencia = "el mandato"
     elif requisito.obligatorio:

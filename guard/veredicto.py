@@ -15,8 +15,13 @@ from datetime import datetime
 from typing import Iterable
 
 from contracts import Chequeo, Ficha, OfertasVistas, Politica, Status, Veredicto
-from guard.chequeos import chequeos_cumplimiento, chequeos_mandato
+from guard.chequeos import (
+    chequeos_cumplimiento,
+    chequeos_evidencia,
+    chequeos_mandato,
+)
 from guard.extractor import extraer_ofertas
+from guard.verificador import verificar_todas
 
 _STATUS_POR_RESULTADO: dict[str, Status] = {
     "bloquea": "bloqueado",
@@ -63,7 +68,7 @@ def evaluar(
     ahora: datetime | None = None,
 ) -> Veredicto:
     """Determinística y sin I/O. Mismas entradas, mismo veredicto."""
-    ofertas = extraer_ofertas(ofertas_vistas)
+    ofertas = verificar_todas(extraer_ofertas(ofertas_vistas), catalogo)
     ranking = [o.cart_id for o in ofertas]
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
 
@@ -74,6 +79,7 @@ def evaluar(
         chequeos = [
             *chequeos_mandato(ficha, elegida, comercio_id),
             *chequeos_cumplimiento(ficha, elegida, comercio_id),
+            *chequeos_evidencia(elegida),
         ]
 
     status = agregar(chequeos)
