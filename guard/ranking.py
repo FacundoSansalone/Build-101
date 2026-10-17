@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass
 
 from contracts import Chequeo, Ficha, Oferta
-from guard.chequeos import cumple, monto
+from guard.chequeos import cumple, cumple_respaldado, monto
 from guard.normalizar import EPSILON_MONTO
 
 
@@ -48,12 +48,15 @@ class Puntaje:
 def puntuar(
     ficha: Ficha, oferta: Oferta, posicion: int, comercio_id: str | None = None
 ) -> Puntaje:
+    """Un obligatorio cuenta solo si se cumple con un dato que no es solo
+    declarado: una oferta inverificable no puede desplazar (ni "dominar") a
+    una verificada. Un preferido solo declarado cuenta (es un aviso)."""
     obligatorios = [r for r in ficha.requisitos if r.obligatorio]
     preferidos = [r for r in ficha.requisitos if not r.obligatorio]
     return Puntaje(
         cart_id=oferta.cart_id,
         sku=oferta.sku,
-        obligatorios=sum(cumple(r, oferta, comercio_id) is True for r in obligatorios),
+        obligatorios=sum(cumple_respaldado(r, oferta, comercio_id) for r in obligatorios),
         total_obligatorios=len(obligatorios),
         preferidos=sum(cumple(r, oferta, comercio_id) is True for r in preferidos),
         total_preferidos=len(preferidos),

@@ -1,11 +1,11 @@
 """Verificador: contrasta cada oferta con el catálogo público. Sin I/O.
 
-Para cada campo de la oferta queda una `Evidencia`:
+Para cada campo de la oferta (y para el SKU) queda una `Evidencia`:
 
-- `verificado`: coincide con el catálogo público (o el comercio no lo
-  declaró y se toma del catálogo);
+- `verificado`: el comercio lo declaró y coincide con el catálogo público;
 - `contradicho`: el comercio declara una cosa y el catálogo dice otra;
-- `solo_declarado`: el SKU (o el campo) no está en el catálogo;
+- `solo_declarado`: el SKU (o el campo) no está en el catálogo, o el
+  comercio no lo declaró (faltante: no se rellena con el dato público);
 - `no_verificable`: calidad, entrega y reputación del comercio, que no se
   pueden verificar antes de comprar.
 
@@ -20,6 +20,7 @@ from typing import Any
 
 from contracts import Evidencia, Oferta
 from guard.normalizar import iguales, monto_valido, numero
+from guard.textos import acotar
 
 # Atributo de Oferta -> clave del producto en el catálogo público.
 CLAVE_CATALOGO: dict[str, str] = {
@@ -38,26 +39,34 @@ NO_VERIFICABLES = ("calidad", "entrega", "reputación del comercio")
 
 
 def verificar(oferta: Oferta, catalogo: dict[str, dict]) -> Oferta:
-    """Devuelve una copia de la oferta con la evidencia completa."""
+    """Devuelve una copia de la oferta con la evidencia completa.
+
+    Un campo que el comercio omitió (o mandó en None/vacío) queda
+    `solo_declarado` sin valor: nunca `verificado` y nunca se rellena con el
+    dato público. Así un obligatorio sin declarar escala en vez de aprobarse
+    con lo que diga el catálogo sobre el SKU que declaró el comercio.
+    """
     producto = catalogo.get(oferta.sku) if oferta.sku else None
-    evidencia: dict[str, Evidencia] = {}
+    if not isinstance(producto, dict):
+        producto = None
+    evidencia: dict[str, Evidencia] = {"sku": _evidencia_sku(oferta.sku, producto)}
     cambios: dict[str, Any] = {}
 
     for atributo, clave in CLAVE_CATALOGO.items():
         declarado = _o_none(getattr(oferta, atributo))
         publico = _valor_publico(producto, clave, atributo)
-        if publico is None:
+        if declarado is None or publico is None:
             evidencia[atributo] = Evidencia(
-                campo=atributo, declarado=declarado, estado="solo_declarado",
+                campo=atributo, declarado=acotar(declarado), estado="solo_declarado",
                 origen_usado="declarado",
             )
             continue
-        estado = "verificado" if declarado is None or iguales(declarado, publico) else "contradicho"
+        estado = "verificado" if iguales(declarado, publico) else "contradicho"
         evidencia[atributo] = Evidencia(
-            campo=atributo, declarado=declarado, publico=publico, estado=estado,
+            campo=atributo, declarado=acotar(declarado), publico=publico, estado=estado,
             origen_usado="catalogo_publico",
         )
-        cambios[atributo] = publico
+        cambios[atributo] = publico  # decisión 4: los chequeos usan el dato público
 
     for atributo, clave in CLAVE_CATALOGO_COBRO.items():
         cobrado = _o_none(getattr(oferta, atributo))
@@ -67,7 +76,7 @@ def verificar(oferta: Oferta, catalogo: dict[str, dict]) -> Oferta:
         else:
             estado = "verificado" if iguales(cobrado, publico) else "contradicho"
         evidencia[atributo] = Evidencia(
-            campo=atributo, declarado=cobrado, publico=publico, estado=estado,
+            campo=atributo, declarado=acotar(cobrado), publico=publico, estado=estado,
             origen_usado="cart_ap2",
         )
 
@@ -81,6 +90,25 @@ def verificar(oferta: Oferta, catalogo: dict[str, dict]) -> Oferta:
 
 def verificar_todas(ofertas: list[Oferta], catalogo: dict[str, dict]) -> list[Oferta]:
     return [verificar(o, catalogo) for o in ofertas]
+
+
+def _evidencia_sku(sku: str, producto: dict | None) -> Evidencia:
+    """El SKU está (verificado) o no está (solo declarado) en el catálogo."""
+    if producto is None:
+        return Evidencia(
+            campo="sku", declarado=acotar(sku) or None, estado="solo_declarado",
+            origen_usado="declarado",
+        )
+    return Evidencia(
+        campo="sku", declarado=sku, publico=sku, estado="verificado",
+        origen_usado="catalogo_publico",
+    )
+
+
+def sku_publico(oferta: Oferta) -> str | None:
+    """El SKU si está en el catálogo público (un valor del catálogo); si no, None."""
+    evidencia = oferta.evidencia.get("sku")
+    return oferta.sku if evidencia is not None and evidencia.estado == "verificado" else None
 
 
 def _valor_publico(producto: dict | None, clave: str, atributo: str) -> Any:

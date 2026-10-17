@@ -126,21 +126,51 @@ def chequeos_cumplimiento(
     ]
 
 
+def respaldado(requisito: Requisito, oferta: Oferta) -> bool:
+    """False si el dato que usa el chequeo es solo lo que declara el comercio.
+
+    Precio y moneda son lo que se cobra (ap2.cart) y el comercio lo da quien
+    llama: no aplican. Para el resto hace falta evidencia que no sea
+    `solo_declarado` (una oferta sin verificar no tiene respaldo).
+    """
+    if requisito.campo in CAMPOS_MANDATO or requisito.campo == "comercio":
+        return True
+    evidencia = oferta.evidencia.get(ATRIBUTO_POR_CAMPO[requisito.campo])
+    return evidencia is not None and evidencia.estado != "solo_declarado"
+
+
+def cumple_respaldado(
+    requisito: Requisito, oferta: Oferta, comercio_id: str | None = None
+) -> bool:
+    """Cumple con un dato que no es solo lo que declara el comercio (ranking)."""
+    return cumple(requisito, oferta, comercio_id) is True and respaldado(requisito, oferta)
+
+
 def _chequeo_requisito(
     requisito: Requisito, oferta: Oferta, comercio_id: str | None, tipo: str
 ) -> Chequeo:
     resultado_cumple = cumple(requisito, oferta, comercio_id)
+    sin_respaldo = False
     if resultado_cumple is True:
-        resultado = "ok"
+        # Obligatorio respaldado solo por lo que declara el comercio → escalar.
+        sin_respaldo = requisito.obligatorio and not respaldado(requisito, oferta)
+        resultado = "escalar" if sin_respaldo else "ok"
     elif resultado_cumple is None:
         resultado = "escalar" if requisito.obligatorio else "aviso"
     else:
         resultado = "bloquea" if requisito.obligatorio else "aviso"
     observado = valor_observado(requisito.campo, oferta, comercio_id)
+    if sin_respaldo:
+        detalle = (
+            f"{nombre_campo(requisito.campo)}: solo lo declara el comercio (no hay "
+            f"dato del catálogo público) y es obligatorio ({formatear(requisito.valor)})."
+        )
+    else:
+        detalle = _detalle_requisito(requisito, oferta, observado, resultado_cumple, tipo)
     return Chequeo(
         tipo=tipo,
         resultado=resultado,
-        detalle=_detalle_requisito(requisito, oferta, observado, resultado_cumple, tipo),
+        detalle=detalle,
         campo=requisito.campo,
         esperado=requisito.valor,
         observado=observado,

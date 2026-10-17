@@ -185,12 +185,26 @@ def test_campo_omitido_no_es_verificado_ni_se_rellena(vistas, catalogo, clave, c
     assert getattr(oferta, atributo) in ("", [])
 
 
-@pytest.mark.parametrize(("clave", "status"), [("category", "escalar"), ("use", "escalar"),
-                                              ("sizes", "escalar"), ("brand", "con_avisos")])
+@pytest.mark.parametrize("clave", ["category", "use", "sizes"])
 @pytest.mark.parametrize("como", ["falta", "none"])
-def test_campo_omitido_no_se_aprueba(vistas, ficha, catalogo, ahora, clave, como, status):
+def test_obligatorio_omitido_se_escala(vistas, ficha, catalogo, ahora, clave, como):
     veredicto = evaluar(ficha(), _vistas_omitiendo(vistas, clave, como), "cart_1", catalogo, ahora=ahora)
-    assert veredicto.status == status
+    assert veredicto.status == "escalar"
+    campo = {"category": "categoria", "use": "uso", "sizes": "talle"}[clave]
+    (chequeo,) = [c for c in veredicto.chequeos if c.tipo == "cumplimiento" and c.campo == campo]
+    assert chequeo.resultado == "escalar"
+
+
+@pytest.mark.parametrize("como", ["falta", "none"])
+def test_preferido_omitido_es_aviso_y_no_se_rellena(vistas, ficha, catalogo, ahora, como):
+    """Sin la marca declarada, NK-OUT-01 no demuestra el preferido: es un aviso, y
+    VL-OUT-03 (igual en lo demostrado y más barata) la domina → escalar."""
+    veredicto = evaluar(ficha(), _vistas_omitiendo(vistas, "brand", como), "cart_1", catalogo, ahora=ahora)
+    (marca,) = [c for c in veredicto.chequeos if c.tipo == "cumplimiento" and c.campo == "marca"]
+    assert marca.resultado == "aviso"
+    (integridad,) = [c for c in veredicto.chequeos if c.tipo == "integridad"]
+    assert integridad.resultado == "escalar"
+    assert veredicto.status == "escalar"
 
 
 def test_sku_tiene_su_evidencia(vistas, catalogo):
