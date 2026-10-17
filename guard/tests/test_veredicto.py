@@ -3,6 +3,7 @@
 import builtins
 import inspect
 import io
+import json
 import socket
 
 import pytest
@@ -114,8 +115,44 @@ def test_texto_libre_no_cambia_el_veredicto(vistas, ficha, catalogo, ahora, nomb
     assert despues.model_dump(mode="json") == antes.model_dump(mode="json")
 
 
-def test_evaluar_no_hace_io(vistas, ficha, catalogo, ahora, monkeypatch):
+def _sin_hash(veredicto: Veredicto, checkout_hash: str) -> dict:
+    """El veredicto sin lo que depende de los bytes del JWT (hash e id del recibo).
+
+    Cambiar el `title` del JWT cambia el JWT y por lo tanto su hash, que el
+    recibo referencia: eso es correcto. Todo lo demás tiene que ser igual.
+    """
+    texto = json.dumps(veredicto.model_dump(mode="json"), ensure_ascii=False)
+    datos = json.loads(texto.replace(checkout_hash, "<checkout_hash>"))
+    datos["recibo"]["id"] = "<id>"
+    return datos
+
+
+@pytest.mark.parametrize("nombre", ESCENARIOS)
+@pytest.mark.parametrize("texto", TEXTOS_LIBRES)
+@pytest.mark.parametrize("cart_id", ["cart_1", "cart_3", "cart_4"])
+def test_texto_libre_del_checkout_no_cambia_el_veredicto(
+    vistas, ficha, catalogo, ahora, checkout, payload_checkout, nombre, texto, cart_id
+):
+    """Lo mismo con el item_label del ap2.checkout y el title del JWT cambiados."""
+    originales = vistas(nombre)
+    original = checkout(nombre, cart_id)
+    payload = payload_checkout(nombre, cart_id)
+    for linea in payload["line_items"]:
+        linea["item"]["title"] = texto
+    cambiado = checkout(nombre, cart_id, payload=payload, item_label=texto)
+
+    antes = evaluar(ficha(nombre), originales, cart_id, catalogo, ahora=ahora, checkout=original)
+    despues = evaluar(
+        ficha(nombre), _reemplazar_texto_libre(originales, texto), cart_id, catalogo,
+        ahora=ahora, checkout=cambiado,
+    )
+    assert despues.status == antes.status
+    assert _sin_hash(despues, cambiado.checkout_hash) == _sin_hash(antes, original.checkout_hash)
+
+
+def test_evaluar_no_hace_io(vistas, ficha, catalogo, ahora, checkout, monkeypatch):
     entradas = (ficha("B2"), vistas("B2"), "cart_4", catalogo)
+    visto = checkout("B2", "cart_4")
 
     def prohibido(*args, **kwargs):
         raise AssertionError("evaluar() no puede hacer I/O")
@@ -126,7 +163,8 @@ def test_evaluar_no_hace_io(vistas, ficha, catalogo, ahora, monkeypatch):
         m.setattr(builtins, "open", prohibido)
         m.setattr(io, "open", prohibido)
         veredicto = evaluar(*entradas, ahora=ahora)
-    assert veredicto.status == "bloqueado"
+        con_checkout = evaluar(*entradas, ahora=ahora, checkout=visto)
+    assert veredicto.status == con_checkout.status == "bloqueado"
 
 
 @pytest.mark.parametrize("amount", [True, 0, -5, float("nan"), float("inf"), "inf", "abc", None])
