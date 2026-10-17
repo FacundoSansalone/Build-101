@@ -174,9 +174,9 @@ En los datos de `world/`, la ficha de la demo ya existe:
 | Veredicto | Cuándo | Qué pasa |
 |---|---|---|
 | `aprobado` | Obligatorios cumplidos con datos verificados y elección coherente con el ranking propio | Se firma normalmente |
-| `con_avisos` | Todo cumple, pero algún dato es solo declarado o no coincide un preferido | Se firma mostrando los avisos |
-| `escalar` | Datos contradichos o elección que no coincide con el ranking propio | Decide el humano con la evidencia |
-| `bloqueado` | Se viola un obligatorio, el mandato o la política | No se presenta para firma |
+| `con_avisos` | Todo cumple, pero algún dato que no es obligatorio es solo declarado o no coincide un preferido | Se firma mostrando los avisos |
+| `escalar` | Datos contradichos, un obligatorio respaldado solo por datos declarados, o elección dominada por otra opción | El proxy retiene el checkout; decide el humano con la evidencia (dashboard) |
+| `bloqueado` | Se viola un obligatorio, el mandato o la política, o el checkout firmado no coincide con lo evaluado | No se presenta para firma |
 
 **Regla de fondo:** el Guard puede bloquear lo que viola reglas explícitas,
 pero **nunca aprueba en silencio lo que no pudo verificar**.

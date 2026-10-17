@@ -12,7 +12,7 @@ import json
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Tipos comunes
@@ -157,6 +157,24 @@ class OfertasVistas(BaseModel):
     comercio_id: str | None = None
 
 
+class CheckoutVisto(BaseModel):
+    """El data part ap2.checkout tal como lo mandó el comercio, sin modificar.
+
+    Lleva el checkout_jwt que firmó el comercio y que el usuario va a firmar
+    después en su CheckoutMandate. El Guard lo LEE (decodifica el payload y
+    recalcula el hash) para atarlo al cart que evaluó; nunca lo modifica.
+    `item_label` y el `title` del JWT son texto libre: ningún chequeo los lee.
+    """
+
+    model_config = ConfigDict(extra="allow")  # item_label, amount_cents… tal cual
+
+    checkout_jwt: str
+    checkout_hash: str | None = None   # el que declaró el comercio
+    cart_id: str | None = None
+    amount: float | None = None
+    currency: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Política de compras
 # ---------------------------------------------------------------------------
@@ -238,8 +256,14 @@ class Evaluador(Protocol):
         politica: Politica | None = None,
         checkout_hash: str | None = None,
         ahora: datetime | None = None,  # para el recibo; None = ahora (UTC)
+        checkout: CheckoutVisto | None = None,  # ap2.checkout firmado, si ya llegó
     ) -> Veredicto:
-        """Determinística y sin I/O. Mismas entradas, mismo veredicto."""
+        """Determinística y sin I/O. Mismas entradas, mismo veredicto.
+
+        Con `checkout`, además ata lo firmado por el comercio al cart evaluado
+        (chequeos con origen "checkout_firmado"). Sin él (benchmark, antes del
+        checkout) ese chequeo no se hace.
+        """
         ...
 
 

@@ -155,6 +155,29 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   usa `origen_usado="declarado"`. El `id` del recibo es `rcb-` + sha256 de las
   entradas sin el texto libre. El adaptador del benchmark no firma el recibo;
   el proxy sí.
+- **Ronda de revisión (2026-10-17), decidido con el equipo:**
+  - **Contrato:** `evaluar(..., checkout: CheckoutVisto | None = None)`, con
+    el data part `ap2.checkout` tal cual. Si viene, el Guard ata lo firmado al
+    cart evaluado (origen `checkout_firmado`): `checkout_hash` recalculado
+    (b64url de sha256 del JWT) distinto del declarado → `bloquea`; `id` del
+    JWT o `cart_id` del checkout distinto del elegido → `bloquea`; total
+    firmado distinto del `amount` evaluado → mandato con el total firmado
+    (sobre el tope → `bloquea`) y si no `escalar`; moneda firmada distinta →
+    `escalar`; `merchant.id` firmado fuera de `comercios_aprobados` →
+    `bloquea`; JWT ilegible → `bloquea`. El `title` del JWT no se lee. Sin
+    `checkout` (benchmark) ese chequeo no se hace.
+  - **`escalar`: el proxy retiene el checkout** (tarea `failed`, "requiere
+    aprobación humana") y el dashboard muestra la evidencia con "Aprobar
+    igual" → `POST :8010/guard/aprobaciones` `{contexto_id, cart_id}`. La
+    aprobación es de un solo uso y vale para ese contexto, cart y monto; el
+    agente reintenta `create_checkout` y el checkout pasa intacto. Eventos:
+    `bloqueado` con `datos.requiere_aprobacion=true`; `reenviado` con
+    `datos.aprobacion_humana=true`.
+  - **Obligatorio respaldado solo por datos declarados → `escalar`** (SKU
+    fuera del catálogo, campo omitido). Un dato solo declarado que no es
+    obligatorio sigue dando `con_avisos`.
+  - **UI de ADK:** cambio mínimo en `shopping_agent/tools.py` para mostrar el
+    motivo cuando la tarea del comercio viene `failed` (en `world/NOTICE.md`).
 - **Benchmark con el plan gratuito de Gemini** (15 pedidos/min):
   `world/bench_con_pausa.py` corre el mismo `benchmark.main()` espaciando las
   llamadas al LLM. No toca `world/ap2/`.

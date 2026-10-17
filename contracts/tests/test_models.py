@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from contracts import (
+    CheckoutVisto,
     Chequeo,
     Evento,
     Ficha,
@@ -94,6 +95,20 @@ def test_veredicto_round_trip_json_con_status():
     dump = v.model_dump(mode="json")
     assert dump["status"] == "bloqueado"
     assert Veredicto.model_validate(dump) == v
+
+
+def test_checkout_visto_conserva_el_data_part_tal_cual():
+    data_part = {
+        "cart_id": "cart_1",
+        "checkout_jwt": "h.p.s",
+        "checkout_hash": "abc",
+        "item_label": "texto libre",
+        "amount": 120.0,
+        "amount_cents": 12000,
+        "currency": "USD",
+    }
+    visto = CheckoutVisto(**data_part)
+    assert visto.model_dump() == data_part
 
 
 def test_evento_minimo():
