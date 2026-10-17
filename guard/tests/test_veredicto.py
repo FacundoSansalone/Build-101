@@ -182,6 +182,66 @@ def test_monto_invalido_en_el_cart_se_escala(vistas, ficha, catalogo, ahora, amo
     assert precio.observado is None
 
 
+# --- cart_id repetido o faltante: escalar y queda en el recibo ------------------------
+
+
+def _vistas_con(vistas, carts_extra=(), detalles_extra=()) -> OfertasVistas:
+    original = vistas("baseline")
+    return OfertasVistas(
+        carts=original.carts + list(carts_extra),
+        offer_details=original.offer_details + list(detalles_extra),
+        comercio_id="merchant_1",
+    )
+
+
+def _integridad_de_entrada(veredicto):
+    return [
+        c for c in veredicto.chequeos
+        if c.tipo == "integridad" and c.campo == "cart_id" and c.resultado == "escalar"
+    ]
+
+
+@pytest.mark.parametrize("cart_id", ["cart_1", "cart_3"])
+def test_cart_id_repetido_en_carts_se_escala(vistas, ficha, catalogo, ahora, cart_id):
+    """Dos carts con el mismo id (otro monto): no se descarta en silencio."""
+    original = vistas("baseline").carts[0]
+    vistas_dup = _vistas_con(vistas, carts_extra=[dict(original, amount=1.0)])
+    veredicto = evaluar(ficha(), vistas_dup, cart_id, catalogo, ahora=ahora)
+    assert veredicto.status == "escalar"
+    (chequeo,) = _integridad_de_entrada(veredicto)
+    assert chequeo.observado == "cart_1"
+    assert "cart_1" not in chequeo.detalle  # el id es texto del comercio
+    assert any("ap2.cart" in motivo for motivo in veredicto.recibo.filtradas["cart_1"])
+
+
+@pytest.mark.parametrize("cart_sin_id", [
+    {"item_label": "x", "amount": 10.0, "currency": "USD"},
+    {"cart_id": "", "amount": 10.0, "currency": "USD"},
+    {"cart_id": None, "amount": 10.0, "currency": "USD"},
+    {"cart_id": 7, "amount": 10.0, "currency": "USD"},
+])
+def test_cart_sin_cart_id_se_escala(vistas, ficha, catalogo, ahora, cart_sin_id):
+    veredicto = evaluar(
+        ficha(), _vistas_con(vistas, carts_extra=[cart_sin_id]), "cart_1", catalogo, ahora=ahora
+    )
+    assert veredicto.status == "escalar"
+    assert _integridad_de_entrada(veredicto)
+    motivos = [m for lista in veredicto.recibo.filtradas.values() for m in lista]
+    assert any("sin cart_id" in m for m in motivos)
+    assert veredicto.recibo.consideradas == ["cart_1", "cart_2", "cart_3", "cart_4"]
+
+
+def test_cart_id_repetido_en_offer_details_se_escala(vistas, ficha, catalogo, ahora):
+    detalle = dict(vistas("baseline").offer_details[0], category="lifestyle_sneakers")
+    veredicto = evaluar(
+        ficha(), _vistas_con(vistas, detalles_extra=[detalle]), "cart_1", catalogo, ahora=ahora
+    )
+    assert veredicto.status == "escalar"
+    (chequeo,) = _integridad_de_entrada(veredicto)
+    assert chequeo.observado == "cart_1"
+    assert any("demo.offer_details" in m for m in veredicto.recibo.filtradas["cart_1"])
+
+
 # --- ficha sin mandato (tope/moneda) o sin confirmar: como mínimo escalar ------------
 
 
