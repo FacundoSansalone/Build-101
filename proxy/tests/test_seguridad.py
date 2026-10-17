@@ -99,7 +99,7 @@ def test_permitir_remoto_desde_el_entorno():
 
 
 async def test_solo_se_sirven_las_rutas_de_la_card(cliente: httpx.AsyncClient, merchant):
-    for resto in ("otra-cosa", ".well-known/otra.json", "../../guard/state",
+    for resto in ("otra-cosa", ".well-known/otra.json", "%2e%2e/%2e%2e/guard/state",
                   ".well-known/agent-card.json/x"):
         resp = await cliente.get(f"/a2a/merchant_agent/{resto}")
         assert resp.status_code == 404, resto

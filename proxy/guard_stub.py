@@ -12,7 +12,15 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from contracts import Chequeo, Ficha, OfertasVistas, Politica, Recibo, Veredicto
+from contracts import (
+    CheckoutVisto,
+    Chequeo,
+    Ficha,
+    OfertasVistas,
+    Politica,
+    Recibo,
+    Veredicto,
+)
 
 SIN_VERIFICAR = ["calidad", "entrega", "reputación"]
 
@@ -25,7 +33,12 @@ def evaluar(
     politica: Politica | None = None,
     checkout_hash: str | None = None,
     ahora: datetime | None = None,
+    checkout: CheckoutVisto | None = None,
 ) -> Veredicto:
+    # El stub no ata lo firmado al cart (eso lo hace guard/): solo toma el
+    # hash del checkout si no vino aparte.
+    if checkout_hash is None and checkout is not None:
+        checkout_hash = checkout.checkout_hash
     cart_ids = [str(c.get("cart_id")) for c in ofertas_vistas.carts]
     ultimo = cart_ids[-1] if cart_ids else None
     ranking = [c for c in cart_ids if c != ultimo]

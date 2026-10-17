@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from collections import deque
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from contracts import Evento
+from proxy.config import MAX_SUSCRIPTORES_SSE
 
 logger = logging.getLogger("proxy.eventos")
 
@@ -18,10 +20,16 @@ CAPACIDAD = 200
 
 
 class BusDeEventos:
-    def __init__(self, jsonl: Path | None, capacidad: int = CAPACIDAD) -> None:
+    def __init__(
+        self,
+        jsonl: Path | None,
+        capacidad: int = CAPACIDAD,
+        max_suscriptores: int = MAX_SUSCRIPTORES_SSE,
+    ) -> None:
         self._buffer: deque[Evento] = deque(maxlen=capacidad)
         self._suscriptores: set[asyncio.Queue[Evento]] = set()
         self._jsonl = jsonl
+        self._max_suscriptores = max_suscriptores
 
     def emitir(
         self,
@@ -61,8 +69,14 @@ class BusDeEventos:
         eventos = list(self._buffer)
         return eventos[-limit:] if limit else eventos
 
-    def suscribir(self) -> tuple[list[Evento], asyncio.Queue[Evento]]:
-        """Devuelve los eventos en memoria y una cola con los que vengan."""
+    def suscribir(self) -> tuple[list[Evento], asyncio.Queue[Evento]] | None:
+        """Los eventos en memoria y una cola con los que vengan.
+
+        None si ya hay `max_suscriptores` conectados (cada uno guarda hasta
+        1000 eventos en su cola: el tope acota la memoria).
+        """
+        if len(self._suscriptores) >= self._max_suscriptores:
+            return None
         cola: asyncio.Queue[Evento] = asyncio.Queue(maxsize=1000)
         self._suscriptores.add(cola)
         return list(self._buffer), cola
@@ -75,7 +89,10 @@ class BusDeEventos:
             return
         try:
             self._jsonl.parent.mkdir(parents=True, exist_ok=True)
-            with self._jsonl.open("a", encoding="utf-8") as f:
+            # Lleva mandatos y checkouts completos: el archivo se crea solo
+            # legible por el dueño (en Windows el modo se ignora).
+            fd = os.open(self._jsonl, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(evento.model_dump_json() + "\n")
         except OSError as e:
             logger.warning("No se pudo escribir %s: %s", self._jsonl, e)

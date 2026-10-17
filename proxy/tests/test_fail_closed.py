@@ -280,7 +280,7 @@ async def test_veredicto_registra_fuente_http_y_recibo_firmado(cliente):
 async def test_veredicto_registra_fuente_fixture_si_el_catalogo_no_responde(
     armar_proxy, merchant
 ):
-    evaluador, _ = evaluador_espia()
+    evaluador, _ = evaluador_espia("aprobado")  # veredicto sin recibo
     app = armar_proxy(transport=RuteoPorHost({MERCHANT_HOST: merchant.app}), evaluador=evaluador)
     async with cliente_de(app) as c:
         contexto = await buscar(c, "B")

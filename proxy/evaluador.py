@@ -11,7 +11,7 @@ import importlib
 import inspect
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal
@@ -24,10 +24,35 @@ logger = logging.getLogger("proxy.evaluador")
 KID_POR_DEFECTO = "guard-key-1"  # CLAUDE.md → Decisiones, punto 6
 
 
+def acepta_parametro(funcion: Callable[..., Any], nombre: str) -> bool:
+    """¿`funcion` acepta `nombre=` como keyword? (o tiene **kwargs)."""
+    try:
+        parametros = inspect.signature(funcion).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            p.name == nombre
+            and p.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        )
+        for p in parametros
+    )
+
+
 @dataclass(frozen=True)
 class EvaluadorCargado:
     evaluar: Callable[..., Veredicto]
     nombre: Literal["guard", "stub"]
+    # Se detecta en tiempo de ejecución: un guard/ viejo (o un stub) puede no
+    # aceptar todavía `checkout=` (CLAUDE.md → Ronda de revisión 2026-10-17).
+    acepta_checkout: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "acepta_checkout", acepta_parametro(self.evaluar, "checkout")
+        )
 
 
 def cargar_evaluador() -> EvaluadorCargado:
@@ -82,6 +107,16 @@ def _cargar_clave(modulo: ModuleType, key_path: Path) -> Any:
     except (TypeError, ValueError):
         acepta_ruta = True
     return cargar(key_path) if acepta_ruta else cargar()
+
+
+def preparar_clave(key_path: Path) -> bool:
+    """Crea (o carga) la clave del recibo al arrancar el proxy, no en la
+    primera decisión. False si no hay `guard.recibo`."""
+    modulo = _modulo_recibo()
+    if modulo is None:
+        return False
+    _cargar_clave(modulo, key_path)
+    return True
 
 
 def firmar_recibo(veredicto: Veredicto, key_path: Path) -> Veredicto:
