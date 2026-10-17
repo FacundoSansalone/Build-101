@@ -18,9 +18,10 @@ PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m dashboard     # Linux/macOS: worl
 
 | Variable | Default | Para qué |
 |---|---|---|
-| `DASHBOARD_PORT` | `8020` | Puerto del panel |
-| `DASHBOARD_HOST` | `127.0.0.1` | Interfaz. Abrilo como `localhost`: WebCrypto (verificar el recibo) no anda por IP de red sin HTTPS |
-| `PROXY_URL` | `http://localhost:8010` | Proxy del Guard |
+| `DASHBOARD_PORT` | `8020` | Puerto del panel (también define qué `Host` y `Origin` acepta su API) |
+| `DASHBOARD_HOST` | `127.0.0.1` | Interfaz. Abrilo como `localhost`: WebCrypto (verificar el recibo) no anda por IP de red sin HTTPS. **Fuera de loopback no arranca** salvo `DASHBOARD_ALLOW_REMOTE=1` |
+| `DASHBOARD_ALLOW_REMOTE` | `0` | `1` para escuchar en la red (no recomendado: muestra mandatos y checkouts completos) |
+| `PROXY_URL` | `http://localhost:8010` | Proxy del Guard. Dejalo en `localhost`: el proxy solo acepta `Host` local |
 
 Atajos de teclado: `1`–`6` cambian de vista. El tema (auto, claro, oscuro) se
 cambia con el botón al lado del nombre.
@@ -74,6 +75,29 @@ Para no depender del flujo en vivo el día de la demo:
 4. El día de la demo: **Replay (archivo)** → elegir el ensayo. El panel recuerda
    la fuente y el archivo elegidos.
 
+## Escalar: retenido y "Aprobar igual"
+
+Cuando el Guard da `escalar`, el proxy **retiene** el checkout (la tarea vuelve
+`failed`, sin el `ap2.checkout`) y emite `bloqueado` con
+`datos.requiere_aprobacion=true`. El panel lo muestra como **"Retenido —
+esperando decisión humana"** (en Flujo, Veredicto y el momento clave) con la
+evidencia del Guard (motivo y chequeos que no dieron OK) y el botón
+**Aprobar igual**:
+
+1. El botón hace `POST /api/proxy/guard/aprobaciones` con
+   `{"contexto_id", "cart_id"}` (JSON). El servidor del panel lo valida y lo
+   reenvía al proxy (`POST :8010/guard/aprobaciones`).
+2. Con la aprobación pendiente, el panel dice **"Aprobado por humano: pedile al
+   agente que reintente el checkout"** (lo sabe por
+   `GET /api/proxy/guard/aprobaciones`, que consulta cada 4 s en vivo).
+3. El agente reintenta `create_checkout`; el Guard vuelve a evaluar. Si sigue
+   en `escalar` con el mismo monto, el checkout pasa intacto y el proxy emite
+   `reenviado` con `aprobacion_humana=true`: el panel muestra **"Aprobado por
+   humano"**. La aprobación es de un solo uso y no salta un `bloqueado`.
+
+El botón solo está activo en vivo con el proxy conectado; en replay se ven los
+estados pero no se puede aprobar.
+
 ## Qué se ve en cada vista
 
 1. **Momento clave.** Escenario B (se puede cambiar) en dos columnas con los
@@ -86,15 +110,22 @@ Para no depender del flujo en vivo el día de la demo:
    registró), con el control de que referencian el mismo `checkout_hash`.
    *Con Guard*: el texto libre descartado, los campos tipados que sí se usan,
    el mismo checkout intacto, AP2 OK, el verificador contra `:8011`, los
-   chequeos, el ranking propio, **bloqueado antes de la firma** y el recibo con
-   su verificación. Arriba, la frase: "Todas las firmas son válidas y AP2 aprobó
-   todo. Y aun así el usuario compró algo que no quería."
+   chequeos, la **atadura checkout firmado ↔ cart evaluado** (chequeos con
+   `origen="checkout_firmado"`), la fuente del catálogo y si el recibo quedó
+   firmado, el ranking propio, **bloqueado antes de la firma** (o retenido con
+   "Aprobar igual") y el recibo con su verificación. Arriba, la frase: "Todas
+   las firmas son válidas y AP2 aprobó todo. Y aun así el usuario compró algo
+   que no quería."
 2. **Flujo.** Lista de compras (agrupadas por `contexto_id`) y la línea de
    tiempo de cada una, con los datos de cada evento. El interruptor del Guard
    está siempre en la barra.
-3. **Veredicto.** Status grande con color, ícono y texto; motivo; chequeos
-   agrupados por tipo (cumplimiento, evidencia, integridad, política, mandato)
-   con esperado, observado y origen; ranking propio contra el elegido.
+3. **Veredicto.** Status grande con color, ícono y texto; motivo; desenlace
+   (bloqueado, retenido, aprobado por humano); fuente del catálogo (`http` =
+   `:8011`, `fixture` = copia local) y recibo firmado o no; panel de
+   aprobación si está retenido; tabla **"Checkout firmado ↔ cart evaluado"**
+   con los chequeos de origen `checkout_firmado`; chequeos agrupados por tipo
+   (cumplimiento, evidencia, integridad, política, mandato) con esperado,
+   observado y origen; ranking propio contra el elegido.
 4. **Recibo.** Consideradas, filtradas con motivos, verificaciones contra el
    catálogo, por qué ganó, lo que quedó sin verificar, `checkout_hash` (contra
    el `ap2.checkout` y contra el SHA-256 del JWT), `kid` y **verificación de la
@@ -123,9 +154,26 @@ Para no depender del flujo en vivo el día de la demo:
 | `GET /api/replay` · `/api/replay/{nombre}` | Archivos `.jsonl` y sus `Evento` validados (las líneas inválidas se cuentan en `X-Lineas-Invalidas`) |
 | `GET /api/public-key` | Clave pública del Guard (proxy o local) |
 | `GET/POST /api/proxy/guard/state`, `GET /api/proxy/guard/events` (SSE), `GET /api/proxy/guard/events/history` | Reenvío al proxy |
+| `GET /api/proxy/guard/aprobaciones` | Reenvío de `GET :8010/guard/aprobaciones` (`{"pendientes", "usadas"}`) |
+| `POST /api/proxy/guard/aprobaciones` con `{"contexto_id": str, "cart_id": str}` | Valida (400 si no es exactamente eso) y reenvía al proxy; devuelve su status (201, 200, 409) |
 
 Los nombres de archivo se buscan en una lista blanca armada listando las
 carpetas: no hay path traversal.
+
+### Seguridad de la API
+
+El servidor del panel es la puerta al proxy (reenvía el interruptor y las
+aprobaciones), así que se protege igual que `/guard/*`:
+
+- `/api/*` solo atiende `Host` = `localhost:<DASHBOARD_PORT>` o
+  `127.0.0.1:<DASHBOARD_PORT>` (403 si no): frena el DNS rebinding.
+- Los POST exigen `Content-Type: application/json` (415) y, si traen `Origin`,
+  que sea el del propio panel (403): una página ajena no puede apagar el Guard
+  ni aprobar un checkout.
+- Al reenviar, el servidor manda JSON, sin `Origin` y con el `Host` de
+  `PROXY_URL` (`localhost:8010`), así pasa los mismos controles del proxy.
+- Los mandatos y el `checkout_jwt` completos se muestran (la demo lo exige);
+  por eso el panel y el proxy escuchan solo en loopback.
 
 ## Tests
 
@@ -142,10 +190,14 @@ con el decodificador SD-JWT del panel.
 
 ## Notas para el equipo
 
-- `busqueda_enviada` llega del proxy con `contexto_id: null` (se emite antes de
-  que el comercio asigne el context_id). El panel la asocia a la compra del
-  mismo escenario que empieza dentro de los 60 s siguientes y lo marca en la
-  línea de tiempo.
+- `busqueda_enviada` llega del proxy con su `contexto_id` (el del pedido o el
+  de la respuesta del comercio). Solo para registros viejos que la traen con
+  `contexto_id: null` queda el respaldo: se asocia a la primera compra del
+  mismo escenario que empieza dentro de los 60 s siguientes y que todavía no
+  tiene su búsqueda, y la línea de tiempo lo marca como asociada por tiempo.
+- El estado de una compra sale del **último desenlace** de checkout
+  (`bloqueado` o `reenviado` de `create_checkout`): una compra puede pasar de
+  retenida a aprobada por humano en un reintento.
 - Los mandatos se leen de `reenviado.datos.mandatos` si el proxy los registra
   (un objeto `clave A2A → SD-JWT`, una lista o un string). Sin eso, la columna
   "Sin Guard" muestra que el checkout llegó intacto a la firma pero no puede
