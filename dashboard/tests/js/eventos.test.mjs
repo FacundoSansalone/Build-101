@@ -37,6 +37,25 @@ test("agruparCompras separa por contexto y deja aparte los de sistema", () => {
   assert.deepEqual(compras.map((c) => c.contextoId), ["ctx-2", "ctx-1"]);
 });
 
+test("busqueda_enviada sin contexto se asocia a la compra que empieza después", () => {
+  const t0 = Date.UTC(2026, 0, 2, 0, 0, 0);
+  const at = (s) => new Date(t0 + s * 1000).toISOString();
+  const evs = [
+    ev("busqueda_enviada", { contexto_id: null, escenario: "B", ts: at(0), datos: { catalog_search: "búsqueda test 1" } }),
+    ev("ofertas_recibidas", { contexto_id: "ctx-a", escenario: "B", ts: at(1) }),
+    ev("busqueda_enviada", { contexto_id: null, escenario: "C", ts: at(10), datos: { catalog_search: "búsqueda test 2" } }),
+    ev("ofertas_recibidas", { contexto_id: "ctx-b", escenario: "B", ts: at(11) }),
+    ev("busqueda_enviada", { contexto_id: null, escenario: "B", ts: at(500) }),
+    ev("guard_cambiado", { contexto_id: null, ts: at(501), datos: { guard_activo: false } }),
+  ];
+  const { compras, sistema } = agruparCompras(evs);
+  const porId = Object.fromEntries(compras.map((c) => [c.contextoId, c]));
+  assert.equal(porId["ctx-a"].busqueda, "búsqueda test 1");
+  assert.equal(porId["ctx-a"].eventos[0].tipo, "busqueda_enviada");
+  assert.equal(porId["ctx-b"].busqueda, null); // la de C no es del mismo escenario
+  assert.deepEqual(sistema.map((e) => e.tipo), ["busqueda_enviada", "busqueda_enviada", "guard_cambiado"]);
+});
+
 test("compra bloqueada con Guard: elegido, estado y guard del momento de la decisión", () => {
   const evs = [
     ev("busqueda_enviada", { contexto_id: "ctx-b", guard_activo: true, datos: { catalog_search: "x" } }),

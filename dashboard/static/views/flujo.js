@@ -34,6 +34,7 @@ export function selectorCompra(ctx, { soloConVeredicto = false } = {}) {
   return h("div", { class: "filtros" },
     h("label", { class: "campo" }, h("span", { text: "Compra" }),
       h("select", {
+        name: "compra",
         disabled: lista.length === 0 ? true : null,
         onchange: (e) => ctx.set({ compraSel: e.target.value || null, seguirUltima: !e.target.value }),
       },
@@ -110,7 +111,9 @@ function lineaDeTiempo(compra, ctx) {
           h("p", { class: "evento-linea" },
             h("time", { class: "mono", datetime: e.ts, text: hora(e.ts) }),
             h("strong", { text: d.titulo }),
-            e.guard_activo ? null : h("span", { class: "nota", text: "(Guard apagado)" })),
+            e.guard_activo ? null : h("span", { class: "nota", text: "(Guard apagado)" }),
+            e.contexto_id ? null : h("span", { class: "nota", title: "El proxy la emite antes de conocer el context_id",
+              text: "(sin contexto_id: asociada por tiempo)" })),
           d.resumen ? h("p", { class: "evento-resumen", text: d.resumen }) : null,
           h("details", {
             class: "mas", open: abierto ? true : null,

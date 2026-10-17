@@ -25,22 +25,53 @@ export function fusionarEventos(existentes, nuevos) {
     .map(([e]) => e);
 }
 
+// Una búsqueda sin contexto se asocia a la compra que empieza después, si
+// empieza dentro de esta ventana.
+export const VENTANA_BUSQUEDA_MS = 60_000;
+
 /**
  * Agrupa por `contexto_id` (una compra). Devuelve las compras de la más
  * reciente a la más vieja, y aparte los eventos sin contexto (interruptor,
  * errores del proxy).
+ *
+ * El proxy emite `busqueda_enviada` antes de conocer el context_id (lo asigna
+ * el comercio en la respuesta), así que llega con `contexto_id: null`. Se
+ * asocia a la primera compra del mismo escenario que empieza después, dentro
+ * de VENTANA_BUSQUEDA_MS. La vista lo marca como asociado por tiempo.
  */
 export function agruparCompras(eventos) {
   const porContexto = new Map();
-  const sistema = [];
+  const sueltos = [];
   for (const e of eventos || []) {
     if (!e.contexto_id) {
-      sistema.push(e);
+      sueltos.push(e);
       continue;
     }
     if (!porContexto.has(e.contexto_id)) porContexto.set(e.contexto_id, []);
     porContexto.get(e.contexto_id).push(e);
   }
+
+  const inicios = [...porContexto.entries()]
+    .map(([id, evs]) => ({ id, inicio: tiempo(evs[0]), escenario: evs.find((x) => x.escenario)?.escenario ?? null }))
+    .sort((a, b) => a.inicio - b.inicio);
+  const conBusqueda = new Set();
+  const sistema = [];
+  for (const e of sueltos) {
+    if (e.tipo !== "busqueda_enviada") {
+      sistema.push(e);
+      continue;
+    }
+    const t = tiempo(e);
+    const destino = inicios.find((c) => !conBusqueda.has(c.id) && c.inicio >= t &&
+      c.inicio - t <= VENTANA_BUSQUEDA_MS && (!e.escenario || !c.escenario || c.escenario === e.escenario));
+    if (!destino) {
+      sistema.push(e);
+      continue;
+    }
+    conBusqueda.add(destino.id);
+    porContexto.get(destino.id).unshift(e);
+  }
+
   const compras = [...porContexto.entries()].map(([id, evs]) => armarCompra(id, evs));
   compras.sort((a, b) => b.ultimoTs - a.ultimoTs);
   return { compras, sistema };
