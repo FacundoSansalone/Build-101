@@ -207,7 +207,7 @@ def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
             f"{nombre} {declarado}: solo lo declara el comercio, no hay fuente "
             "independiente para verificarlo."
         )
-    return f"{nombre} {publico} verificado contra el catálogo público."
+    return f"{nombre} {publico}: coincide con el catálogo público."
 
 
 # ---------------------------------------------------------------------------
@@ -318,13 +318,14 @@ def _detalle_requisito(
         referencia = "el preferido"
 
     if requisito.campo == "precio" and requisito.operador == "maximo":
-        tope = f"{referencia} ({monto(requisito.valor, oferta.moneda)})"
+        # "el mandato" -> "del mandato", "el obligatorio" -> "del obligatorio"
+        tope = f"d{referencia} ({monto(requisito.valor, oferta.moneda)})"
         cobrado = monto(oferta.precio, oferta.moneda)
         if resultado_cumple is None:
-            return f"Precio {cobrado}: no se puede comparar con el tope de {tope}."
+            return f"Precio {cobrado}: no se puede comparar con el tope {tope}."
         if resultado_cumple:
-            return f"Precio {cobrado} dentro del tope de {tope}."
-        return f"Precio {cobrado} supera el tope de {tope}."
+            return f"Precio {cobrado} dentro del tope {tope}."
+        return f"Precio {cobrado} supera el tope {tope}."
 
     pedido = formatear(requisito.valor)
     if resultado_cumple is None:

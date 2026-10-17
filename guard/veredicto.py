@@ -30,6 +30,7 @@ from guard.chequeos import (
 )
 from guard.extractor import extraer_ofertas
 from guard.ranking import chequeo_integridad, rankear
+from guard.recibo import armar_recibo
 from guard.verificador import verificar_todas
 
 _STATUS_POR_RESULTADO: dict[str, Status] = {
@@ -98,6 +99,17 @@ def evaluar(
         ]
 
     status = agregar(chequeos)
+    recibo = armar_recibo(
+        ficha=ficha,
+        ofertas=ofertas,
+        puntajes=puntajes,
+        cart_id_elegido=cart_id_elegido,
+        comercio_id=comercio_id,
+        politica=politica,
+        status=status,
+        checkout_hash=checkout_hash,
+        ahora=ahora,
+    )
     return Veredicto(
         status=status,
         cart_id_elegido=cart_id_elegido,
@@ -105,6 +117,7 @@ def evaluar(
         ranking=ranking,
         chequeos=chequeos,
         motivo=redactar_motivo(status, chequeos),
+        recibo=recibo,
     )
 
 
