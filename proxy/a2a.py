@@ -153,12 +153,6 @@ class Respuesta:
                 self.checkout = datos[CHECKOUT_KEY]
 
 
-def tiene_checkout(result: dict[str, Any]) -> bool:
-    respuesta = Respuesta()
-    respuesta.ingerir(result)
-    return respuesta.checkout is not None
-
-
 # ---------------------------------------------------------------------------
 # Lo que agrega el proxy (nunca toca lo que vino del comercio)
 # ---------------------------------------------------------------------------

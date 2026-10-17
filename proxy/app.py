@@ -325,7 +325,8 @@ class ProxyGuard:
             await resp.aclose()
         if not ofertas_registradas:
             self._registrar_ofertas(respuesta, pedido, guard_activo)
-        if not checkout_visto or (checkout_visto and not guard_activo):
+        if not checkout_visto or not guard_activo:
+            # Con Guard y checkout, el evento final ya salió en _emitir_resultado.
             self._emitir_reenviado(pedido, respuesta, guard_activo)
 
     def _sse_con_decision(

@@ -162,6 +162,39 @@ async def test_bloqueado_eventos(cliente: httpx.AsyncClient):
     assert bloqueado["datos"]["motivo"] == veredicto["datos"]["veredicto"]["motivo"]
 
 
+async def test_tasks_get_de_una_tarea_bloqueada_tampoco_trae_el_checkout(
+    cliente: httpx.AsyncClient, merchant: FakeMerchant
+):
+    contexto = await _buscar(cliente)
+    bloqueada = (await _checkout(cliente, contexto, "cart_4")).json()["result"]
+    eventos_antes = len(await _eventos(cliente))
+
+    pedido = {"id": "g-1", "jsonrpc": "2.0", "method": "tasks/get",
+              "params": {"id": bloqueada["id"]}}
+    resp = await cliente.post(RPC, content=cuerpo(pedido), headers=HEADERS_A2A)
+
+    # El comercio sí devuelve el checkout guardado; el proxy no lo deja pasar.
+    assert _checkouts(json.loads(merchant.ultima_respuesta)["result"])
+    task = resp.json()["result"]
+    assert task["status"]["state"] == "failed"
+    assert _checkouts(task) == []
+    nuevos = [e["tipo"] for e in (await _eventos(cliente))[eventos_antes:]]
+    assert "veredicto" not in nuevos  # no se vuelve a evaluar
+    assert nuevos[-1] == "bloqueado"
+
+
+async def test_sse_guard_apagado_passthrough(
+    cliente: httpx.AsyncClient, merchant: FakeMerchant
+):
+    await cliente.post("/guard/state", json={"guard_activo": False})
+    contexto = await _buscar(cliente)
+    resp = await _checkout_stream(cliente, contexto, "cart_4")
+
+    assert parsear_sse(resp.content) == parsear_sse(merchant.ultima_respuesta)
+    tipos = [e["tipo"] for e in await _eventos(cliente)]
+    assert tipos[-3:] == ["checkout_pedido", "checkout_recibido", "reenviado"]
+
+
 async def test_escalar_deja_el_checkout_y_agrega_veredicto(
     armar_proxy, merchant: FakeMerchant
 ):

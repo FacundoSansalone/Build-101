@@ -107,6 +107,7 @@ class FakeMerchant:
         self.recibidos: list[tuple[bytes, dict[str, str]]] = []
         self.ultima_respuesta: bytes | None = None
         self.ultimo_checkout: dict[str, Any] | None = None
+        self.tareas: dict[str, dict[str, Any]] = {}
         self._n = 0
         self._escenario_por_contexto: dict[str, str] = {}
         self.app = Starlette(
@@ -152,6 +153,14 @@ class FakeMerchant:
         raw = await request.body()
         self.recibidos.append((raw, dict(request.headers)))
         body = json.loads(raw)
+        if body.get("method") == "tasks/get":
+            task_json = self.tareas[body["params"]["id"]]
+            contenido = json.dumps(
+                {"id": body.get("id"), "jsonrpc": "2.0", "result": task_json},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.ultima_respuesta = contenido
+            return Response(contenido, media_type="application/json")
         message = body["params"]["message"]
         data_parts = [
             p["data"] for p in message.get("parts", []) if p.get("kind") == "data"
@@ -181,11 +190,9 @@ class FakeMerchant:
             artifacts=artifacts or None,
             history=history,
         )
-        respuesta = {
-            "id": body.get("id"),
-            "jsonrpc": "2.0",
-            "result": task.model_dump(mode="json", by_alias=True, exclude_none=True),
-        }
+        task_json = task.model_dump(mode="json", by_alias=True, exclude_none=True)
+        self.tareas[task_id] = task_json
+        respuesta = {"id": body.get("id"), "jsonrpc": "2.0", "result": task_json}
         contenido = json.dumps(respuesta, ensure_ascii=False).encode("utf-8")
         self.ultima_respuesta = contenido
         return Response(contenido, media_type="application/json", headers=headers)

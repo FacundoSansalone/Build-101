@@ -11,7 +11,6 @@ from a2a.client.client_task_manager import ClientTaskManager
 from a2a.types import AgentCard, DataPart, Message, Part, Role, TextPart
 
 from proxy.tests.fake_world import (
-    MERCHANT_HOST,
     PROXY_PUBLIC_URL,
     FakeMerchant,
     RuteoPorHost,
