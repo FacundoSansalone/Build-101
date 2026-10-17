@@ -21,7 +21,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Iterable
 
-from contracts import Chequeo, Ficha, OfertasVistas, Politica, Status, Veredicto
+from contracts import (
+    CheckoutVisto,
+    Chequeo,
+    Ficha,
+    OfertasVistas,
+    Politica,
+    Status,
+    Veredicto,
+)
+from guard.checkout import chequeos_checkout
 from guard.chequeos import (
     chequeos_cumplimiento,
     chequeos_evidencia,
@@ -76,8 +85,15 @@ def evaluar(
     politica: Politica | None = None,
     checkout_hash: str | None = None,
     ahora: datetime | None = None,
+    checkout: CheckoutVisto | None = None,
 ) -> Veredicto:
-    """Determinística y sin I/O. Mismas entradas, mismo veredicto."""
+    """Determinística y sin I/O. Mismas entradas, mismo veredicto.
+
+    Con `checkout` (el data part ap2.checkout tal cual), además ata lo que
+    firmó el comercio al cart evaluado (chequeos con origen
+    "checkout_firmado") y el recibo lleva el hash recalculado del JWT. Sin
+    `checkout` no se agrega ningún chequeo de checkout.
+    """
     if politica is None:
         politica = Politica()
     comercio_id = ofertas_vistas.comercio_id
@@ -98,6 +114,19 @@ def evaluar(
             *chequeos_politica(politica, elegida, comercio_id),
         ]
 
+    hash_recibo = checkout_hash
+    if checkout is not None:
+        del_checkout, hash_recibo = chequeos_checkout(
+            checkout,
+            cart_id_elegido=cart_id_elegido,
+            elegida=elegida,
+            ficha=ficha,
+            politica=politica,
+            comercio_id=comercio_id,
+            checkout_hash=checkout_hash,
+        )
+        chequeos += del_checkout
+
     status = agregar(chequeos)
     recibo = armar_recibo(
         ficha=ficha,
@@ -107,7 +136,7 @@ def evaluar(
         comercio_id=comercio_id,
         politica=politica,
         status=status,
-        checkout_hash=checkout_hash,
+        checkout_hash=hash_recibo,
         ahora=ahora,
     )
     return Veredicto(

@@ -25,6 +25,7 @@ from typing import Any
 
 from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Politica, Requisito
 from guard.normalizar import EPSILON_MONTO, contiene, contiene_todos, iguales, numero
+from guard.textos import moneda_legible
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
 ATRIBUTO_POR_CAMPO: dict[str, str] = {
@@ -300,9 +301,12 @@ def formatear(valor: Any) -> str:
     return str(valor)
 
 
-def monto(precio: Any, moneda: str) -> str:
+def monto(precio: Any, moneda: Any) -> str:
+    """"USD 120.00". La moneda solo se muestra si es un código ISO de 3 letras."""
     valor = numero(precio)
-    return f"{moneda} {valor:.2f}".strip() if valor is not None else "ilegible"
+    if valor is None:
+        return "ilegible"
+    return f"{moneda_legible(moneda)} {valor:.2f}".strip()
 
 
 def _detalle_requisito(

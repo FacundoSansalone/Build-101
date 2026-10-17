@@ -14,7 +14,6 @@ El recibo referencia los objetos firmados de AP2 por hash
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import os
@@ -37,6 +36,8 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from contracts import Ficha, Oferta, Politica, Recibo, Status
+from guard.b64 import b64url as _b64url
+from guard.b64 import b64url_decode as _b64url_decode
 from guard.chequeos import chequeos_cumplimiento, chequeos_mandato
 from guard.ranking import Puntaje, describir
 from guard.verificador import NO_VERIFICABLES
@@ -269,17 +270,3 @@ def _publica(clave: ClaveEC) -> ec.EllipticCurvePublicKey:
     return clave
 
 
-def _b64url(datos: bytes) -> str:
-    return base64.urlsafe_b64encode(datos).rstrip(b"=").decode("ascii")
-
-
-def _b64url_decode(texto: str) -> bytes:
-    """Decodifica base64url sin relleno; lanza ValueError si es inválido."""
-    if not texto or any(c not in _ALFABETO_B64URL for c in texto):
-        raise ValueError("base64url inválido")
-    return base64.urlsafe_b64decode(texto + "=" * (-len(texto) % 4))
-
-
-_ALFABETO_B64URL = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-)
