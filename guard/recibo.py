@@ -35,10 +35,10 @@ from cryptography.hazmat.primitives.serialization import (
     load_pem_private_key,
 )
 
-from contracts import Ficha, Oferta, Politica, Recibo, Status
+from contracts import Chequeo, Ficha, Oferta, Politica, Recibo, Status
 from guard.b64 import b64url as _b64url
 from guard.b64 import b64url_decode as _b64url_decode
-from guard.chequeos import chequeos_cumplimiento, chequeos_mandato
+from guard.extractor import Descarte
 from guard.ranking import Puntaje, describir
 from guard.verificador import NO_VERIFICABLES
 
@@ -57,6 +57,8 @@ def armar_recibo(
     *,
     ficha: Ficha,
     ofertas: list[Oferta],
+    requisitos_por_oferta: dict[str, list[Chequeo]],
+    descartes: list[Descarte],
     puntajes: list[Puntaje],
     cart_id_elegido: str,
     comercio_id: str | None,
@@ -74,12 +76,13 @@ def armar_recibo(
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
     return Recibo(
         id=_id_recibo(
-            ficha, ofertas, cart_id_elegido, comercio_id, politica, checkout_hash, emitido
+            ficha, ofertas, descartes, cart_id_elegido, comercio_id, politica,
+            checkout_hash, emitido,
         ),
         emitido=emitido,
         ficha=ficha,
         consideradas=[o.cart_id for o in ofertas],
-        filtradas=_filtradas(ficha, ofertas, comercio_id),
+        filtradas=_filtradas(requisitos_por_oferta, descartes),
         verificaciones=list(elegida.evidencia.values()) if elegida else [],
         ranking=[p.cart_id for p in puntajes],
         elegido=cart_id_elegido,
@@ -93,6 +96,7 @@ def armar_recibo(
 def _id_recibo(
     ficha: Ficha,
     ofertas: list[Oferta],
+    descartes: list[Descarte],
     cart_id_elegido: str,
     comercio_id: str | None,
     politica: Politica,
@@ -102,6 +106,7 @@ def _id_recibo(
     entradas = {
         "ficha": ficha.model_dump(mode="json"),
         "ofertas": [o.model_dump(mode="json") for o in ofertas],
+        "descartes": [d.chequeo.model_dump(mode="json") for d in descartes],
         "cart_id_elegido": cart_id_elegido,
         "comercio_id": comercio_id,
         "politica": politica.model_dump(mode="json"),
@@ -114,19 +119,24 @@ def _id_recibo(
     return "rcb-" + hashlib.sha256(canonico.encode("utf-8")).hexdigest()[:32]
 
 
+SIN_CART_ID = "(sin cart_id)"  # clave de filtradas para carts sin cart_id válido
+
+
 def _filtradas(
-    ficha: Ficha, ofertas: list[Oferta], comercio_id: str | None
+    requisitos_por_oferta: dict[str, list[Chequeo]], descartes: list[Descarte]
 ) -> dict[str, list[str]]:
-    """Ofertas que no cumplen algún obligatorio (o el mandato), con el motivo."""
+    """Ofertas que no pasan el mandato o un obligatorio, y lo descartado.
+
+    Sale de los chequeos que ya calculó `evaluar()` (no repite la lógica).
+    """
     filtradas: dict[str, list[str]] = {}
-    for oferta in ofertas:
-        chequeos = [
-            *chequeos_mandato(ficha, oferta, comercio_id),
-            *chequeos_cumplimiento(ficha, oferta, comercio_id),
-        ]
+    for cart_id, chequeos in requisitos_por_oferta.items():
         motivos = [c.detalle for c in chequeos if c.resultado in ("bloquea", "escalar")]
         if motivos:
-            filtradas[oferta.cart_id] = motivos
+            filtradas[cart_id] = motivos
+    for descarte in descartes:
+        clave = descarte.cart_id if descarte.cart_id is not None else SIN_CART_ID
+        filtradas.setdefault(clave, []).append(descarte.chequeo.detalle)
     return filtradas
 
 

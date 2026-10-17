@@ -38,7 +38,7 @@ from guard.chequeos import (
     chequeos_mandato,
     chequeos_politica,
 )
-from guard.extractor import extraer_ofertas
+from guard.extractor import extraer
 from guard.ranking import chequeo_integridad, rankear
 from guard.recibo import armar_recibo
 from guard.verificador import verificar_todas
@@ -126,19 +126,29 @@ def evaluar(
     if politica is None:
         politica = Politica()
     comercio_id = ofertas_vistas.comercio_id
-    ofertas = verificar_todas(extraer_ofertas(ofertas_vistas), catalogo)
+    extraccion = extraer(ofertas_vistas)
+    ofertas = verificar_todas(extraccion.ofertas, catalogo)
     puntajes = rankear(ficha, ofertas, comercio_id)
     ranking = [p.cart_id for p in puntajes]
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
+    # Mandato y cumplimiento de cada oferta, una sola vez: los de la elegida
+    # deciden el veredicto y los de todas arman `recibo.filtradas`.
+    requisitos_por_oferta = {
+        o.cart_id: [
+            *chequeos_mandato(ficha, o, comercio_id),
+            *chequeos_cumplimiento(ficha, o, comercio_id),
+        ]
+        for o in ofertas
+    }
 
     chequeos = chequeos_ficha(ficha)
+    chequeos += [descarte.chequeo for descarte in extraccion.descartes]
     if elegida is None:
         chequeos.append(_chequeo_elegido_desconocido(cart_id_elegido))
     else:
         puntaje_elegido = next(p for p in puntajes if p.cart_id == cart_id_elegido)
         chequeos += [
-            *chequeos_mandato(ficha, elegida, comercio_id),
-            *chequeos_cumplimiento(ficha, elegida, comercio_id),
+            *requisitos_por_oferta[elegida.cart_id],
             *chequeos_evidencia(elegida),
             chequeo_integridad(puntajes, puntaje_elegido, elegida.moneda),
             *chequeos_politica(politica, elegida, comercio_id),
@@ -161,6 +171,8 @@ def evaluar(
     recibo = armar_recibo(
         ficha=ficha,
         ofertas=ofertas,
+        requisitos_por_oferta=requisitos_por_oferta,
+        descartes=extraccion.descartes,
         puntajes=puntajes,
         cart_id_elegido=cart_id_elegido,
         comercio_id=comercio_id,
