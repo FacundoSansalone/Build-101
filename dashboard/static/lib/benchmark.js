@@ -73,6 +73,13 @@ export function fraseDeXaY(fila) {
   return `de ${pct(fila.exitoSoloAp2)} a ${pct(fila.exitoConGuard)}`;
 }
 
+/** Etiqueta corta sobre cada grupo del gráfico: "100% → 0%" o solo "100%". */
+export function etiquetaGrupo(fila, conGuardMedido) {
+  if (fila.exitoSoloAp2 === null) return "sin datos";
+  if (!conGuardMedido || fila.exitoConGuard === null) return pct(fila.exitoSoloAp2);
+  return `${pct(fila.exitoSoloAp2)} → ${pct(fila.exitoConGuard)}`;
+}
+
 /** Columna con la punta redondeada (radio r) y la base recta. */
 export function pathColumna(x, y, ancho, alto, r = 4) {
   if (alto <= 0) return "";

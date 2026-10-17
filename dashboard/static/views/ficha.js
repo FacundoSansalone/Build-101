@@ -33,7 +33,7 @@ export function renderFicha(raiz, ctx) {
       h("h2", { text: "Lo que pidió el usuario, en campos que se pueden chequear" }),
       h("div", { class: "filtros" },
         h("label", { class: "campo" }, h("span", { text: "Fuente" }),
-          h("select", { onchange: (e) => ctx.set({ escenarioFicha: e.target.value || null }) },
+          h("select", { name: "ficha-fuente", onchange: (e) => ctx.set({ escenarioFicha: e.target.value || null }) },
             h("option", { value: "", text: desdeRecibo ? "La del último recibo" : `Escenario ${esc}` }),
             ctx.fixtures.map((f) => h("option", { value: f.escenario, selected: estado.escenarioFicha === f.escenario ? true : null, text: `Fixture · escenario ${f.escenario}` })))))),
     ficha ? h("div", { class: "ficha" },

@@ -424,3 +424,30 @@ def test_recibo_firmado_en_python_se_verifica_en_js(tmp_path, alterar):
     assert pasos["firma"] is True
     assert pasos["contenido"] is (not alterar)
     assert resultado["ok"] is (not alterar)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node no está instalado")
+def test_mandato_real_del_sdk_de_ap2_se_decodifica_en_js(tmp_path):
+    """Un CheckoutMandate SD-JWT armado con el MandateClient del SDK (como el
+    Shopping Agent del sample) se decodifica con el JS del navegador."""
+    mandate = pytest.importorskip("ap2.sdk.mandate")
+    from ap2.sdk.generated.checkout_mandate import CheckoutMandate
+    from jwcrypto.jwk import JWK
+
+    clave_usuario = JWK.from_pyca(ec.generate_private_key(ec.SECP256R1()))
+    token = mandate.MandateClient().create(
+        payloads=[CheckoutMandate(
+            checkout_jwt="jwt.de.test", checkout_hash="hash-de-test", iat=1, exp=2,
+        )],
+        issuer_key=clave_usuario,
+    )
+    entrada = tmp_path / "mandato.txt"
+    entrada.write_text(token, encoding="utf-8")
+    salida = subprocess.run(
+        ["node", str(REPO / "dashboard/tests/js/mandato_cli.mjs"), str(entrada)],
+        capture_output=True, text=True, encoding="utf-8", timeout=30, check=True,
+    )
+    resultado = json.loads(salida.stdout)
+    assert resultado["header"]["alg"] == "ES256"
+    assert '"checkout_hash": "hash-de-test"' in json.dumps(resultado["claims"])
+    assert resultado["sinUsar"] == 0

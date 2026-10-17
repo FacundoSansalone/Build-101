@@ -2,7 +2,7 @@
 
 import { cartDe } from "../lib/eventos.js";
 import { STATUS, chip, fechaHora, h, insignia, vacio, vistaJson, vistaJws } from "./comunes.js";
-import { bloqueHash, panelVerificacion, tablaEvidencias } from "./piezas.js";
+import { panelVerificacion, tablaEvidencias } from "./piezas.js";
 import { selectorCompra } from "./flujo.js";
 
 export function renderRecibo(raiz, ctx) {
@@ -26,6 +26,19 @@ function sku(compra, id) {
 function chipsCarts(compra, ids, tono = "neutro") {
   return h("ul", { class: "chips" }, (ids || []).map((id) => h("li", {},
     chip(sku(compra, id) ? `${id} · ${sku(compra, id)}` : id, { tono }))));
+}
+
+// El hash del recibo contra el ap2.checkout de la compra y contra el JWT mismo.
+function chipsHash(compra, hash, ctx) {
+  const c = compra.checkout;
+  if (!c) return null;
+  const igual = c.checkout_hash === hash;
+  const sha = c.checkout_jwt ? ctx.hashCoincide(c.checkout_jwt, hash) : null;
+  return [
+    chip(igual ? "= el del ap2.checkout de esta compra" : "≠ el del ap2.checkout de esta compra", { tono: igual ? "ok" : "crit", icon: igual ? "check" : "x" }),
+    sha === true ? chip("= SHA-256 del checkout_jwt, calculado acá", { tono: "ok", icon: "check" })
+      : sha === false ? chip("≠ SHA-256 del checkout_jwt", { tono: "crit", icon: "x" }) : null,
+  ];
 }
 
 function cuerpo(compra, r, ctx) {
@@ -54,10 +67,8 @@ function cuerpo(compra, r, ctx) {
         tablaEvidencias(r.verificaciones),
         h("h3", { text: "Referencia al checkout firmado" }),
         r.checkout_hash ? h("p", { class: "hash" }, h("span", { class: "hash-nombre", text: "checkout_hash" }), h("code", { class: "hash-valor", text: r.checkout_hash }),
-          compra.checkout?.checkout_hash ? chip(compra.checkout.checkout_hash === r.checkout_hash ? "= el del ap2.checkout de esta compra" : "≠ el del ap2.checkout de esta compra",
-            { tono: compra.checkout.checkout_hash === r.checkout_hash ? "ok" : "crit", icon: compra.checkout.checkout_hash === r.checkout_hash ? "check" : "x" }) : null)
+          chipsHash(compra, r.checkout_hash, ctx))
           : h("p", { class: "nota", text: "El recibo no trae checkout_hash." }),
-        bloqueHash(compra, ctx),
         h("h3", { text: "Firma del Guard" }),
         h("dl", { class: "campos" }, h("dt", { text: "kid" }), h("dd", { class: "mono", text: r.kid ?? "—" })),
         r.firma ? vistaJws(r.firma, { etiquetaFirma: "firma ES256 del Guard" }) : null,

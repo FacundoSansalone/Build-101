@@ -157,7 +157,7 @@ export function listaChequeos(chequeos) {
 }
 
 export function tablaChequeos(chequeos) {
-  return h("table", { class: "tabla" },
+  return h("div", { class: "tabla-scroll" }, h("table", { class: "tabla" },
     h("thead", {}, h("tr", {},
       ["Resultado", "Campo", "Esperado", "Observado", "Origen", "Detalle"].map((t) => h("th", { scope: "col", text: t })))),
     h("tbody", {}, ordenarChequeos(chequeos).map((c) => h("tr", {},
@@ -167,12 +167,12 @@ export function tablaChequeos(chequeos) {
       h("td", { class: "mono", text: valorTexto(c.observado) }),
       h("td", { class: "mono", text: c.origen ?? "—" }),
       h("td", { text: c.detalle }),
-    ))));
+    )))));
 }
 
 export function tablaEvidencias(evidencias) {
   if (!evidencias?.length) return vacio("El recibo no trae verificaciones");
-  return h("table", { class: "tabla" },
+  return h("div", { class: "tabla-scroll" }, h("table", { class: "tabla" },
     h("thead", {}, h("tr", {},
       ["Campo", "Declarado", "Catálogo público", "Estado", "Origen usado"].map((t) => h("th", { scope: "col", text: t })))),
     h("tbody", {}, evidencias.map((e) => h("tr", {},
@@ -181,7 +181,7 @@ export function tablaEvidencias(evidencias) {
       h("td", { class: "mono", text: valorTexto(e.publico) }),
       h("td", {}, insignia(EVIDENCIA, e.estado)),
       h("td", { class: "mono", text: e.origen_usado ?? "—" }),
-    ))));
+    )))));
 }
 
 export function lineaRanking(compra, veredicto, ctx) {
@@ -251,11 +251,19 @@ export function bloqueMandatos(mandatos, compra, ctx) {
       const hashMandato = buscarClave(claims, "checkout_hash");
       const coincide = hashMandato && compra?.checkout?.checkout_hash
         ? hashMandato === compra.checkout.checkout_hash : null;
+      const extracto = {};
+      for (const k of CLAIMS_EXTRACTO) {
+        const v = buscarValor(claims, k);
+        if (v !== undefined) extracto[k] = v;
+      }
+      const hayExtracto = Object.keys(extracto).length > 0;
       cuerpo = [
         dec.jwt ? vistaJws(dec.jwt, { etiquetaFirma: `firma ${dec.header?.alg ?? "?"} del usuario`, payloadMax: 10 }) : null,
-        vistaJson(claims, { acortar: 24 }),
+        hayExtracto ? vistaJson(extracto, { acortar: 24 }) : null,
         coincide === true ? chip("referencia el mismo checkout_hash del comercio", { tono: "ok", icon: "check" })
           : coincide === false ? chip("checkout_hash distinto al del checkout", { tono: "crit", icon: "x" }) : null,
+        h("details", { class: "mas", open: hayExtracto ? null : true },
+          h("summary", { text: "claims divulgados completos" }), vistaJson(claims, { acortar: 24 })),
       ];
     }
     return h("section", { class: "mandato" },
@@ -263,14 +271,22 @@ export function bloqueMandatos(mandatos, compra, ctx) {
   }));
 }
 
-function buscarClave(obj, clave) {
-  if (!obj || typeof obj !== "object") return null;
-  if (typeof obj[clave] === "string") return obj[clave];
+// Lo que importa mostrar de cada mandato; el resto queda plegado.
+const CLAIMS_EXTRACTO = ["vct", "checkout_hash", "transaction_id", "payment_amount", "payee", "payment_instrument"];
+
+function buscarValor(obj, clave) {
+  if (!obj || typeof obj !== "object") return undefined;
+  if (!Array.isArray(obj) && Object.hasOwn(obj, clave)) return obj[clave];
   for (const v of Object.values(obj)) {
-    const r = buscarClave(v, clave);
-    if (r) return r;
+    const r = buscarValor(v, clave);
+    if (r !== undefined) return r;
   }
-  return null;
+  return undefined;
+}
+
+function buscarClave(obj, clave) {
+  const v = buscarValor(obj, clave);
+  return typeof v === "string" ? v : null;
 }
 
 export function lineaCompra(pedido, compro) {

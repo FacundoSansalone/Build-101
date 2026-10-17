@@ -68,6 +68,17 @@ function ranking(compra, v) {
           h("span", { class: "nota mono", text: ` ${dinero(cart?.amount, cart?.currency)}` })),
         h("span", { class: "ranking-marcas" }, marcas));
     })) : vacio("El veredicto no trae ranking"),
-    v.ranking?.length && !v.ranking.includes(elegido)
-      ? h("p", { class: "nota t-crit" }, icono("alert"), `El elegido (${elegido}) no está en el ranking propio.`) : null);
+    elegido && !(v.ranking || []).includes(elegido) ? fueraDeRanking(compra, elegido) : null);
+}
+
+function fueraDeRanking(compra, elegido) {
+  const { cart, detalle } = cartDe(compra, elegido);
+  return h("div", { class: "ranking-fuera" },
+    h("p", { class: "rotulo" }, icono("alert"), "Fuera del ranking propio"),
+    h("div", { class: "ranking-item es-elegido" },
+      h("span", { class: "ranking-id mono", text: elegido }),
+      h("span", { class: "ranking-producto" },
+        h("strong", { text: detalle?.sku ?? "—" }), " ", detalle?.title ?? "",
+        h("span", { class: "nota mono", text: ` ${dinero(cart?.amount, cart?.currency)}` })),
+      h("span", { class: "ranking-marcas" }, chip("elegido por el agente", { tono: "crit", icon: "arrow" }))));
 }

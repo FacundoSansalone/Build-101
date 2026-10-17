@@ -1,7 +1,7 @@
 // Vista 6: benchmark "de X% a Y%" por escenario. SVG hecho a mano.
 
 import {
-  filasBenchmark, fraseDeXaY, geometriaColumnas, hayConGuard, metaBenchmark, pathColumna, pct,
+  etiquetaGrupo, filasBenchmark, fraseDeXaY, geometriaColumnas, hayConGuard, metaBenchmark, pathColumna, pct,
 } from "../lib/benchmark.js";
 import { fechaHora, h, icono, vacio } from "./comunes.js";
 
@@ -19,7 +19,7 @@ export function renderBenchmark(raiz, ctx) {
   const datos = estado.resultado;
   const lista = estado.resultados;
   const selector = h("label", { class: "campo" }, h("span", { text: "Archivo" }),
-    h("select", { disabled: lista.length === 0 ? true : null, onchange: (e) => ctx.cargarResultado(e.target.value || null) },
+    h("select", { name: "resultado", disabled: lista.length === 0 ? true : null, onchange: (e) => ctx.cargarResultado(e.target.value || null) },
       h("option", { value: "", text: lista.length ? "El más nuevo (prefiere con Guard)" : "Sin archivos" }),
       lista.map((r) => h("option", {
         value: r.id, selected: estado.resultadoSel === r.id ? true : null,
@@ -57,7 +57,8 @@ export function renderBenchmark(raiz, ctx) {
   const grafico = h("figure", { class: "grafico" },
     h("figcaption", { class: "leyenda-grafico" },
       h("span", { class: "leyenda-item" }, h("span", { class: "muestra muestra-s1", "aria-hidden": "true" }), "Éxito del ataque · solo AP2"),
-      h("span", { class: "leyenda-item" }, h("span", { class: "muestra muestra-s2", "aria-hidden": "true" }), "Éxito del ataque · con Guard")),
+      h("span", { class: "leyenda-item" }, h("span", { class: "muestra muestra-s2", "aria-hidden": "true" }),
+        conGuard ? "Éxito del ataque · con Guard" : "Éxito del ataque · con Guard (sin medir)")),
     h("div", { class: "grafico-lienzo" }));
 
   raiz.replaceChildren(
@@ -72,16 +73,18 @@ export function renderBenchmark(raiz, ctx) {
     ...avisos,
     b ? h("div", { class: "heroe" },
       h("p", { class: "heroe-rotulo", text: `Escenario B · ${b.titulo}` }),
-      h("p", { class: "heroe-valor", text: fraseDeXaY(b) }),
-      h("p", { class: "nota", text: `Éxito del ataque: solo AP2 → con Guard · ${b.corridas ?? "?"} corridas${b.errores ? ` · ${b.errores} con error` : ""}` })) : null,
+      h("p", { class: "heroe-valor", text: b.exitoConGuard === null ? pct(b.exitoSoloAp2) : fraseDeXaY(b) }),
+      h("p", { class: "nota", text: b.exitoConGuard === null
+        ? `Éxito del ataque con AP2 como única defensa · con Guard: sin medir en este archivo · ${b.corridas ?? "?"} corridas`
+        : `Éxito del ataque: solo AP2 → con Guard · ${b.corridas ?? "?"} corridas${b.errores ? ` · ${b.errores} con error` : ""}` })) : null,
     grafico,
     tabla(filas),
   );
-  dibujar(grafico.querySelector(".grafico-lienzo"), filas, ctx);
-  ctx.observarAncho(grafico.querySelector(".grafico-lienzo"), (el) => dibujar(el, filas, ctx));
+  dibujar(grafico.querySelector(".grafico-lienzo"), filas, conGuard, ctx);
+  ctx.observarAncho(grafico.querySelector(".grafico-lienzo"), (el) => dibujar(el, filas, conGuard, ctx));
 }
 
-function dibujar(lienzo, filas, ctx) {
+function dibujar(lienzo, filas, conGuard, ctx) {
   const ancho = Math.max(520, Math.min(1400, lienzo.clientWidth || 960));
   const alto = Math.round(Math.min(440, Math.max(320, ancho * 0.38)));
   const g = geometriaColumnas(filas, { ancho, alto, margen: { arriba: 56, derecha: 12, abajo: 72, izquierda: 52 } });
@@ -95,10 +98,10 @@ function dibujar(lienzo, filas, ctx) {
   }
   for (const grupo of g.grupos) {
     const fila = filas.find((f) => f.escenario === grupo.escenario);
-    svg.append(s("text", { class: "etiqueta-grupo", x: grupo.centro, y: grupo.etiquetaY, "text-anchor": "middle" }, fraseDeXaY(fila)));
+    svg.append(s("text", { class: "etiqueta-grupo", x: grupo.centro, y: grupo.etiquetaY, "text-anchor": "middle" }, etiquetaGrupo(fila, conGuard)));
     for (const barra of grupo.barras) {
       if (barra.valor === null) {
-        svg.append(s("text", { class: "sin-medir", x: barra.x + barra.ancho / 2, y: g.base - 8, "text-anchor": "middle" }, "—"));
+        if (conGuard) svg.append(s("text", { class: "sin-medir", x: barra.x + barra.ancho / 2, y: g.base - 8, "text-anchor": "middle" }, "—"));
         continue;
       }
       const texto = `${pct(barra.valor)} · ${barra.nombre} · escenario ${grupo.escenario}`;
@@ -134,7 +137,7 @@ function celdaTasa(v) {
 
 function tabla(filas) {
   return h("table", { class: "tabla tabla-bench" },
-    h("caption", { class: "rotulo", text: "Todas las columnas del benchmark" }),
+    h("caption", { class: "tabla-titulo", text: "Todas las columnas del benchmark" }),
     h("thead", {}, h("tr", {}, ["Escenario", "Elige objetivo", "AP2 frena", "Éxito solo AP2", "Éxito con Guard", "Corridas", "Errores", "Elegidos"]
       .map((t) => h("th", { scope: "col", text: t })))),
     h("tbody", {}, filas.map((f) => h("tr", {},

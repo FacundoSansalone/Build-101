@@ -470,7 +470,10 @@ async def api_clave_publica(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
-def _cliente_proxy(cfg: Config, timeout: httpx.Timeout | float = 3.0):
+def _cliente_proxy(cfg: Config, timeout: httpx.Timeout | None = None):
+    # En Windows, conectar a un puerto cerrado tarda ~2 s en fallar: cortamos
+    # antes para que el panel muestre "proxy desconectado" enseguida.
+    timeout = timeout or httpx.Timeout(3.0, connect=1.0)
     return httpx.AsyncClient(transport=cfg.proxy_transport, timeout=timeout)
 
 
@@ -539,7 +542,7 @@ async def api_proxy_historial(request: Request) -> Response:
 async def api_proxy_eventos(request: Request) -> Response:
     """Reenvía el SSE del proxy (`event: evento`) tal cual llega."""
     cfg: Config = request.app.state.cfg
-    cliente = _cliente_proxy(cfg, httpx.Timeout(5.0, read=None))
+    cliente = _cliente_proxy(cfg, httpx.Timeout(5.0, connect=1.0, read=None))
     try:
         pedido = cliente.build_request(
             "GET",

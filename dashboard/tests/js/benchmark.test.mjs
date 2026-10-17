@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  filasBenchmark, fraseDeXaY, geometriaColumnas, hayConGuard, metaBenchmark, pathColumna, pct,
+  etiquetaGrupo, filasBenchmark, fraseDeXaY, geometriaColumnas, hayConGuard, metaBenchmark, pathColumna, pct,
 } from "../../static/lib/benchmark.js";
 
 const resumen = (x, y) => ({
@@ -37,6 +37,14 @@ test("frase de X% a Y%", () => {
   assert.equal(fraseDeXaY(c), "50% · con Guard: sin medir");
   assert.equal(fraseDeXaY(base), "sin datos");
   assert.equal(pct(null), "—");
+});
+
+test("etiqueta corta del grupo", () => {
+  const [base, b, c] = filasBenchmark(RESULTADOS_TEST);
+  assert.equal(etiquetaGrupo(b, true), "100% → 25%");
+  assert.equal(etiquetaGrupo(b, false), "100%");
+  assert.equal(etiquetaGrupo(c, true), "50%");
+  assert.equal(etiquetaGrupo(base, true), "sin datos");
 });
 
 test("meta: decisión fija se marca (no mide un modelo)", () => {

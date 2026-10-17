@@ -25,7 +25,7 @@ const estado = {
   vista: "momento",
   config: { proxy_url: "http://localhost:8010" },
   fuente: "vivo",
-  replays: [],
+  replays: null, // null = todavía cargando
   replaySel: null,
   replayTodos: [],
   replayInvalidas: 0,
@@ -392,6 +392,7 @@ async function cambiarFuente(fuente) {
   }
 }
 
+
 async function refrescarReplays() {
   try { estado.replays = (await pedirJson("/api/replay")).datos || []; } catch { estado.replays = []; }
 }
@@ -460,12 +461,13 @@ function renderBarra() {
   replayCtl.hidden = estado.fuente !== "replay";
   if (estado.fuente === "replay") {
     const sel = $("#replay-archivo");
-    const opciones = estado.replays.length
-      ? estado.replays.map((r) => h("option", { value: r.nombre, selected: r.nombre === estado.replaySel ? true : null,
+    const lista = estado.replays ?? [];
+    const opciones = lista.length
+      ? lista.map((r) => h("option", { value: r.nombre, selected: r.nombre === estado.replaySel ? true : null,
         text: `${r.nombre} · ${r.eventos} eventos · ${r.origen}` }))
-      : [h("option", { value: "", text: "No hay archivos .jsonl" })];
+      : [h("option", { value: "", text: estado.replays === null ? "Cargando archivos…" : "No hay archivos .jsonl" })];
     sel.replaceChildren(...opciones);
-    sel.disabled = estado.replays.length === 0;
+    sel.disabled = lista.length === 0;
     const play = $("#replay-play");
     play.disabled = estado.replayTodos.length === 0;
     play.replaceChildren(icono(estado.reproduciendo ? "stop" : "play"), estado.reproduciendo ? "Detener" : "Reproducir");
@@ -481,8 +483,7 @@ function renderBarra() {
   chipProxy.replaceChildren(
     h("span", { class: "punto", "aria-hidden": "true" }),
     h("span", { text: p.conectado === true ? `Proxy conectado${p.evaluador ? ` · evaluador ${p.evaluador}` : ""}${sse}`
-      : p.conectado === false ? "proxy desconectado" : "consultando proxy…" }));
-  chipProxy.title = estado.config.proxy_url;
+      : p.conectado === false ? `proxy desconectado (${estado.config.proxy_url.replace(/^https?:\/\//, "")})` : "consultando proxy…" }));
 
   const sw = $("#guard-switch");
   const activo = p.guard_activo === true;
@@ -620,7 +621,9 @@ async function iniciar() {
     estado.escenarioMomento = estado.fixtures[0].escenario;
   }
 
-  await Promise.all([cargarResultado(null), refrescarProxy()]);
+  // El chequeo del proxy no bloquea: con el puerto cerrado tarda segundos.
+  refrescarProxy();
+  cargarResultado(null);
   if (estado.fuente === "vivo") conectarSse();
   else {
     await refrescarReplays();

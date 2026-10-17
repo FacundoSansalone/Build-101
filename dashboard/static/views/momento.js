@@ -28,6 +28,7 @@ export function renderMomento(raiz, ctx) {
     return h("label", { class: "campo" },
       h("span", { text: activo ? "Compra con Guard" : "Compra sin Guard" }),
       h("select", {
+        name: clave,
         disabled: opciones.length === 0 ? true : null,
         onchange: (e) => ctx.set({ [clave]: e.target.value || null }),
       },
@@ -44,7 +45,7 @@ export function renderMomento(raiz, ctx) {
       h("h2", { class: "frase" }, FRASE_1, " ", h("em", { text: FRASE_2 })),
       h("div", { class: "filtros" },
         h("label", { class: "campo" }, h("span", { text: "Escenario" }),
-          h("select", { onchange: (e) => ctx.set({ escenarioMomento: e.target.value, momentoSin: null, momentoCon: null }) },
+          h("select", { name: "escenario", onchange: (e) => ctx.set({ escenarioMomento: e.target.value, momentoSin: null, momentoCon: null }) },
             escenarios.map((s) => h("option", { value: s, selected: s === esc ? true : null, text: s })))),
         selectorCompra(false, sin, "momentoSin"),
         selectorCompra(true, con, "momentoCon"))),
@@ -81,6 +82,13 @@ function sinCompra(activo, ctx, fixture) {
       leyendaTextoLibre()) : null);
 }
 
+function sinEleccion(compra) {
+  if (!compra.ofertas) return vacio("No se vieron las ofertas de esta compra");
+  const n = compra.ofertas.carts.length;
+  return vacio("El agente todavía no eligió un carrito",
+    h("p", { text: `Llegaron ${n} ${n === 1 ? "oferta" : "ofertas"}; la elección se ve cuando pide create_checkout.` }));
+}
+
 function columnaSin(compra, ctx, fixture) {
   if (!compra) return [cabColumna("Sin Guard", false, null), sinCompra(false, ctx, fixture)];
   const d = datosCompra(compra, ctx);
@@ -91,7 +99,7 @@ function columnaSin(compra, ctx, fixture) {
     cabColumna("Sin Guard", false, compra),
     tarjeta({ paso: "1", titulo: "Respuesta del comercio", subtitulo: "ap2.cart que eligió el agente · los carts no se firman" },
       d.cart ? vistaJson(d.cart, { resaltar: { item_label: (t) => textoLibre(t, d.textosPublicos) } })
-        : vacio("No se vio el ap2.cart elegido"),
+        : sinEleccion(compra),
       leyendaTextoLibre({ conExtra: d.textosPublicos.length > 0 }),
       d.detalle ? h("p", { class: "nota" }, "El agente lee ese texto y recomienda ", h("strong", { text: d.detalle.sku }), ".") : null),
     tarjeta({ paso: "2", titulo: "Checkout firmado por el comercio", subtitulo: "ap2.checkout → checkout_jwt" },
@@ -129,7 +137,7 @@ function columnaCon(compra, ctx, fixture) {
         h("dl", { class: "campos" },
           [["sku", d.detalle.sku], ["marca", d.detalle.brand], ["categoría", d.detalle.category], ["uso", d.detalle.use],
             ["precio (ap2.cart)", dinero(d.cart?.amount, d.cart?.currency)], ["talles", (d.detalle.sizes || []).join(", ")]]
-            .map(([k, val]) => [h("dt", { text: k }), h("dd", { class: "mono", text: val ?? "—" })]))) : vacio("No se vieron las ofertas")),
+            .map(([k, val]) => [h("dt", { text: k }), h("dd", { class: "mono", text: val ?? "—" })]))) : sinEleccion(compra)),
     tarjeta({ paso: "2", titulo: "Checkout firmado por el comercio", subtitulo: "Intacto: el Guard no toca objetos firmados" },
       bloqueCheckout(compra, d, ctx, { completo: false }),
       h("p", { class: "nota", text: "Lo referencia por su hash en el recibo." })),
