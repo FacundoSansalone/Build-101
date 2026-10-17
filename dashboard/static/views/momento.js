@@ -5,8 +5,9 @@ import {
   chipGuard, dinero, h, icono, leyendaTextoLibre, tarjeta, textoLibre, vacio, vistaJson, vistaJws,
 } from "./comunes.js";
 import {
-  bannerStatus, bloqueAp2, bloqueCheckout, bloqueMandatos, datosCompra, lineaCompra,
-  lineaRanking, listaChequeos, panelVerificacion, resumenFicha, resumenProducto, tablaEvidencias,
+  bannerStatus, bloqueAp2, bloqueAtadura, bloqueCheckout, bloqueMandatos, chipsFuente, datosCompra,
+  lineaCompra, lineaRanking, listaChequeos, panelAprobacion, panelVerificacion, resumenFicha,
+  resumenProducto, tablaEvidencias,
 } from "./piezas.js";
 
 const FRASE_1 = "Todas las firmas son válidas y AP2 aprobó todo.";
@@ -125,7 +126,13 @@ function columnaCon(compra, ctx, fixture) {
   const d = datosCompra(compra, ctx);
   const v = compra.veredicto;
   const recibo = v?.recibo ?? null;
-  const bloqueado = Boolean(compra.bloqueo);
+  const estado = estadoCompra(compra);
+  const bloqueado = estado.clave === "bloqueado";
+  const retenido = estado.clave === "retenido";
+  const linea = bloqueado ? lineaFirma("crit", "block", "bloqueado antes de la firma")
+    : retenido ? lineaFirma("serious", "up", "retenido: esperando decisión humana")
+      : estado.clave === "aprobado_humano" ? lineaFirma("ok", "check", "aprobado por humano: se presentó para firmar")
+        : lineaFirma("neutro", "arrow", estado.texto.toLowerCase());
   return [
     cabColumna("Con Guard", true, compra),
     tarjeta({ paso: "1", titulo: "Respuesta del comercio", subtitulo: "La misma respuesta llega al proxy" },
@@ -145,21 +152,25 @@ function columnaCon(compra, ctx, fixture) {
     tarjeta({ paso: "4", titulo: "Pre-Sign Guard", subtitulo: "Decide con datos verificados, no con el texto libre" },
       v ? [
         bannerStatus(v),
+        chipsFuente(compra),
         h("p", { class: "rotulo", text: "Verificador contra el catálogo público (:8011)" }),
         tablaEvidencias(recibo?.verificaciones),
         h("p", { class: "rotulo", text: "Chequeos" }),
         listaChequeos(v.chequeos),
+        h("p", { class: "rotulo", text: "Checkout firmado ↔ cart evaluado" }),
+        bloqueAtadura(v),
         lineaRanking(compra, v, ctx),
       ] : vacio("Esta compra no tiene veredicto del Guard")),
-    bloqueado ? lineaFirma("crit", "block", "bloqueado antes de la firma")
-      : lineaFirma("neutro", "arrow", estadoCompra(compra).texto.toLowerCase()),
+    linea,
     tarjeta({
       paso: "5",
-      titulo: bloqueado ? "No se presenta nada para firmar" : "Recibo del Guard",
+      titulo: bloqueado ? "No se presenta nada para firmar"
+        : retenido ? "Retenido hasta que decida un humano" : "Recibo del Guard",
       subtitulo: "Recibo de la decisión, firmado por el Guard",
-      clase: bloqueado ? "tarjeta-bloqueo" : "",
+      clase: bloqueado ? "tarjeta-bloqueo" : retenido ? "tarjeta-retenida" : "",
     },
-    bloqueado ? h("p", { class: "motivo-bloqueo" }, icono("block"), compra.bloqueo.motivo ?? "") : null,
+    bloqueado ? h("p", { class: "motivo-bloqueo" }, icono("block"), compra.bloqueo?.motivo ?? "") : null,
+    panelAprobacion(compra, ctx, { compacto: true }),
     recibo ? [
       h("dl", { class: "campos" },
         [["recibo", recibo.id], ["status", recibo.status], ["elegido", recibo.elegido], ["kid", recibo.kid ?? "—"]]

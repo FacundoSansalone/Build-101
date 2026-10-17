@@ -69,6 +69,8 @@ async def test_eventos_de_busqueda_y_ofertas(cliente: httpx.AsyncClient):
         "catalog_search": "Nike basketball shoes for outdoor use, size 42"
     }
     assert busqueda["escenario"] == "B"
+    # El pedido no traía contextId: el evento sale con el de la respuesta.
+    assert busqueda["contexto_id"] == contexto
     fixture = cargar_fixture("B")
     assert ofertas["datos"]["carts"] == fixture["carts"]
     assert ofertas["datos"]["offer_details"] == fixture["offer_details"]
@@ -94,6 +96,25 @@ async def test_find_products_por_sse_pasa_igual(
     assert len(ofertas) == 1
     assert len(ofertas[0]["datos"]["carts"]) == 4
     assert ofertas[0]["escenario"] == "B"
+    contexto = parsear_sse(resp.content)[0]["result"]["contextId"]
+    (busqueda,) = [e for e in eventos if e["tipo"] == "busqueda_enviada"]
+    assert busqueda["contexto_id"] == contexto
+    assert [e["tipo"] for e in eventos] == [
+        "busqueda_enviada", "ofertas_recibidas", "reenviado"
+    ]
+
+
+async def test_busqueda_con_context_id_en_el_pedido_sale_con_ese_contexto(
+    cliente: httpx.AsyncClient,
+):
+    pedido = pedido_find_products("B")
+    pedido["params"]["message"]["contextId"] = "ctx-del-agente"
+    await cliente.post(RPC, content=cuerpo(pedido), headers=HEADERS_A2A)
+
+    eventos = (await cliente.get("/guard/events/history")).json()
+    assert eventos[0]["tipo"] == "busqueda_enviada"
+    assert eventos[0]["contexto_id"] == "ctx-del-agente"
+    assert all(e["contexto_id"] == "ctx-del-agente" for e in eventos)
 
 
 async def test_comercio_caido_da_error_jsonrpc_y_evento(armar_proxy):

@@ -6,26 +6,34 @@ Se mete entre el Shopping Agent y el Merchant Agent sin tocar AP2:
   lo saltea.
 - Reenvía el JSON-RPC tal cual (los bytes del pedido no se re-arman, así los
   mandatos llegan intactos) y soporta respuesta JSON y SSE.
-- `find_products`: guarda carts, offer_details y escenario por context_id.
-- `create_checkout`: llama a `evaluar()` y aplica el veredicto. Nunca
-  modifica el `ap2.checkout`: si pasa, lo deja igual y agrega el veredicto en
-  un artefacto aparte; si se bloquea, la tarea vuelve `failed` sin el
-  checkout.
-- Emite `Evento`s para el dashboard (SSE + JSONL) y expone el interruptor.
+- `find_products`: guarda carts, offer_details y escenario por el context_id
+  de la respuesta. Solo de ahí salen las ofertas.
+- `create_checkout`: llama a `evaluar()` con el cart y el contexto del
+  pedido y aplica el veredicto. Nunca modifica el `ap2.checkout`: si pasa, lo
+  deja igual y agrega el veredicto en un artefacto aparte; si se bloquea o se
+  retiene (`escalar`), la tarea vuelve `failed` sin el checkout.
+- Lo que no puede leer o no cuadra (más de un checkout, otro cart, otro
+  contexto, respuesta ilegible, red caída) no llega a la firma.
+- Emite `Evento`s para el dashboard (SSE + JSONL) y expone el interruptor y
+  las aprobaciones humanas.
+
+El proxy no decide: decide `guard/`. El proxy solo transporta, registra,
+aplica el veredicto y bloquea lo que no pudo evaluar (fail-closed).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
+import copy
 import logging
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal
 
 import httpx
+from pydantic import ValidationError
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -33,21 +41,31 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from contracts import Evento, Ficha, OfertasVistas, Veredicto
+from contracts import (
+    STATUS_LLEGAN_A_FIRMA,
+    CheckoutVisto,
+    Evento,
+    Ficha,
+    OfertasVistas,
+    Veredicto,
+)
 from proxy import a2a
+from proxy.aprobaciones import Aprobacion, RegistroAprobaciones, SinEscalar
 from proxy.config import Config
 from proxy.evaluador import (
     EvaluadorCargado,
     cargar_evaluador,
     clave_publica,
     firmar_recibo,
+    preparar_clave,
 )
 from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import cargar_catalogo, cargar_intent, violaciones_ap2
+from proxy.seguridad import ControlLocal
 
 logger = logging.getLogger("proxy")
 
-# Headers que no se copian de un salto al otro.
+# Headers que no se copian del cliente al comercio.
 _HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -59,14 +77,36 @@ _HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
-_NO_HACIA_COMERCIO = _HOP_BY_HOP | {"host", "content-length", "accept-encoding"}
-_NO_HACIA_CLIENTE = _HOP_BY_HOP | {"content-length", "content-encoding", "date", "server"}
+_NO_HACIA_COMERCIO = _HOP_BY_HOP | {"host", "content-length", "accept-encoding", "cookie"}
+# Del comercio al cliente solo pasa esto (el Content-Type se normaliza). Nunca
+# Set-Cookie: las cookies no distinguen puerto y llegarían al dashboard.
+_DEL_COMERCIO_AL_CLIENTE = {"x-a2a-extensions"}
+
+# Únicas rutas de la Agent Card que se piden al comercio.
+RUTAS_CARD = (".well-known/agent-card.json", ".well-known/agent.json")
+RUTAS_POST_CONTROL = ("/guard/state", "/guard/aprobaciones")
 
 _MAX_CONTEXTOS = 500
+_MAX_ID = 200  # largo máximo de contexto_id / cart_id en la API de aprobaciones
+
+# Plantillas fijas del texto para el agente: "Pre-Sign Guard: <status>. <motivo>"
+# (el motivo lo arma guard/ sin texto del comercio). Ningún string del
+# comercio entra acá.
+_SUFIJO_RETENIDO = (
+    "El checkout requiere aprobación humana: revisalo en el dashboard del "
+    "Guard y, si se aprueba, reintentá create_checkout."
+)
+_SUFIJO_BLOQUEADO = "No se presenta para firma."
+
+Accion = Literal["pasar", "retener", "bloquear"]
 
 
 def _filtrar(headers: Any, excluidos: set[str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in excluidos}
+
+
+def _del_comercio(headers: Any) -> dict[str, str]:
+    return {k: v for k, v in headers.items() if k.lower() in _DEL_COMERCIO_AL_CLIENTE}
 
 
 def _recordar(cache: OrderedDict, clave: Any, valor: Any) -> None:
@@ -85,17 +125,79 @@ class OfertasGuardadas:
 
 @dataclass(frozen=True)
 class Decision:
-    """Qué hacer con un checkout. `veredicto` es None si no se pudo evaluar."""
+    """Qué hacer con un checkout.
 
-    bloquear: bool
-    texto: str
-    veredicto: Veredicto | None
+    `veredicto` es None cuando el proxy no pudo evaluar (fail-closed): ahí el
+    status es `bloqueado` y el motivo es un texto fijo del proxy.
+    """
+
+    accion: Accion
+    status: str
+    motivo: str
+    cart_id: str | None
+    contexto_id: str | None
+    veredicto: Veredicto | None = None
+    clave: tuple[str | None, str, str | None] | None = None  # task, sha256(jwt), cart
+    centavos: int | None = None
+    moneda: str | None = None
+    por_aprobar: bool = False  # escalar con una aprobación humana disponible
+    aprobacion: Aprobacion | None = None  # la que se usó para dejarlo pasar
 
     @property
-    def artefacto(self) -> dict[str, Any] | None:
-        if self.veredicto is None:
-            return None
-        return a2a.artefacto_veredicto(self.veredicto.model_dump(mode="json"))
+    def retiene(self) -> bool:
+        return self.accion != "pasar"
+
+    @property
+    def requiere_aprobacion(self) -> bool:
+        return self.accion == "retener"
+
+    @property
+    def texto(self) -> str:
+        base = f"Pre-Sign Guard: {self.status}. {self.motivo}"
+        if self.accion == "retener":
+            return f"{base} {_SUFIJO_RETENIDO}"
+        if self.accion == "bloquear":
+            return f"{base} {_SUFIJO_BLOQUEADO}"
+        return base
+
+    def veredicto_json(self) -> dict[str, Any]:
+        if self.veredicto is not None:
+            return self.veredicto.model_dump(mode="json")
+        # Sin veredicto del Guard: el agente igual necesita el motivo.
+        return Veredicto(
+            status="bloqueado",
+            cart_id_elegido=self.cart_id or "",
+            cart_id_recomendado=None,
+            ranking=[],
+            chequeos=[],
+            motivo=self.motivo,
+        ).model_dump(mode="json")
+
+    def artefacto(self) -> dict[str, Any]:
+        return a2a.artefacto_veredicto(self.veredicto_json())
+
+
+@dataclass
+class Llamada:
+    """Un pedido JSON-RPC en curso."""
+
+    pedido: a2a.Pedido
+    guard_activo: bool  # una sola lectura del interruptor por pedido
+    busqueda_emitida: bool = False
+
+
+@dataclass
+class EstadoStream:
+    ofertas: a2a.Respuesta = field(default_factory=a2a.Respuesta)
+    ofertas_registradas: bool = False
+    task_id: str | None = None
+    contexto_id: str | None = None
+    task_vista: bool = False
+    checkouts: int = 0
+    decision: Decision | None = None
+    pendiente: list[bytes] | None = None  # eventos retenidos hasta el final
+    cortado: bool = False
+    resuelto: bool = False
 
 
 class ProxyGuard:
@@ -110,11 +212,20 @@ class ProxyGuard:
         self.client = client
         self.evaluador = evaluador
         self.guard_activo = config.guard_activo
-        self.bus = BusDeEventos(config.events_jsonl)
+        self.bus = BusDeEventos(
+            config.events_jsonl, max_suscriptores=config.max_suscriptores_sse
+        )
         self.ping_segundos = ping_segundos
+        self.aprobaciones = RegistroAprobaciones()
         self._ofertas: OrderedDict[str, OfertasGuardadas] = OrderedDict()
         self._decisiones: OrderedDict[str, Decision] = OrderedDict()
         self._ficha: Ficha | None = None
+        if not evaluador.acepta_checkout:
+            logger.warning(
+                "evaluar() (%s) no acepta checkout=: el Guard no va a atar el "
+                "checkout firmado al cart evaluado. Actualizá guard/.",
+                evaluador.nombre,
+            )
 
     # -- utilidades ----------------------------------------------------------
 
@@ -139,6 +250,17 @@ class ProxyGuard:
         guardadas = self._ofertas.get(contexto_id) if contexto_id else None
         return guardadas.escenario if guardadas else None
 
+    def _error(self, llamada: Llamada, mensaje: str, contexto_id: str | None = None) -> None:
+        logger.error(mensaje)
+        contexto_id = contexto_id or llamada.pedido.contexto_id
+        self._emitir(
+            "error",
+            {"mensaje": mensaje},
+            guard_activo=llamada.guard_activo,
+            contexto_id=contexto_id,
+            escenario=llamada.pedido.escenario or self._escenario(contexto_id),
+        )
+
     def ficha(self) -> Ficha:
         if self._ficha is None:
             self._ficha = Ficha.desde_intent(cargar_intent())
@@ -155,42 +277,43 @@ class ProxyGuard:
 
     async def card(self, request: Request) -> Response:
         resto = request.path_params["resto"]
+        if resto not in RUTAS_CARD:
+            return JSONResponse({"error": "no_encontrado"}, status_code=404)
         url = f"{self.config.merchant_upstream_url}/{resto}"
         try:
-            resp = await self.client.get(
-                url, headers=_filtrar(request.headers, _NO_HACIA_COMERCIO)
-            )
-        except httpx.HTTPError as e:
-            mensaje = f"El comercio no responde en {url}: {type(e).__name__}: {e}"
+            async with self.client.stream(
+                "GET", url, headers={"Accept": "application/json"}
+            ) as resp:
+                status = resp.status_code
+                contenido = await a2a.leer_acotado(
+                    resp.aiter_bytes(), self.config.max_respuesta_bytes
+                )
+        except (httpx.HTTPError, a2a.LimiteExcedido) as e:
+            mensaje = f"El comercio no entrega la Agent Card ({type(e).__name__}: {e})"
             logger.error(mensaje)
             self._emitir("error", {"mensaje": mensaje}, guard_activo=self.guard_activo)
-            return JSONResponse({"error": mensaje}, status_code=502)
-        headers = _filtrar(resp.headers, _NO_HACIA_CLIENTE)
-        es_card = resto.endswith(("agent-card.json", "agent.json"))
-        if resp.status_code != 200 or not es_card:
-            return Response(resp.content, status_code=resp.status_code, headers=headers)
-        try:
-            card = resp.json()
-        except ValueError:
-            return JSONResponse({"error": "La Agent Card del comercio no es JSON"}, 502)
+            return JSONResponse({"error": "comercio_no_responde"}, status_code=502)
+        if status != 200:
+            return JSONResponse(
+                {"error": "card_no_disponible", "status_comercio": status}, status_code=502
+            )
+        card, _ = a2a.parsear_json(contenido)
         if not isinstance(card, dict):
-            return JSONResponse({"error": "La Agent Card del comercio no es un objeto"}, 502)
+            return JSONResponse({"error": "card_ilegible"}, status_code=502)
         logger.info("Agent Card: %s → %s", card.get("url"), self.config.proxy_public_url)
+        # Solo el JSON reescrito: ningún header del comercio (Set-Cookie, etc.).
         return JSONResponse(a2a.reescribir_card(card, self.config.proxy_public_url))
 
     # -- JSON-RPC ------------------------------------------------------------
 
     async def rpc(self, request: Request) -> Response:
         raw = await request.body()
-        pedido = a2a.leer_pedido(raw)
-        guard_activo = self.guard_activo  # una sola lectura por pedido
+        llamada = Llamada(pedido=a2a.leer_pedido(raw), guard_activo=self.guard_activo)
+        pedido = llamada.pedido
         logger.info(
-            "→ comercio: %s %s contexto=%s",
-            pedido.metodo_rpc,
-            pedido.tipo,
-            pedido.contexto_id,
+            "→ comercio: %s %s contexto=%s", pedido.metodo_rpc, pedido.tipo, pedido.contexto_id
         )
-        self._eventos_del_pedido(pedido, guard_activo)
+        self._eventos_del_pedido(llamada)
 
         upstream = self.client.build_request(
             "POST",
@@ -201,171 +324,365 @@ class ProxyGuard:
         try:
             resp = await self.client.send(upstream, stream=True)
         except httpx.HTTPError as e:
-            mensaje = (
-                f"Proxy del Guard: el comercio no responde en "
-                f"{self.config.merchant_upstream_url} ({type(e).__name__}: {e})"
+            return self._sin_respuesta(
+                llamada, "el comercio no respondió", f"{type(e).__name__}: {e}"
             )
-            logger.error(mensaje)
-            self._emitir(
-                "error",
-                {"mensaje": mensaje},
-                guard_activo=guard_activo,
-                contexto_id=pedido.contexto_id,
-                escenario=pedido.escenario,
-            )
-            return JSONResponse(a2a.error_jsonrpc(pedido.rpc_id, mensaje), status_code=502)
 
-        headers = _filtrar(resp.headers, _NO_HACIA_CLIENTE)
-        if resp.headers.get("content-type", "").startswith("text/event-stream"):
+        headers = _del_comercio(resp.headers)
+        if "text/event-stream" in resp.headers.get("content-type", "").lower():
             return StreamingResponse(
-                self._sse(resp, pedido, guard_activo),
+                self._sse(resp, llamada),
                 status_code=resp.status_code,
-                headers=headers,
+                headers={**headers, "Cache-Control": "no-cache"},
+                media_type="text/event-stream",
             )
         try:
-            contenido = await resp.aread()
+            contenido = await a2a.leer_acotado(
+                resp.aiter_bytes(), self.config.max_respuesta_bytes
+            )
+        except a2a.LimiteExcedido as e:
+            return self._respuesta_excedida(llamada, e)
+        except httpx.HTTPError as e:
+            return self._sin_respuesta(
+                llamada, "la respuesta del comercio se cortó", f"{type(e).__name__}: {e}"
+            )
         finally:
             await resp.aclose()
-        nuevo = await self._procesar_json(contenido, pedido, guard_activo)
-        return Response(nuevo, status_code=resp.status_code, headers=headers)
+        cuerpo, status = await self._procesar_json(contenido, llamada, resp.status_code)
+        return Response(cuerpo, status_code=status, headers=headers, media_type="application/json")
 
-    def _eventos_del_pedido(self, pedido: a2a.Pedido, guard_activo: bool) -> None:
-        if pedido.tipo == "find_products":
-            self._emitir(
-                "busqueda_enviada",
-                {"catalog_search": pedido.catalog_search},
-                guard_activo=guard_activo,
-                contexto_id=pedido.contexto_id,
-                escenario=pedido.escenario,
-            )
+    def _eventos_del_pedido(self, llamada: Llamada) -> None:
+        pedido = llamada.pedido
+        if pedido.tipo == "find_products" and pedido.contexto_id:
+            self._emitir_busqueda(llamada, pedido.contexto_id)
         elif pedido.tipo == "create_checkout":
             self._emitir(
                 "checkout_pedido",
                 {"cart_id": pedido.cart_id},
-                guard_activo=guard_activo,
+                guard_activo=llamada.guard_activo,
                 contexto_id=pedido.contexto_id,
                 escenario=self._escenario(pedido.contexto_id),
             )
 
+    def _emitir_busqueda(self, llamada: Llamada, contexto_id: str | None) -> None:
+        """`busqueda_enviada` sale una vez, con el contextId del pedido o, si
+        no lo traía, con el de la respuesta del comercio."""
+        pedido = llamada.pedido
+        if pedido.tipo != "find_products" or llamada.busqueda_emitida:
+            return
+        llamada.busqueda_emitida = True
+        self._emitir(
+            "busqueda_enviada",
+            {"catalog_search": pedido.catalog_search},
+            guard_activo=llamada.guard_activo,
+            contexto_id=contexto_id,
+            escenario=pedido.escenario,
+        )
+
+    def _es_de_checkout(self, llamada: Llamada) -> bool:
+        return llamada.pedido.tipo == "create_checkout"
+
+    def _sin_respuesta(self, llamada: Llamada, motivo: str, detalle: str) -> Response:
+        """Red caída, timeout o stream cortado antes de tener una respuesta."""
+        self._emitir_busqueda(llamada, None)
+        if llamada.guard_activo and self._es_de_checkout(llamada):
+            cuerpo = self._bloqueo_sintetico(llamada, f"{motivo}: no hay checkout que evaluar", detalle)
+            return Response(cuerpo, status_code=200, media_type="application/json")
+        mensaje = f"Proxy del Guard: {motivo} ({detalle})"
+        self._error(llamada, mensaje)
+        return JSONResponse(a2a.error_jsonrpc(llamada.pedido.rpc_id, mensaje), status_code=502)
+
+    def _respuesta_excedida(self, llamada: Llamada, e: a2a.LimiteExcedido) -> Response:
+        self._emitir_busqueda(llamada, None)
+        motivo = f"la respuesta del comercio supera el tope de {e.limite} bytes"
+        if llamada.guard_activo and (
+            self._es_de_checkout(llamada)
+            or llamada.pedido.es_de_tarea
+            or a2a.CHECKOUT_KEY.encode() in e.parcial
+        ):
+            cuerpo = self._bloqueo_sintetico(llamada, motivo)
+            return Response(cuerpo, status_code=200, media_type="application/json")
+        mensaje = f"Proxy del Guard: {motivo}"
+        self._error(llamada, mensaje)
+        return JSONResponse(a2a.error_jsonrpc(llamada.pedido.rpc_id, mensaje), status_code=502)
+
     async def _procesar_json(
-        self, contenido: bytes, pedido: a2a.Pedido, guard_activo: bool
-    ) -> bytes:
-        try:
-            body = json.loads(contenido)
-        except (ValueError, UnicodeDecodeError):
-            body = None
-        if not isinstance(body, dict):
-            self._emitir_reenviado(pedido, a2a.Respuesta(), guard_activo)
-            return contenido
-        if "error" in body:
-            self._emitir_error_comercio(body["error"], pedido, guard_activo)
-            return contenido
+        self, contenido: bytes, llamada: Llamada, status: int
+    ) -> tuple[bytes, int]:
+        pedido, activo = llamada.pedido, llamada.guard_activo
+        body, error = a2a.parsear_json(contenido)
+        if error is not None or not isinstance(body, dict):
+            detalle = error or f"se esperaba un objeto JSON y llegó {type(body).__name__}"
+            self._emitir_busqueda(llamada, None)
+            menciona = (
+                a2a.menciona_checkout(contenido)
+                if error is not None
+                else a2a.contar_clave(body, a2a.CHECKOUT_KEY) > 0
+            )
+            if activo and (self._es_de_checkout(llamada) or menciona):
+                return self._bloqueo_sintetico(
+                    llamada, "la respuesta del comercio no se pudo leer", detalle
+                ), 200
+            self._error(llamada, f"Respuesta ilegible del comercio: {detalle}")
+            return contenido, status
+
+        # guard.veredicto solo lo pone el proxy.
+        body, cambiado = a2a.quitar_veredictos_ajenos(body)
+        salida = a2a.dumps(body) if cambiado else contenido
         result = body.get("result")
-        respuesta = a2a.Respuesta()
-        if isinstance(result, dict):
-            respuesta.ingerir(result)
-        self._registrar_ofertas(respuesta, pedido, guard_activo)
+        n_checkouts = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
 
-        if respuesta.checkout is None or result.get("kind") != "task":
-            self._emitir_reenviado(pedido, respuesta, guard_activo)
-            return contenido
+        if "error" in body and "result" not in body:
+            self._emitir_busqueda(llamada, None)
+            self._emitir_error_comercio(body["error"], llamada)
+            return salida, status
 
-        decision = await self._decidir(respuesta, pedido, guard_activo)
-        if decision is None:  # Guard apagado: passthrough puro
-            self._emitir_reenviado(pedido, respuesta, guard_activo)
-            return contenido
-        if decision.bloquear:
-            nuevo = a2a.tarea_bloqueada(result, decision.texto, decision.artefacto)
-        else:
-            nuevo = a2a.tarea_con_artefacto(result, decision.artefacto)
-        self._emitir_resultado(decision, respuesta, pedido, guard_activo)
-        return a2a.dumps({**body, "result": nuevo})
+        kind = result.get("kind") if isinstance(result, dict) else None
+        if kind != "task":
+            contexto = result.get("contextId") if isinstance(result, dict) else None
+            self._emitir_busqueda(llamada, contexto if isinstance(contexto, str) else None)
+            if activo and (self._es_de_checkout(llamada) or n_checkouts):
+                return self._bloqueo_sintetico(
+                    llamada,
+                    f"respuesta de tipo {kind or type(result).__name__} donde se "
+                    "esperaba una tarea",
+                ), 200
+            self._emitir_reenviado(llamada, contexto if isinstance(contexto, str) else None)
+            return salida, status
 
-    async def _sse(
-        self, resp: httpx.Response, pedido: a2a.Pedido, guard_activo: bool
-    ) -> AsyncIterator[bytes]:
-        respuesta = a2a.Respuesta()
-        ofertas_registradas = False
-        checkout_visto = False
-        cortado = False
-        try:
-            async for evento in a2a.leer_sse(resp.aiter_lines()):
-                if cortado:
-                    continue  # se drena el resto del comercio sin reenviarlo
-                try:
-                    body = json.loads(evento.data)
-                except ValueError:
-                    yield evento.serializar()
-                    continue
-                result = body.get("result") if isinstance(body, dict) else None
-                if not isinstance(result, dict):
-                    if isinstance(body, dict) and "error" in body:
-                        self._emitir_error_comercio(body["error"], pedido, guard_activo)
-                    yield evento.serializar()
-                    continue
-
+        contexto = result.get("contextId") if isinstance(result.get("contextId"), str) else None
+        self._emitir_busqueda(llamada, contexto)
+        if n_checkouts == 0:
+            if pedido.tipo == "find_products":
+                respuesta = a2a.Respuesta()
                 respuesta.ingerir(result)
-                if respuesta.checkout is not None and not checkout_visto:
-                    checkout_visto = True
-                    decision = await self._decidir(respuesta, pedido, guard_activo)
-                    if decision is None:
-                        yield evento.serializar()
-                        continue
-                    for bloque in self._sse_con_decision(body, result, respuesta, decision):
-                        yield bloque
-                    cortado = decision.bloquear
-                    self._emitir_resultado(decision, respuesta, pedido, guard_activo)
-                    continue
+                self._registrar_ofertas(respuesta, llamada)
+            self._emitir_reenviado(llamada, contexto)
+            return salida, status
 
-                if result.get("final") and not ofertas_registradas:
-                    ofertas_registradas = True
-                    self._registrar_ofertas(respuesta, pedido, guard_activo)
-                yield evento.serializar()
+        decision = await self._decidir_tarea(result, llamada, n_checkouts)
+        if decision is None:  # Guard apagado: passthrough
+            self._emitir_reenviado(llamada, contexto, metodo="create_checkout")
+            return salida, status
+        decision = self._resolver(decision, result.get("id"))
+        if decision.retiene:
+            nuevo = a2a.tarea_bloqueada(result, decision.texto, decision.artefacto())
+        else:
+            nuevo = a2a.tarea_con_artefacto(result, decision.artefacto())
+        self._emitir_resultado(decision, llamada)
+        return a2a.dumps({**body, "result": nuevo}), status
+
+    # -- SSE -----------------------------------------------------------------
+
+    def _bloque(self, llamada: Llamada, result: dict[str, Any]) -> bytes:
+        return a2a.bloque_sse(a2a.respuesta_jsonrpc(llamada.pedido.rpc_id, result))
+
+    async def _sse(self, resp: httpx.Response, llamada: Llamada) -> AsyncIterator[bytes]:
+        est = EstadoStream()
+        falla: str | None = None
+        try:
+            lineas = a2a.lineas_acotadas(resp.aiter_bytes(), self.config.max_respuesta_bytes)
+            async for evento in a2a.leer_sse(lineas):
+                for bloque in await self._sse_evento(evento, llamada, est):
+                    yield bloque
+                if est.cortado:
+                    break
+        except a2a.LimiteExcedido as e:
+            falla = f"el stream del comercio supera el tope de {e.limite} bytes"
+        except httpx.HTTPError as e:
+            falla = f"el stream del comercio se cortó ({type(e).__name__})"
         finally:
             await resp.aclose()
-        if not ofertas_registradas:
-            self._registrar_ofertas(respuesta, pedido, guard_activo)
-        if not checkout_visto or not guard_activo:
-            # Con Guard y checkout, el evento final ya salió en _emitir_resultado.
-            self._emitir_reenviado(pedido, respuesta, guard_activo)
 
-    def _sse_con_decision(
-        self,
-        body: dict[str, Any],
-        result: dict[str, Any],
-        respuesta: a2a.Respuesta,
-        decision: Decision,
+        if falla is not None and not est.cortado:
+            for bloque in self._sse_falla(llamada, est, falla):
+                yield bloque
+        elif est.pendiente is not None and not est.cortado:
+            for bloque in self._sse_cortar(
+                llamada, est, "el stream del comercio terminó sin evento final después del checkout"
+            ):
+                yield bloque
+
+        self._emitir_busqueda(llamada, est.contexto_id)
+        if llamada.pedido.tipo == "find_products" and not est.ofertas_registradas:
+            self._registrar_ofertas(est.ofertas, llamada)
+        if not est.resuelto and not est.cortado:
+            metodo = "create_checkout" if est.checkouts else None
+            self._emitir_reenviado(llamada, est.contexto_id, metodo=metodo)
+
+    async def _sse_evento(
+        self, evento: a2a.EventoSSE, llamada: Llamada, est: EstadoStream
     ) -> list[bytes]:
-        def bloque(nuevo_result: dict[str, Any]) -> bytes:
-            return a2a.EventoSSE(a2a.dumps({**body, "result": nuevo_result}).decode()).serializar()
+        pedido, activo = llamada.pedido, llamada.guard_activo
+        body, error = a2a.parsear_json(evento.data)
+        if error is not None or not isinstance(body, dict):
+            detalle = error or "el evento no es un objeto JSON"
+            if activo and (
+                self._es_de_checkout(llamada)
+                or est.pendiente is not None
+                or a2a.menciona_checkout(evento.data.encode("utf-8"))
+            ):
+                return self._sse_cortar(
+                    llamada, est, "un evento SSE del comercio no se pudo leer", detalle
+                )
+            self._error(llamada, f"Evento SSE ilegible del comercio: {detalle}")
+            return self._sse_encolar(est, evento.serializar(), final=False)
 
-        task_id, contexto_id = respuesta.task_id, respuesta.contexto_id
-        artefacto = decision.artefacto
-        if result.get("kind") == "task":
-            if decision.bloquear:
-                return [bloque(a2a.tarea_bloqueada(result, decision.texto, artefacto))]
-            return [bloque(a2a.tarea_con_artefacto(result, artefacto))]
-        bloques = []
-        if not decision.bloquear:
-            bloques.append(bloque(result))  # el artefacto del checkout, intacto
-        if artefacto is not None:
-            bloques.append(bloque(a2a.evento_artefacto(task_id, contexto_id, artefacto)))
-        if decision.bloquear:
-            bloques.append(bloque(a2a.evento_fallido(task_id, contexto_id, decision.texto)))
-        return bloques
+        body, cambiado = a2a.quitar_veredictos_ajenos(body)
+        crudo = a2a.bloque_sse(body) if cambiado else evento.serializar()
+        result = body.get("result")
+        n = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
+        if not isinstance(result, dict):
+            if "error" in body:
+                self._emitir_error_comercio(body["error"], llamada)
+            if activo and n:
+                return self._sse_cortar(llamada, est, "un ap2.checkout fuera de un evento de tarea")
+            return self._sse_encolar(est, crudo, final=False)
 
-    # -- ofertas y checkout ----------------------------------------------------
+        kind = result.get("kind")
+        if kind == "task":
+            est.task_vista = True
+            est.task_id = result.get("id") if isinstance(result.get("id"), str) else est.task_id
+        elif kind in ("artifact-update", "status-update"):
+            tid = result.get("taskId")
+            est.task_id = tid if isinstance(tid, str) else est.task_id
+        ctx = result.get("contextId")
+        est.contexto_id = ctx if isinstance(ctx, str) else est.contexto_id
+        final = a2a.es_final(result)
 
-    def _registrar_ofertas(
-        self, respuesta: a2a.Respuesta, pedido: a2a.Pedido, guard_activo: bool
-    ) -> None:
-        if not respuesta.carts:
+        if n == 0:
+            if pedido.tipo == "find_products":
+                est.ofertas.ingerir(result)
+                self._emitir_busqueda(llamada, est.ofertas.contexto_id or est.contexto_id)
+                if final and not est.ofertas_registradas:
+                    est.ofertas_registradas = True
+                    self._registrar_ofertas(est.ofertas, llamada)
+            return self._sse_encolar(est, crudo, final=final, llamada=llamada)
+
+        # -- un evento con ap2.checkout ------------------------------------
+        if not activo:
+            est.checkouts += n
+            previa = self._decisiones.get(est.task_id) if est.task_id else None
+            if previa is not None and previa.retiene:
+                return self._sse_aplicar_retencion(llamada, est, previa, result)
+            checkouts = a2a.checkouts_del_result(result)
+            if checkouts and isinstance(checkouts[0], dict):
+                cart_id = pedido.cart_id or checkouts[0].get("cart_id")
+                self._emitir_checkout_recibido(
+                    checkouts[0], str(cart_id) if cart_id else None,
+                    pedido.contexto_id or est.contexto_id, False,
+                )
+            return [crudo]
+        if est.checkouts + n > 1:
+            return self._sse_cortar(llamada, est, "más de un ap2.checkout en el mismo stream")
+        est.checkouts += n
+        if kind not in ("task", "artifact-update"):
+            return self._sse_cortar(
+                llamada, est, f"un ap2.checkout dentro de un evento {kind}"
+            )
+        checkouts = a2a.checkouts_del_result(result)
+        if len(checkouts) != n:
+            return self._sse_cortar(llamada, est, "el ap2.checkout vino fuera de los artefactos")
+        if not isinstance(checkouts[0], dict):
+            return self._sse_cortar(llamada, est, "el ap2.checkout no tiene el formato esperado")
+        decision = await self._decidir_checkout(
+            checkouts[0], llamada, est.task_id, ctx if isinstance(ctx, str) else None
+        )
+        est.decision = decision
+        if decision.retiene:
+            return self._sse_aplicar_retencion(llamada, est, decision, result)
+        if kind == "task" and final:
+            decision = self._resolver(decision, est.task_id)
+            if decision.retiene:
+                return self._sse_aplicar_retencion(llamada, est, decision, result)
+            est.resuelto = True
+            self._emitir_resultado(decision, llamada)
+            return [self._bloque(llamada, a2a.tarea_con_artefacto(result, decision.artefacto()))]
+        # Pasa: se retiene hasta el evento final, para que un segundo
+        # checkout en el mismo stream no llegue nunca al cliente.
+        est.pendiente = [crudo]
+        return []
+
+    def _sse_encolar(
+        self, est: EstadoStream, crudo: bytes, *, final: bool, llamada: Llamada | None = None
+    ) -> list[bytes]:
+        if est.pendiente is None:
+            return [crudo]
+        est.pendiente.append(crudo)
+        if final and llamada is not None:
+            return self._sse_liberar(llamada, est)
+        return []
+
+    def _sse_liberar(self, llamada: Llamada, est: EstadoStream) -> list[bytes]:
+        pendiente = est.pendiente or []
+        est.pendiente = None
+        decision = self._resolver(est.decision, est.task_id)
+        if decision.retiene:  # p. ej. la aprobación ya se usó en otro intento
+            return self._sse_aplicar_retencion(llamada, est, decision, None)
+        est.resuelto = True
+        self._emitir_resultado(decision, llamada)
+        final = pendiente.pop()
+        artefacto = a2a.evento_artefacto(est.task_id, est.contexto_id, decision.artefacto())
+        return [*pendiente, self._bloque(llamada, artefacto), final]
+
+    def _sse_aplicar_retencion(
+        self,
+        llamada: Llamada,
+        est: EstadoStream,
+        decision: Decision,
+        result: dict[str, Any] | None,
+    ) -> list[bytes]:
+        decision = self._resolver(decision, est.task_id)
+        est.cortado = True
+        est.resuelto = True
+        est.pendiente = None
+        self._emitir_resultado(decision, llamada)
+        if result is not None and result.get("kind") == "task":
+            return [self._bloque(llamada, a2a.tarea_bloqueada(result, decision.texto, decision.artefacto()))]
+        contexto = est.contexto_id or llamada.pedido.contexto_id
+        if not est.task_vista and est.task_id is None:
+            return [self._bloque(
+                llamada,
+                a2a.tarea_sintetica_bloqueada(None, contexto, decision.texto, decision.artefacto()),
+            )]
+        return [
+            self._bloque(llamada, a2a.evento_artefacto(est.task_id, contexto, decision.artefacto())),
+            self._bloque(llamada, a2a.evento_fallido(est.task_id, contexto, decision.texto)),
+        ]
+
+    def _sse_cortar(
+        self, llamada: Llamada, est: EstadoStream, motivo: str, detalle: str | None = None
+    ) -> list[bytes]:
+        pedido = llamada.pedido
+        previa = est.decision
+        cart_id = previa.cart_id if previa else pedido.cart_id
+        contexto = (previa.contexto_id if previa else None) or pedido.contexto_id or est.contexto_id
+        decision = self._bloqueo(llamada, cart_id, contexto, motivo, detalle)
+        return self._sse_aplicar_retencion(llamada, est, decision, None)
+
+    def _sse_falla(self, llamada: Llamada, est: EstadoStream, motivo: str) -> list[bytes]:
+        if est.resuelto:  # el evento final ya salió: no hay nada que retener
+            self._error(llamada, f"Proxy del Guard: {motivo}", est.contexto_id)
+            return []
+        if llamada.guard_activo and (
+            self._es_de_checkout(llamada) or est.checkouts or est.pendiente is not None
+        ):
+            return self._sse_cortar(llamada, est, motivo)
+        self._error(llamada, f"Proxy del Guard: {motivo}", est.contexto_id)
+        return []
+
+    # -- ofertas -------------------------------------------------------------
+
+    def _registrar_ofertas(self, respuesta: a2a.Respuesta, llamada: Llamada) -> None:
+        """Solo desde la respuesta a un find_products del cliente."""
+        pedido = llamada.pedido
+        if pedido.tipo != "find_products" or not respuesta.carts:
             return
         contexto_id = respuesta.contexto_id or pedido.contexto_id
         escenario = respuesta.escenario or pedido.escenario
         guardadas = OfertasGuardadas(
-            carts=list(respuesta.carts),
-            offer_details=list(respuesta.offer_details or []),
+            carts=copy.deepcopy(respuesta.carts),
+            offer_details=copy.deepcopy(respuesta.offer_details or []),
             escenario=escenario,
         )
         if contexto_id:
@@ -378,45 +695,118 @@ class ProxyGuard:
         )
         self._emitir(
             "ofertas_recibidas",
-            {"carts": guardadas.carts, "offer_details": guardadas.offer_details},
-            guard_activo=guard_activo,
+            {
+                "carts": copy.deepcopy(guardadas.carts),
+                "offer_details": copy.deepcopy(guardadas.offer_details),
+            },
+            guard_activo=llamada.guard_activo,
             contexto_id=contexto_id,
             escenario=escenario,
         )
 
-    async def _decidir(
-        self, respuesta: a2a.Respuesta, pedido: a2a.Pedido, guard_activo: bool
+    # -- checkout ------------------------------------------------------------
+
+    async def _decidir_tarea(
+        self, result: dict[str, Any], llamada: Llamada, n_checkouts: int
     ) -> Decision | None:
-        """Registra el checkout y, si el Guard está activo, pide el veredicto."""
-        checkout = respuesta.checkout or {}
-        contexto_id = respuesta.contexto_id or pedido.contexto_id
-        cart_id = str(checkout.get("cart_id") or pedido.cart_id or "")
-        guardadas = self._ofertas.get(contexto_id) if contexto_id else None
-        escenario = guardadas.escenario if guardadas else None
-
-        previa = self._decisiones.get(respuesta.task_id) if respuesta.task_id else None
-        if previa is not None and guard_activo:
-            return previa  # p. ej. tasks/get de una tarea ya evaluada
-
-        self._emitir_checkout_recibido(checkout, cart_id, guardadas, contexto_id, guard_activo)
-        if not guard_activo:
+        """Una tarea (respuesta JSON) que trae ap2.checkout. None = passthrough."""
+        task_id = result.get("id") if isinstance(result.get("id"), str) else None
+        contexto = result.get("contextId") if isinstance(result.get("contextId"), str) else None
+        checkouts = a2a.checkouts_del_result(result)
+        if not llamada.guard_activo:
+            previa = self._decisiones.get(task_id) if task_id else None
+            if previa is not None and previa.retiene:
+                # Una tarea retenida no se libera apagando el Guard.
+                return previa
+            if checkouts and isinstance(checkouts[0], dict):
+                cart_id = llamada.pedido.cart_id or checkouts[0].get("cart_id")
+                self._emitir_checkout_recibido(
+                    checkouts[0], str(cart_id) if cart_id else None,
+                    llamada.pedido.contexto_id or contexto, False,
+                )
             return None
+        pedido = llamada.pedido
+        if len(checkouts) != n_checkouts:
+            return self._bloqueo(
+                llamada, pedido.cart_id, pedido.contexto_id or contexto,
+                "el ap2.checkout vino fuera de los artefactos de la tarea",
+            )
+        if len(checkouts) > 1:
+            return self._bloqueo(
+                llamada, pedido.cart_id, pedido.contexto_id or contexto,
+                f"la respuesta trae {len(checkouts)} ap2.checkout: se espera uno solo",
+            )
+        if not isinstance(checkouts[0], dict):
+            return self._bloqueo(
+                llamada, pedido.cart_id, pedido.contexto_id or contexto,
+                "el ap2.checkout no tiene el formato esperado",
+            )
+        return await self._decidir_checkout(checkouts[0], llamada, task_id, contexto)
 
-        decision = await self._evaluar(checkout, cart_id, guardadas, contexto_id, escenario)
-        if respuesta.task_id:
-            _recordar(self._decisiones, respuesta.task_id, decision)
-        return decision
+    async def _decidir_checkout(
+        self,
+        checkout: dict[str, Any],
+        llamada: Llamada,
+        task_id: str | None,
+        contexto_respuesta: str | None,
+    ) -> Decision:
+        """Con el Guard prendido: valida que el checkout sea el del pedido y
+        pide el veredicto (o reusa el de la caché, para tasks/get)."""
+        pedido = llamada.pedido
+        jwt = checkout.get("checkout_jwt")
+        if pedido.tipo == "create_checkout":
+            cart_id, contexto_id = pedido.cart_id, pedido.contexto_id
+        elif pedido.es_de_tarea:
+            previa = self._decisiones.get(task_id) if task_id else None
+            if previa is None:
+                return self._bloqueo(
+                    llamada, None, contexto_respuesta,
+                    "un ap2.checkout de una tarea que el proxy no evaluó",
+                )
+            if previa.retiene:
+                return previa  # bloqueada o retenida: nunca devuelve el checkout
+            if previa.clave == (task_id, a2a.sha256_hex(jwt), previa.cart_id):
+                return previa
+            cart_id, contexto_id = previa.cart_id, previa.contexto_id  # cambió: se reevalúa
+        else:
+            return self._bloqueo(
+                llamada, pedido.cart_id, contexto_respuesta or pedido.contexto_id,
+                "un ap2.checkout en una respuesta que no es a create_checkout",
+            )
+
+        clave = (task_id, a2a.sha256_hex(jwt), cart_id)
+        self._emitir_checkout_recibido(checkout, cart_id, contexto_id, True)
+
+        def bloqueo(motivo: str, detalle: str | None = None) -> Decision:
+            return self._bloqueo(llamada, cart_id, contexto_id, motivo, detalle, clave=clave)
+
+        if not contexto_id:
+            return bloqueo("el pedido de checkout no trae contextId")
+        if contexto_respuesta != contexto_id:
+            return bloqueo("la respuesta del comercio es de otro contexto que el pedido")
+        if checkout.get("cart_id") != cart_id:
+            return bloqueo("el ap2.checkout es de otro carrito que el que pidió el agente")
+        guardadas = self._ofertas.get(contexto_id)
+        if guardadas is None:
+            return bloqueo(
+                "no hay ofertas registradas para esta compra: el proxy no vio su find_products"
+            )
+        try:
+            visto = CheckoutVisto.model_validate(checkout)
+        except ValidationError as e:
+            return bloqueo("el ap2.checkout no tiene el formato esperado", str(e))
+        return await self._evaluar(llamada, checkout, visto, cart_id, contexto_id, guardadas, clave)
 
     def _emitir_checkout_recibido(
         self,
         checkout: dict[str, Any],
-        cart_id: str,
-        guardadas: OfertasGuardadas | None,
+        cart_id: str | None,
         contexto_id: str | None,
         guard_activo: bool,
     ) -> None:
         jwt = checkout.get("checkout_jwt")
         header, payload = a2a.decodificar_jwt(jwt)
+        guardadas = self._ofertas.get(contexto_id) if contexto_id else None
         cart = None
         if guardadas:
             cart = next((c for c in guardadas.carts if c.get("cart_id") == cart_id), None)
@@ -426,16 +816,19 @@ class ProxyGuard:
                 "amount": checkout.get("amount"),
                 "currency": checkout.get("currency"),
             }
+        datos: dict[str, Any] = {
+            "cart_id": cart_id,
+            "checkout_jwt": jwt,
+            "checkout_hash": checkout.get("checkout_hash"),
+            "jwt_header": header,
+            "jwt_payload": payload,
+            "ap2_violaciones": violaciones_ap2(copy.deepcopy(cart)),
+        }
+        if checkout.get("cart_id") != cart_id:
+            datos["cart_id_checkout"] = checkout.get("cart_id")
         self._emitir(
             "checkout_recibido",
-            {
-                "cart_id": cart_id,
-                "checkout_jwt": jwt,
-                "checkout_hash": checkout.get("checkout_hash"),
-                "jwt_header": header,
-                "jwt_payload": payload,
-                "ap2_violaciones": violaciones_ap2(cart),
-            },
+            datos,
             guard_activo=guard_activo,
             contexto_id=contexto_id,
             escenario=guardadas.escenario if guardadas else None,
@@ -443,45 +836,35 @@ class ProxyGuard:
 
     async def _evaluar(
         self,
+        llamada: Llamada,
         checkout: dict[str, Any],
+        visto: CheckoutVisto,
         cart_id: str,
-        guardadas: OfertasGuardadas | None,
-        contexto_id: str | None,
-        escenario: str | None,
+        contexto_id: str,
+        guardadas: OfertasGuardadas,
+        clave: tuple[str | None, str, str | None],
     ) -> Decision:
-        def no_evaluable(motivo: str) -> Decision:
-            logger.error(motivo)
-            self._emitir(
-                "error",
-                {"mensaje": motivo},
-                guard_activo=True,
-                contexto_id=contexto_id,
-                escenario=escenario,
-            )
-            texto = (
-                f"Pre-Sign Guard: no se pudo evaluar el checkout de {cart_id} "
-                f"({motivo}). No se presenta para firma."
-            )
-            return Decision(bloquear=True, texto=texto, veredicto=None)
-
-        if guardadas is None:
-            return no_evaluable(
-                f"no hay ofertas registradas para el contexto {contexto_id}: "
-                "el proxy no vio el find_products de esta compra"
-            )
-        catalogo, comercio_id = await cargar_catalogo(self.client, self.config.catalogo_url)
+        escenario = guardadas.escenario
+        catalogo, comercio_id, fuente = await cargar_catalogo(
+            self.client, self.config.catalogo_url
+        )
+        kwargs: dict[str, Any] = {
+            "politica": None,
+            "checkout_hash": checkout.get("checkout_hash"),
+        }
+        if self.evaluador.acepta_checkout:
+            kwargs["checkout"] = visto
         try:
             resultado = self.evaluador.evaluar(
                 self.ficha(),
                 OfertasVistas(
-                    carts=guardadas.carts,
-                    offer_details=guardadas.offer_details,
+                    carts=copy.deepcopy(guardadas.carts),
+                    offer_details=copy.deepcopy(guardadas.offer_details),
                     comercio_id=comercio_id,
                 ),
                 cart_id,
                 catalogo,
-                politica=None,
-                checkout_hash=checkout.get("checkout_hash"),
+                **kwargs,
             )
             veredicto = (
                 resultado
@@ -492,7 +875,10 @@ class ProxyGuard:
             )
         except Exception as e:  # noqa: BLE001 - nunca aprobar si evaluar() falla
             logger.exception("evaluar() falló")
-            return no_evaluable(f"evaluar() falló: {type(e).__name__}: {e}")
+            return self._bloqueo(
+                llamada, cart_id, contexto_id, "el Guard no pudo evaluar el checkout",
+                f"evaluar() falló: {type(e).__name__}: {e}", clave=clave,
+            )
 
         try:
             veredicto = firmar_recibo(veredicto, self.config.guard_key_path)
@@ -505,82 +891,171 @@ class ProxyGuard:
                 contexto_id=contexto_id,
                 escenario=escenario,
             )
+        recibo_firmado = bool(veredicto.recibo is not None and veredicto.recibo.firma)
 
         logger.info(
-            "veredicto %s para %s (%s): %s",
-            veredicto.status,
-            cart_id,
-            self.evaluador.nombre,
-            veredicto.motivo,
+            "veredicto %s para %s (%s, catálogo %s): %s",
+            veredicto.status, cart_id, self.evaluador.nombre, fuente, veredicto.motivo,
         )
         self._emitir(
             "veredicto",
-            {"veredicto": veredicto.model_dump(mode="json")},
+            {
+                "veredicto": veredicto.model_dump(mode="json"),
+                "fuente": fuente,
+                "recibo_firmado": recibo_firmado,
+            },
             guard_activo=True,
             contexto_id=contexto_id,
             escenario=escenario,
         )
-        bloquear = veredicto.status == "bloqueado"
-        texto = (
-            f"Pre-Sign Guard bloqueó el checkout de {cart_id}: {veredicto.motivo} "
-            "No se presenta para firma."
-            if bloquear
-            else veredicto.motivo
+        centavos, moneda = a2a.monto_checkout(checkout)
+        self.aprobaciones.registrar_veredicto(
+            contexto_id, cart_id, veredicto.status, centavos, moneda
         )
-        return Decision(bloquear=bloquear, texto=texto, veredicto=veredicto)
+        if veredicto.status in STATUS_LLEGAN_A_FIRMA:
+            accion: Accion = "pasar"
+        elif veredicto.status == "escalar":
+            accion = "retener"
+        else:
+            accion = "bloquear"
+        por_aprobar = (
+            veredicto.status == "escalar"
+            and self.aprobaciones.disponible(contexto_id, cart_id, centavos, moneda) is not None
+        )
+        return Decision(
+            accion="pasar" if por_aprobar else accion,
+            status=veredicto.status,
+            motivo=veredicto.motivo,
+            cart_id=cart_id,
+            contexto_id=contexto_id,
+            veredicto=veredicto,
+            clave=clave,
+            centavos=centavos,
+            moneda=moneda,
+            por_aprobar=por_aprobar,
+        )
 
-    def _emitir_resultado(
+    def _bloqueo(
         self,
-        decision: Decision,
-        respuesta: a2a.Respuesta,
-        pedido: a2a.Pedido,
-        guard_activo: bool,
-    ) -> None:
-        contexto_id = respuesta.contexto_id or pedido.contexto_id
-        if not decision.bloquear:
-            self._emitir_reenviado(pedido, respuesta, guard_activo)
+        llamada: Llamada,
+        cart_id: str | None,
+        contexto_id: str | None,
+        motivo: str,
+        detalle: str | None = None,
+        *,
+        clave: tuple[str | None, str, str | None] | None = None,
+    ) -> Decision:
+        """Fail-closed: lo que el proxy no pudo evaluar no llega a la firma.
+
+        El motivo es un texto fijo del proxy (va al agente); el detalle (que
+        puede traer texto del comercio) solo va al evento `error`.
+        """
+        mensaje = f"No se pudo evaluar el checkout: {motivo}"
+        if detalle:
+            mensaje += f" ({detalle})"
+        self._error(llamada, mensaje, contexto_id)
+        return Decision(
+            accion="bloquear",
+            status="bloqueado",
+            motivo=f"No se pudo evaluar el checkout: {motivo}.",
+            cart_id=cart_id,
+            contexto_id=contexto_id,
+            clave=clave,
+        )
+
+    def _bloqueo_sintetico(
+        self, llamada: Llamada, motivo: str, detalle: str | None = None
+    ) -> bytes:
+        """Respuesta JSON-RPC con una tarea `failed` armada por el proxy, para
+        cuando no hay una tarea legible del comercio."""
+        pedido = llamada.pedido
+        decision = self._resolver(
+            self._bloqueo(llamada, pedido.cart_id, pedido.contexto_id, motivo, detalle), None
+        )
+        self._emitir_resultado(decision, llamada)
+        task = a2a.tarea_sintetica_bloqueada(
+            None, pedido.contexto_id, decision.texto, decision.artefacto()
+        )
+        return a2a.dumps(a2a.respuesta_jsonrpc(pedido.rpc_id, task))
+
+    def _resolver(self, decision: Decision, task_id: Any) -> Decision:
+        """Última palabra antes de responder: si el Guard dio `escalar` y hay
+        una aprobación humana para ese contexto, cart y monto, se usa (un solo
+        uso). Guarda la decisión final en la caché de la tarea."""
+        final = decision
+        if decision.por_aprobar:
+            aprobacion = self.aprobaciones.consumir(
+                decision.contexto_id or "",
+                decision.cart_id or "",
+                decision.centavos,
+                decision.moneda,
+                task_id if isinstance(task_id, str) else None,
+            )
+            final = replace(
+                decision,
+                accion="pasar" if aprobacion else "retener",
+                por_aprobar=False,
+                aprobacion=aprobacion,
+            )
+            if aprobacion:
+                logger.warning(
+                    "Aprobación humana %s usada: pasa el checkout de %s (contexto %s)",
+                    aprobacion.id, decision.cart_id, decision.contexto_id,
+                )
+        if isinstance(task_id, str) and task_id:
+            _recordar(self._decisiones, task_id, final)
+        return final
+
+    def _emitir_resultado(self, decision: Decision, llamada: Llamada) -> None:
+        contexto_id = decision.contexto_id or llamada.pedido.contexto_id
+        if not decision.retiene:
+            datos: dict[str, Any] = {"metodo": "create_checkout"}
+            if decision.aprobacion is not None:
+                datos["aprobacion_humana"] = True
+                datos["aprobacion_id"] = decision.aprobacion.id
+            logger.info("← reenviado: create_checkout contexto=%s", contexto_id)
+            self._emitir(
+                "reenviado",
+                datos,
+                guard_activo=llamada.guard_activo,
+                contexto_id=contexto_id,
+                escenario=self._escenario(contexto_id),
+            )
             return
-        cart_id = (respuesta.checkout or {}).get("cart_id") or pedido.cart_id
-        motivo = decision.veredicto.motivo if decision.veredicto else decision.texto
-        logger.warning("✗ bloqueado %s: %s", cart_id, motivo)
+        logger.warning("✗ %s %s: %s", decision.status, decision.cart_id, decision.motivo)
         self._emitir(
             "bloqueado",
-            {"cart_id": cart_id, "motivo": motivo},
-            guard_activo=guard_activo,
+            {
+                "cart_id": decision.cart_id,
+                "motivo": decision.motivo,
+                "status": decision.status,
+                "requiere_aprobacion": decision.requiere_aprobacion,
+            },
+            guard_activo=llamada.guard_activo,
             contexto_id=contexto_id,
             escenario=self._escenario(contexto_id),
         )
 
     def _emitir_reenviado(
-        self, pedido: a2a.Pedido, respuesta: a2a.Respuesta, guard_activo: bool
+        self, llamada: Llamada, contexto_id: str | None, metodo: str | None = None
     ) -> None:
-        metodo = pedido.tipo
-        if respuesta.checkout is not None:
-            metodo = "create_checkout"
-        datos: dict[str, Any] = {"metodo": metodo}
+        pedido = llamada.pedido
+        datos: dict[str, Any] = {"metodo": metodo or pedido.tipo}
         if pedido.mandatos:
             datos["mandatos"] = dict(pedido.mandatos)
-        contexto_id = respuesta.contexto_id or pedido.contexto_id
-        logger.info("← reenviado: %s contexto=%s", metodo, contexto_id)
+        contexto_id = contexto_id or pedido.contexto_id
+        logger.info("← reenviado: %s contexto=%s", datos["metodo"], contexto_id)
         self._emitir(
             "reenviado",
             datos,
-            guard_activo=guard_activo,
+            guard_activo=llamada.guard_activo,
             contexto_id=contexto_id,
-            escenario=respuesta.escenario or pedido.escenario or self._escenario(contexto_id),
+            escenario=pedido.escenario or self._escenario(contexto_id),
         )
 
-    def _emitir_error_comercio(
-        self, error: Any, pedido: a2a.Pedido, guard_activo: bool
-    ) -> None:
+    def _emitir_error_comercio(self, error: Any, llamada: Llamada) -> None:
         detalle = error.get("message") if isinstance(error, dict) else error
-        self._emitir(
-            "error",
-            {"mensaje": f"El comercio respondió un error JSON-RPC: {detalle}"},
-            guard_activo=guard_activo,
-            contexto_id=pedido.contexto_id,
-            escenario=pedido.escenario,
-        )
+        self._error(llamada, f"El comercio respondió un error JSON-RPC: {detalle}")
 
     # -- API de control (dashboard) -------------------------------------------
 
@@ -588,9 +1063,8 @@ class ProxyGuard:
         return JSONResponse(self.estado())
 
     async def post_state(self, request: Request) -> Response:
-        try:
-            body = json.loads(await request.body())
-        except (ValueError, UnicodeDecodeError):
+        body, error = a2a.parsear_json(await request.body())
+        if error is not None:
             return JSONResponse({"error": "El cuerpo no es JSON"}, status_code=400)
         if not isinstance(body, dict) or not isinstance(body.get("guard_activo"), bool):
             return JSONResponse(
@@ -605,6 +1079,36 @@ class ProxyGuard:
         )
         return JSONResponse(self.estado())
 
+    async def get_aprobaciones(self, request: Request) -> Response:
+        return JSONResponse(self.aprobaciones.listar())
+
+    async def post_aprobacion(self, request: Request) -> Response:
+        body, error = a2a.parsear_json(await request.body())
+        valido = (
+            error is None
+            and isinstance(body, dict)
+            and set(body) == {"contexto_id", "cart_id"}
+            and all(
+                isinstance(body[k], str) and 0 < len(body[k]) <= _MAX_ID
+                for k in ("contexto_id", "cart_id")
+            )
+        )
+        if not valido:
+            return JSONResponse(
+                {"error": "se_espera", "formato": {"contexto_id": "str", "cart_id": "str"}},
+                status_code=400,
+            )
+        try:
+            aprobacion, creada = self.aprobaciones.aprobar(body["contexto_id"], body["cart_id"])
+        except SinEscalar as e:
+            return JSONResponse({"error": "sin_escalar", "detalle": str(e)}, status_code=409)
+        if creada:
+            logger.warning(
+                "Aprobación humana %s registrada: contexto %s, %s, %s centavos",
+                aprobacion.id, aprobacion.contexto_id, aprobacion.cart_id, aprobacion.centavos,
+            )
+        return JSONResponse(aprobacion.a_json(), status_code=201 if creada else 200)
+
     async def historial(self, request: Request) -> Response:
         try:
             limit = int(request.query_params.get("limit", CAPACIDAD))
@@ -616,7 +1120,10 @@ class ProxyGuard:
         return JSONResponse([e.model_dump(mode="json") for e in eventos])
 
     async def eventos_sse(self, request: Request) -> Response:
-        backlog, cola = self.bus.suscribir()
+        suscripcion = self.bus.suscribir()
+        if suscripcion is None:
+            return JSONResponse({"error": "demasiados_suscriptores"}, status_code=503)
+        backlog, cola = suscripcion
 
         def bloque(evento: Evento) -> bytes:
             return f"event: evento\ndata: {evento.model_dump_json()}\n\n".encode("utf-8")
@@ -650,9 +1157,9 @@ class ProxyGuard:
             )
         try:
             datos = clave_publica(self.config.guard_key_path)
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("No se pudo leer la clave del Guard")
-            return JSONResponse({"error": f"No se pudo leer la clave: {e}"}, status_code=500)
+            return JSONResponse({"error": "No se pudo leer la clave"}, status_code=500)
         if datos is None:
             return JSONResponse(
                 {"error": "guard.recibo no expone la clave"}, status_code=404
@@ -675,6 +1182,12 @@ def create_app(
         trust_env=False,
     )
     proxy = ProxyGuard(config, client, evaluador or cargar_evaluador(), ping_segundos)
+    try:
+        # La clave del recibo se crea al arrancar, no en la primera decisión.
+        if preparar_clave(config.guard_key_path):
+            logger.info("Clave del recibo lista en %s", config.guard_key_path)
+    except Exception:  # noqa: BLE001 - sin clave el recibo va sin firma
+        logger.exception("No se pudo preparar la clave del recibo")
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -688,17 +1201,25 @@ def create_app(
             Route(f"{rpc_path}/{{resto:path}}", proxy.card, methods=["GET"]),
             Route("/guard/state", proxy.get_state, methods=["GET"]),
             Route("/guard/state", proxy.post_state, methods=["POST"]),
+            Route("/guard/aprobaciones", proxy.get_aprobaciones, methods=["GET"]),
+            Route("/guard/aprobaciones", proxy.post_aprobacion, methods=["POST"]),
             Route("/guard/events", proxy.eventos_sse, methods=["GET"]),
             Route("/guard/events/history", proxy.historial, methods=["GET"]),
             Route("/guard/public-key", proxy.public_key, methods=["GET"]),
         ],
         middleware=[
             Middleware(
+                ControlLocal,
+                hosts=config.hosts_permitidos,
+                origenes=config.dashboard_origins,
+                rutas_post_json=RUTAS_POST_CONTROL,
+            ),
+            Middleware(
                 CORSMiddleware,
                 allow_origins=list(config.dashboard_origins),
                 allow_methods=["GET", "POST", "OPTIONS"],
-                allow_headers=["*"],
-            )
+                allow_headers=["content-type"],
+            ),
         ],
         lifespan=lifespan,
     )

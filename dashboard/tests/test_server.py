@@ -43,7 +43,8 @@ def _cliente(tmp_path: Path, handler=_proxy_caido) -> TestClient:
         proxy_url=PROXY,
         proxy_transport=httpx.MockTransport(handler),
     )
-    return TestClient(create_app(cfg))
+    # La API del panel solo atiende Host localhost/127.0.0.1 con su puerto.
+    return TestClient(create_app(cfg), base_url="http://localhost:8020")
 
 
 def _resultado_test(started_at: str | None, guard: str | None, nota: str) -> dict:

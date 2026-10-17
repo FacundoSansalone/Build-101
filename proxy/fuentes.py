@@ -32,33 +32,47 @@ def cargar_intent() -> dict[str, Any]:
 
 
 def _indexar(catalogo: dict[str, Any]) -> tuple[dict[str, dict], str | None]:
+    lista = catalogo.get("products")
     productos = {
         p["sku"]: p
-        for p in catalogo.get("products") or []
-        if isinstance(p, dict) and "sku" in p
+        for p in (lista if isinstance(lista, list) else [])
+        if isinstance(p, dict) and isinstance(p.get("sku"), str)
     }
     merchant = catalogo.get("merchant") or {}
-    return productos, merchant.get("id") if isinstance(merchant, dict) else None
+    comercio_id = merchant.get("id") if isinstance(merchant, dict) else None
+    return productos, comercio_id if isinstance(comercio_id, str) else None
+
+
+MAX_CATALOGO_BYTES = 2 * 1024 * 1024
 
 
 async def cargar_catalogo(
     client: httpx.AsyncClient, catalogo_url: str
-) -> tuple[dict[str, dict], str | None]:
-    """`GET <catalogo>/products` → (sku -> producto, merchant.id).
+) -> tuple[dict[str, dict], str | None, str]:
+    """`GET <catalogo>/products` → (sku -> producto, merchant.id, fuente).
 
-    Si el catálogo no responde, usa `fixtures/public_catalog.json`.
+    `fuente` es "http" o "fixture": si el catálogo no responde (o responde
+    algo ilegible), usa `fixtures/public_catalog.json` y lo dice.
     """
     try:
         resp = await client.get(f"{catalogo_url}/products", timeout=5.0)
         resp.raise_for_status()
-        datos = resp.json()
+        if len(resp.content) > MAX_CATALOGO_BYTES:
+            raise ValueError("el catálogo es demasiado grande")
+        datos = json.loads(resp.content, parse_constant=_sin_constantes)
         if not isinstance(datos, dict):
             raise ValueError("el catálogo no devolvió un objeto")
-        return _indexar(datos)
-    except (httpx.HTTPError, ValueError) as e:
+        productos, comercio_id = _indexar(datos)
+        return productos, comercio_id, "http"
+    except (httpx.HTTPError, ValueError, RecursionError) as e:
         logger.warning("Catálogo público no disponible (%s); uso fixtures/", e)
         datos = json.loads((FIXTURES / "public_catalog.json").read_text("utf-8"))
-        return _indexar(datos)
+        productos, comercio_id = _indexar(datos)
+        return productos, comercio_id, "fixture"
+
+
+def _sin_constantes(nombre: str) -> None:
+    raise ValueError(f"constante JSON no estándar en el catálogo: {nombre}")
 
 
 def violaciones_ap2(cart: dict[str, Any]) -> list[str] | None:

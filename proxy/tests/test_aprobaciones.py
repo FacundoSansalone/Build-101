@@ -1,0 +1,188 @@
+"""Corrección 7: `escalar` retiene el checkout hasta que un humano lo aprueba.
+
+La aprobación es de un solo uso y vale para ese contexto, cart y monto. El
+agente reintenta create_checkout y el checkout pasa intacto.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from proxy.tests.ayudantes import (
+    buscar,
+    checkout,
+    checkouts,
+    cliente_de,
+    eventos,
+    evaluador_espia,
+    solo_en_checkout,
+    texto_estado,
+    veredictos,
+)
+from proxy.tests.fake_world import FakeMerchant, cargar_fixture
+
+pytestmark = pytest.mark.anyio
+
+APROBACIONES = "/guard/aprobaciones"
+
+
+async def _aprobar(c, contexto: str, cart_id: str):
+    return await c.post(APROBACIONES, json={"contexto_id": contexto, "cart_id": cart_id})
+
+
+async def test_escalar_retiene_el_checkout(armar_proxy, merchant: FakeMerchant):
+    evaluador, _ = evaluador_espia("escalar", motivo="precio contradicho por el catálogo")
+    async with cliente_de(armar_proxy(evaluador=evaluador)) as c:
+        contexto = await buscar(c, "C")
+        resp = await checkout(c, contexto, "cart_1")
+        evs = await eventos(c)
+
+    task = resp.json()["result"]
+    assert task["status"]["state"] == "failed"
+    assert checkouts(task) == []
+    assert merchant.ultimo_checkout["checkout_jwt"].encode() not in resp.content
+    texto = texto_estado(task)
+    assert texto.startswith("Pre-Sign Guard: escalar. precio contradicho por el catálogo")
+    assert "requiere aprobación humana" in texto.lower()
+    (v,) = veredictos(task)
+    assert v["status"] == "escalar"
+    bloqueado = evs[-1]
+    assert bloqueado["tipo"] == "bloqueado"
+    assert bloqueado["datos"] == {
+        "cart_id": "cart_1",
+        "motivo": "precio contradicho por el catálogo",
+        "status": "escalar",
+        "requiere_aprobacion": True,
+    }
+
+
+async def test_aprobar_sin_escalar_previo_da_409(cliente):
+    contexto = await buscar(cliente, "B")
+    await checkout(cliente, contexto, "cart_4")  # bloqueado, no escalar
+    assert (await _aprobar(cliente, contexto, "cart_4")).status_code == 409
+    assert (await _aprobar(cliente, "ctx-que-no-existe", "cart_1")).status_code == 409
+
+
+async def test_aprobacion_humana_deja_pasar_el_reintento_una_vez(
+    armar_proxy, merchant: FakeMerchant
+):
+    evaluador, llamadas = evaluador_espia("escalar")
+    async with cliente_de(armar_proxy(evaluador=evaluador)) as c:
+        contexto = await buscar(c, "C")
+        retenido = (await checkout(c, contexto, "cart_1")).json()["result"]
+        assert retenido["status"]["state"] == "failed"
+
+        resp = await _aprobar(c, contexto, "cart_1")
+        assert resp.status_code == 201
+        aprobacion = resp.json()
+        assert aprobacion["contexto_id"] == contexto and aprobacion["cart_id"] == "cart_1"
+        assert aprobacion["estado"] == "pendiente"
+        lista = (await c.get(APROBACIONES)).json()
+        assert [a["id"] for a in lista["pendientes"]] == [aprobacion["id"]]
+        assert lista["usadas"] == []
+
+        reintento = await checkout(c, contexto, "cart_1")
+        lista = (await c.get(APROBACIONES)).json()
+        otra_vez = (await checkout(c, contexto, "cart_1")).json()["result"]
+        evs = await eventos(c)
+
+    task = reintento.json()["result"]
+    assert task["status"]["state"] == "completed"
+    # El checkout pasa intacto: byte a byte el que firmó el comercio.
+    firmado = merchant.checkouts[1]
+    assert checkouts(task) == [firmado]
+    assert firmado["checkout_jwt"].encode() in reintento.content
+    assert merchant.firma_valida(checkouts(task)[0]["checkout_jwt"])
+    assert veredictos(task)[0]["status"] == "escalar"
+    assert lista["pendientes"] == []
+    assert [a["id"] for a in lista["usadas"]] == [aprobacion["id"]]
+    assert lista["usadas"][0]["estado"] == "usada"
+    # De un solo uso: el siguiente reintento vuelve a quedar retenido.
+    assert otra_vez["status"]["state"] == "failed"
+    assert checkouts(otra_vez) == []
+    reenviados = [e for e in evs if e["tipo"] == "reenviado"
+                  and e["datos"].get("aprobacion_humana")]
+    assert len(reenviados) == 1
+    assert reenviados[0]["datos"]["metodo"] == "create_checkout"
+    assert reenviados[0]["contexto_id"] == contexto
+    assert len(llamadas) == 3  # el Guard evalúa cada intento
+
+
+async def test_aprobacion_no_aplica_si_cambia_el_monto(armar_proxy, merchant: FakeMerchant):
+    evaluador, _ = evaluador_espia("escalar")
+    async with cliente_de(armar_proxy(evaluador=evaluador)) as c:
+        contexto = await buscar(c, "C")
+        await checkout(c, contexto, "cart_1")
+        assert (await _aprobar(c, contexto, "cart_1")).status_code == 201
+
+        def mas_caro(respuesta, pedido):
+            cart = next(x for x in cargar_fixture("C")["carts"] if x["cart_id"] == "cart_1")
+            nuevo = merchant.armar_checkout(cart, monto=cart["amount"] + 4)
+            merchant.ultimo_checkout = nuevo
+            parte = respuesta["result"]["artifacts"][0]["parts"][0]
+            parte["data"]["ap2.checkout"] = nuevo
+            return respuesta
+
+        merchant.manipular = solo_en_checkout(mas_caro)
+        resp = await checkout(c, contexto, "cart_1")
+        lista = (await c.get(APROBACIONES)).json()
+
+    task = resp.json()["result"]
+    assert task["status"]["state"] == "failed"
+    assert checkouts(task) == []
+    assert len(lista["pendientes"]) == 1 and lista["usadas"] == []
+
+
+async def test_aprobacion_no_salta_un_bloqueado(armar_proxy):
+    estados = iter(["escalar", "bloqueado"])
+    from contracts import Veredicto
+    from proxy.evaluador import EvaluadorCargado
+
+    def evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
+                checkout_hash=None, ahora=None, checkout=None):
+        return Veredicto(status=next(estados), cart_id_elegido=cart_id_elegido,
+                         cart_id_recomendado=None, ranking=[], chequeos=[], motivo="m")
+
+    app = armar_proxy(evaluador=EvaluadorCargado(evaluar=evaluar, nombre="guard"))
+    async with cliente_de(app) as c:
+        contexto = await buscar(c, "C")
+        await checkout(c, contexto, "cart_1")
+        assert (await _aprobar(c, contexto, "cart_1")).status_code == 201
+        resp = await checkout(c, contexto, "cart_1")
+
+    assert resp.json()["result"]["status"]["state"] == "failed"
+    assert checkouts(resp.json()["result"]) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"contexto_id": "c"}, {"contexto_id": "", "cart_id": "x"},
+     {"contexto_id": 1, "cart_id": "x"}, {"contexto_id": "c", "cart_id": "x", "otro": 1},
+     [], "c"],
+)
+async def test_aprobacion_invalida_da_400(cliente, body):
+    resp = await cliente.post(APROBACIONES, content=json.dumps(body),
+                              headers={"content-type": "application/json"})
+    assert resp.status_code == 400
+
+
+async def test_aprobacion_con_json_roto_da_400(cliente):
+    resp = await cliente.post(APROBACIONES, content=b"{",
+                              headers={"content-type": "application/json"})
+    assert resp.status_code == 400
+
+
+async def test_aprobar_dos_veces_devuelve_la_misma(armar_proxy):
+    evaluador, _ = evaluador_espia("escalar")
+    async with cliente_de(armar_proxy(evaluador=evaluador)) as c:
+        contexto = await buscar(c, "C")
+        await checkout(c, contexto, "cart_1")
+        a = await _aprobar(c, contexto, "cart_1")
+        b = await _aprobar(c, contexto, "cart_1")
+        lista = (await c.get(APROBACIONES)).json()
+
+    assert a.status_code == 201 and b.status_code == 200
+    assert a.json()["id"] == b.json()["id"]
+    assert len(lista["pendientes"]) == 1

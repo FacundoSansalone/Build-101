@@ -21,9 +21,12 @@ def _puerto_libre() -> int:
 
 
 @pytest.fixture
-def servidor(armar_proxy) -> Iterator[str]:
-    app = armar_proxy(ping_segundos=0.2)
+def servidor(armar_proxy, config) -> Iterator[str]:
+    from dataclasses import replace
+
     puerto = _puerto_libre()
+    # La API de control solo atiende Host localhost/127.0.0.1 con su puerto.
+    app = armar_proxy(config=replace(config, port=puerto), ping_segundos=0.2)
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=puerto, log_level="warning")
     )

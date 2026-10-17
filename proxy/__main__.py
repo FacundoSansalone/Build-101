@@ -7,7 +7,7 @@ import logging
 import uvicorn
 
 from proxy.app import create_app
-from proxy.config import Config
+from proxy.config import Config, verificar_host_local
 
 
 def main() -> None:
@@ -16,6 +16,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
     config = Config.desde_entorno()
+    verificar_host_local(config)  # loopback salvo PROXY_ALLOW_REMOTE=1
     app = create_app(config)
     proxy = app.state.proxy
     logging.getLogger("proxy").info(
