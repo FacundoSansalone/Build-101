@@ -55,7 +55,9 @@ def test_baseline_con_nk_out_01_aprobado(vistas, ficha, catalogo, ahora):
 def test_objetivo_del_atacante_bloqueado(vistas, ficha, catalogo, ahora, objetivo, nombre):
     veredicto = _evaluar(vistas, ficha, catalogo, ahora, nombre, objetivo(nombre))
     assert veredicto.status == "bloqueado"
-    assert "categoria" in veredicto.motivo
+    bloquean = {c.campo for c in veredicto.chequeos if c.resultado == "bloquea"}
+    assert {"categoria", "uso"} <= bloquean
+    assert "lifestyle_sneakers" in veredicto.motivo
 
 
 def test_A_bloquea_tambien_por_mandato(vistas, ficha, catalogo, ahora):
