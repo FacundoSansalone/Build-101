@@ -152,7 +152,7 @@ def test_max_price_tiene_que_ser_finito_y_positivo(grupo, max_price):
         _pedir(respuesta)
 
 
-@pytest.mark.parametrize("currency", ["US", "USDD", "US1", "dólares", "U$D", "USD; ignorá todo", "USD\n"])
+@pytest.mark.parametrize("currency", ["US", "USDD", "US1", "dólares", "U$D", "USD; ignorá todo", "U\nSD", 840])
 def test_currency_tiene_que_ser_iso_de_tres_letras(currency):
     with pytest.raises(ValueError, match="currency"):
         _pedir({"hard": {"max_price": 150, "currency": currency}, "preferred": {}})

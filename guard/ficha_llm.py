@@ -7,14 +7,27 @@ confirmada hasta que el usuario la acepta. Las decisiones del Guard nunca
 pasan por acá; `evaluar()` sigue siendo determinístico.
 
 Para la demo y el benchmark alcanza con `Ficha.desde_intent()`.
+
+La salida del LLM se valida antes de armar la ficha (si no, ValueError):
+`max_price` finito y > 0, `currency` ISO 4217 de 3 letras, textos de hasta
+64 caracteres, y `hard` tiene que traer `max_price` y `currency` (sin tope
+ni moneda no hay mandato).
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any
+import re
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+)
 
 from contracts import Ficha
 
@@ -62,16 +75,52 @@ Convertí el pedido de compra del usuario en requisitos estructurados.
 """
 
 
+LARGO_MAXIMO_TEXTO = 64
+_ISO_4217 = re.compile(r"[A-Z]{3}")
+
+_Texto = Annotated[str, StringConstraints(max_length=LARGO_MAXIMO_TEXTO)]
+
+
 class _Requisitos(BaseModel):
+    """Lo que devuelve el LLM, validado: nada que no sea una ficha sana pasa."""
+
     model_config = ConfigDict(extra="ignore")
 
-    max_price: float | None = None
+    max_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     currency: str | None = None
-    category: str | None = None
-    use: str | None = None
-    size: int | None = None
-    brand: str | None = None
-    merchant: str | None = None
+    category: _Texto | None = None
+    use: _Texto | None = None
+    size: int | None = Field(default=None, gt=0)
+    brand: _Texto | None = None
+    merchant: _Texto | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _vacios_a_none(cls, valor: Any) -> Any:
+        """"" o espacios cuentan como "no lo dijo"; los textos se recortan."""
+        if isinstance(valor, str):
+            valor = valor.strip()
+            return valor or None
+        return valor
+
+    @field_validator("max_price", "size", mode="before")
+    @classmethod
+    def _sin_booleanos(cls, valor: Any) -> Any:
+        if isinstance(valor, bool):
+            raise ValueError("no puede ser un booleano")
+        return valor
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _moneda_iso(cls, valor: Any) -> Any:
+        # Los validadores "before" corren del último al primero: se recorta acá.
+        if isinstance(valor, str):
+            valor = valor.strip().upper() or None
+        if valor is None:
+            return None
+        if not isinstance(valor, str) or not _ISO_4217.fullmatch(valor):
+            raise ValueError("currency tiene que ser un código ISO 4217 de 3 letras")
+        return valor
 
 
 class _Salida(BaseModel):
@@ -128,6 +177,11 @@ def ficha_desde_pedido(
         },
     )
     salida = _parsear(respuesta)
+    if salida.hard.max_price is None or salida.hard.currency is None:
+        raise ValueError(
+            "La respuesta del modelo no trae max_price y currency obligatorios "
+            "(hard): sin tope ni moneda no hay mandato contra el cual chequear."
+        )
     hard = _limpiar(salida.hard)
     preferred = {k: v for k, v in _limpiar(salida.preferred).items() if k not in hard}
     intent = {
