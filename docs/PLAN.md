@@ -87,9 +87,13 @@ Actualizar esta tabla al pasar cada punto de control.
 
 | Dev | Fase actual | Hecho | Siguiente | Bloqueado por |
 |---|---|---|---|---|
-| Dev 1 (`world/`) | 1. Contratos | Flujo AP2, comercio atacante, catálogo, benchmark, fixtures, tests | Benchmark con LLM; compra completa en la UI con B | `GOOGLE_API_KEY` |
-| Dev 2 (`guard/`) | 1. Contratos | — | Tests del chequeo de cumplimiento con `fixtures/scenario_B.json` | Contratos |
-| Dev 3 (`proxy/`, `dashboard/`) | 1. Contratos | — | Proxy transparente `:8010` → `:8001` | Contratos (puede arrancar con el proxy transparente) |
+| Dev 1 (`world/`) | 4. Completar | Benchmark con LLM, 10 corridas, por el proxy y con Guard (`results/`); la UI de ADK muestra el motivo del Guard; `world/bench_con_pausa.py` | Compra completa en la UI con B (hasta el pago, OTP `123`) y anotar los pasos para el guion | — |
+| Dev 2 (`guard/`) | 4. Completar | Ficha, extractor, verificador, 4 chequeos + mandato + atadura del checkout firmado, veredicto, recibo ES256, adaptador, ficha con LLM; ronda de revisión cerrada | Congelar (fase 5) | — |
+| Dev 3 (`proxy/`, `dashboard/`) | 4. Completar | Proxy `:8010` con Guard real, interruptor, eventos SSE, aprobación humana para `escalar`; dashboard `:8020` con momento clave, recibo verificado en el navegador y gráfico; ronda de revisión cerrada | Grabar el ensayo de B (con y sin Guard) en `dashboard/demo/` y pitch | — |
+
+Punto de control 3 (B de punta a punta, con y sin Guard): probado por A2A
+real con `proxy/scripts/smoke_checkout.py` y el benchmark por `:8010`. Falta
+el recorrido manual en la UI de ADK hasta el pago.
 
 ## Decisiones (antes abiertas)
 

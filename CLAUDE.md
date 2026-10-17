@@ -178,6 +178,19 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     obligatorio sigue dando `con_avisos`.
   - **UI de ADK:** cambio mínimo en `shopping_agent/tools.py` para mostrar el
     motivo cuando la tarea del comercio viene `failed` (en `world/NOTICE.md`).
+  - **Proxy fail-closed:** más de un `ap2.checkout`, checkout de otro cart o
+    contexto, respuesta que no es una tarea, JSON inválido, stream cortado o
+    un segundo checkout en SSE → `bloqueado`. Las ofertas se registran solo
+    desde `find_products`. Toda tarea lleva un `guard.veredicto` (el del
+    comercio se borra); si el proxy no pudo evaluar, lleva uno `bloqueado`
+    con motivo fijo del proxy. Texto al agente: plantilla fija
+    `Pre-Sign Guard: <status>. <motivo>`.
+  - **Aprobaciones:** atadas a contexto, cart y centavos + moneda firmados;
+    nunca hacen pasar un `bloqueado`. No emiten `Evento` (no hay tipo en el
+    contrato): el dashboard consulta `GET /guard/aprobaciones`.
+  - **API local protegida:** `/guard/*` (proxy) y `/api/*` (dashboard) exigen
+    Host local, Origin del dashboard y JSON en los POST; fuera de loopback no
+    arrancan salvo `PROXY_ALLOW_REMOTE=1`.
 - **Benchmark con el plan gratuito de Gemini** (15 pedidos/min):
   `world/bench_con_pausa.py` corre el mismo `benchmark.main()` espaciando las
   llamadas al LLM. No toca `world/ap2/`.
