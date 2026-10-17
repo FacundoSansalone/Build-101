@@ -4,9 +4,10 @@ Implementa el protocolo `contracts.Evaluador`. Recibe todo ya cargado (la
 ficha, lo que mandó el comercio, el catálogo público y la política) y
 devuelve un `Veredicto`.
 
-Pasos: extractor (solo campos tipados) → verificador (catálogo público) →
-ranking propio → chequeos sobre la elegida (mandato, cumplimiento,
-evidencia, integridad y política) → veredicto.
+Pasos: extractor (solo campos tipados; lo descartado escala) → verificador
+(catálogo público) → ranking propio → chequeos de la ficha (mandato y
+confirmación) y de la elegida (mandato, cumplimiento, evidencia, integridad
+y política) → si llegó, el ap2.checkout firmado → veredicto.
 
 Agregación de los chequeos: alguno `bloquea` → `bloqueado`; si no, alguno
 `escalar` → `escalar`; si no, alguno `aviso` → `con_avisos`; si no,
