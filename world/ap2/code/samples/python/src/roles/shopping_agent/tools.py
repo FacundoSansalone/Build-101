@@ -134,6 +134,21 @@ async def create_checkout(
 
   checkout_data = _extract_first_data(task.artifacts, "ap2.checkout")
   if not checkout_data:
+    # HACKATHON (Pre-Sign Guard): si el proxy del Guard retuvo el checkout,
+    # mostrar su motivo en lugar del error genérico. El protocolo no cambia.
+    veredicto = _extract_first_data(task.artifacts, "guard.veredicto")
+    if isinstance(veredicto, dict):
+      motivo = veredicto.get("motivo", "")
+      if veredicto.get("status") == "escalar":
+        raise RuntimeError(
+            f"Pre-Sign Guard held this checkout for human review: {motivo} "
+            "Ask the user to review it in the Guard dashboard; if they approve"
+            " it there, call create_checkout again."
+        )
+      raise RuntimeError(
+          f"Pre-Sign Guard blocked this purchase before signing: {motivo} "
+          "Do not ask the user to sign anything for this cart."
+      )
     raise RuntimeError("Merchant did not return checkout data.")
 
   tool_context.state["checkout_data"] = checkout_data
