@@ -10,12 +10,18 @@ y una API chica de solo lectura sobre los datos guardados del repo:
 
 Además reenvía al proxy del Guard (`PROXY_URL`, por defecto :8010) las
 llamadas `/guard/*` desde el mismo origen, para que el navegador no dependa de
-que el proxy tenga CORS. El dashboard no decide nada: solo muestra.
+que el proxy tenga CORS. El dashboard no decide nada: muestra y reenvía la
+decisión del humano ("Aprobar igual") cuando el Guard escala.
+
+Como es la puerta al proxy, la API (`/api/*`) solo atiende `Host`
+localhost/127.0.0.1 con su puerto, y los POST exigen JSON y el `Origin` del
+propio panel (ver `SoloLocal`).
 """
 
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import mimetypes
 import os
@@ -28,10 +34,13 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from contracts import Evento, Ficha
 
@@ -72,10 +81,21 @@ REPLAY_LOG = "guard_events.jsonl"
 class Config:
     repo_root: Path = REPO_ROOT
     proxy_url: str = DEFAULT_PROXY_URL
+    port: int = DEFAULT_PORT
     # Solo para tests: transporte de httpx hacia el proxy.
     proxy_transport: httpx.AsyncBaseTransport | None = field(
         default=None, compare=False
     )
+
+    @property
+    def origenes(self) -> tuple[str, ...]:
+        """Orígenes del propio panel (los únicos que pueden hacer POST)."""
+        return (f"http://localhost:{self.port}", f"http://127.0.0.1:{self.port}")
+
+    @property
+    def hosts(self) -> frozenset[str]:
+        """`Host` aceptados en /api/* (protege del DNS rebinding)."""
+        return frozenset({f"localhost:{self.port}", f"127.0.0.1:{self.port}"})
 
     @property
     def fixtures_dir(self) -> Path:
@@ -100,7 +120,67 @@ class Config:
 def config_desde_entorno() -> Config:
     return Config(
         proxy_url=os.environ.get("PROXY_URL", DEFAULT_PROXY_URL).rstrip("/"),
+        port=int(os.environ.get("DASHBOARD_PORT", DEFAULT_PORT)),
     )
+
+
+def verificar_host_local(host: str, permitir_remoto: bool) -> None:
+    """El panel muestra mandatos y checkouts completos y reenvía el
+    interruptor y las aprobaciones al proxy: solo escucha en loopback salvo
+    DASHBOARD_ALLOW_REMOTE=1."""
+    if permitir_remoto or host.strip().lower() == "localhost":
+        return
+    try:
+        if ipaddress.ip_address(host.strip().strip("[]")).is_loopback:
+            return
+    except ValueError:
+        pass
+    raise SystemExit(
+        f"DASHBOARD_HOST={host!r} no es una interfaz local. Si de verdad hace "
+        "falta escuchar en la red, definí DASHBOARD_ALLOW_REMOTE=1."
+    )
+
+
+# Rutas que cambian estado en el proxy (solo con JSON y desde el propio panel).
+RUTAS_POST = frozenset({"/api/proxy/guard/state", "/api/proxy/guard/aprobaciones"})
+
+
+class SoloLocal:
+    """La API del panel es la puerta al proxy: misma protección que /guard/*.
+
+    - `Host` de /api/* tiene que ser localhost/127.0.0.1 con el puerto del
+      panel (403): frena el DNS rebinding.
+    - Los POST exigen `Content-Type: application/json` (415) y, si traen
+      `Origin`, que sea el del panel (403).
+
+    ASGI puro: no interfiere con el SSE reenviado.
+    """
+
+    def __init__(self, app: ASGIApp, cfg: Config) -> None:
+        self.app = app
+        self.cfg = cfg
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"].startswith("/api/"):
+            rechazo = self._rechazo(scope)
+            if rechazo is not None:
+                await rechazo(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+    def _rechazo(self, scope: Scope) -> Response | None:
+        headers = Headers(scope=scope)
+        if headers.get("host", "").strip().lower() not in self.cfg.hosts:
+            return _error(403, "host_no_permitido")
+        if scope["method"] != "POST" or scope["path"] not in RUTAS_POST:
+            return None
+        origen = headers.get("origin")
+        if origen is not None and origen not in self.cfg.origenes:
+            return _error(403, "origen_no_permitido")
+        tipo = headers.get("content-type", "").split(";")[0].strip().lower()
+        if tipo != "application/json":
+            return _error(415, "se_espera_json")
+        return None
 
 
 def _error(status: int, codigo: str, **extra: Any) -> JSONResponse:
@@ -525,6 +605,34 @@ async def api_proxy_estado(request: Request) -> Response:
     return await _reenviar_json(cfg, "POST", "/guard/state", cuerpo=cuerpo)
 
 
+_MAX_ID = 200
+
+
+async def api_proxy_aprobaciones(request: Request) -> Response:
+    """Aprobación humana de un checkout retenido (`escalar`): "Aprobar igual".
+
+    El panel no decide: solo reenvía la decisión del humano al proxy, que la
+    ata al contexto, al cart y al monto del último `escalar`.
+    """
+    cfg: Config = request.app.state.cfg
+    if request.method == "GET":
+        return await _reenviar_json(cfg, "GET", "/guard/aprobaciones")
+    try:
+        cuerpo = await request.json()
+    except ValueError:
+        return _error(400, "json_invalido")
+    if (
+        not isinstance(cuerpo, dict)
+        or set(cuerpo) != {"contexto_id", "cart_id"}
+        or not all(
+            isinstance(cuerpo[k], str) and 0 < len(cuerpo[k]) <= _MAX_ID
+            for k in ("contexto_id", "cart_id")
+        )
+    ):
+        return _error(400, "se_espera", formato={"contexto_id": "str", "cart_id": "str"})
+    return await _reenviar_json(cfg, "POST", "/guard/aprobaciones", cuerpo=cuerpo)
+
+
 async def api_proxy_historial(request: Request) -> Response:
     try:
         limite = int(request.query_params.get("limit", "200"))
@@ -610,10 +718,13 @@ def create_app(cfg: Config | None = None) -> Starlette:
         Route("/api/replay/{nombre}", api_replay),
         Route("/api/public-key", api_clave_publica),
         Route("/api/proxy/guard/state", api_proxy_estado, methods=["GET", "POST"]),
+        Route(
+            "/api/proxy/guard/aprobaciones", api_proxy_aprobaciones, methods=["GET", "POST"]
+        ),
         Route("/api/proxy/guard/events", api_proxy_eventos),
         Route("/api/proxy/guard/events/history", api_proxy_historial),
         Mount("/", app=_Estaticos(directory=STATIC_DIR, html=True), name="static"),
     ]
-    app = Starlette(routes=rutas)
+    app = Starlette(routes=rutas, middleware=[Middleware(SoloLocal, cfg=cfg)])
     app.state.cfg = cfg
     return app

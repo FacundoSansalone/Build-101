@@ -2,7 +2,8 @@
 
 import { decodificarJwt } from "../lib/jose.js";
 import {
-  cartDe, cartIdElegido, montoCheckout, monedaCheckout, nombreMandato, topeDeFicha,
+  cartDe, cartIdElegido, chequeosCheckoutFirmado, cuerpoAprobacion, montoCheckout, monedaCheckout,
+  nombreMandato, topeDeFicha,
 } from "../lib/eventos.js";
 import {
   EVIDENCIA, RESULTADO, STATUS, chip, dinero, filaDato, h, icono, insignia, textoLibre,
@@ -168,6 +169,80 @@ export function tablaChequeos(chequeos) {
       h("td", { class: "mono", text: c.origen ?? "—" }),
       h("td", { text: c.detalle }),
     )))));
+}
+
+/** Chips con la fuente del catálogo que usó el Guard y si el recibo quedó firmado. */
+export function chipsFuente(compra) {
+  const chips = [];
+  if (compra?.fuenteCatalogo === "http") {
+    chips.push(chip("catálogo público en vivo (:8011)", { tono: "ok", icon: "check", titulo: "El Guard verificó contra GET :8011/products" }));
+  } else if (compra?.fuenteCatalogo === "fixture") {
+    chips.push(chip("catálogo: copia local (fixture)", { tono: "warn", icon: "alert", titulo: ":8011 no respondió: el proxy usó fixtures/public_catalog.json" }));
+  }
+  if (compra?.reciboFirmado === true) chips.push(chip("recibo firmado", { tono: "ok", icon: "key" }));
+  else if (compra?.reciboFirmado === false) chips.push(chip("recibo sin firmar", { tono: "warn", icon: "alert" }));
+  return chips.length ? h("span", { class: "chips-fuente" }, chips) : null;
+}
+
+/**
+ * Atadura entre el cart que evaluó el Guard y el checkout que firmó el
+ * comercio (chequeos con origen "checkout_firmado": hash, cart, total,
+ * moneda, comercio). Si no hay, lo dice: el Guard no recibió el checkout.
+ */
+export function bloqueAtadura(veredicto, { tabla = false } = {}) {
+  if (!veredicto) return null;
+  const lista = chequeosCheckoutFirmado(veredicto);
+  if (!lista.length) {
+    return h("p", { class: "nota", text: "Este veredicto no trae chequeos contra el checkout firmado: el Guard evaluó sin checkout=." });
+  }
+  if (tabla) return tablaChequeos(lista);
+  return h("ul", { class: "lista-chequeos atadura" }, ordenarChequeos(lista).map((c) => h("li", { class: "chequeo" },
+    insignia(RESULTADO, c.resultado),
+    h("span", { class: "chequeo-tipo", text: c.campo ?? c.tipo }),
+    h("span", { class: "chequeo-detalle", text: c.detalle }))));
+}
+
+/**
+ * Checkout retenido por `escalar`: la evidencia del Guard y "Aprobar igual"
+ * (POST /guard/aprobaciones a través del servidor del panel). La aprobación
+ * es de un solo uso y el Guard vuelve a evaluar el reintento.
+ */
+export function panelAprobacion(compra, ctx, { compacto = false } = {}) {
+  const est = ctx.estadoAprobacion(compra);
+  if (!est.clave) return null;
+  if (est.clave === "aprobado_humano") {
+    return h("div", { class: ["panel-aprobacion", "t-ok"], role: "status" },
+      h("p", { class: "aprobacion-estado" }, icono("check"), h("strong", { text: "Aprobado por humano" })),
+      h("p", { text: "El Guard volvió a evaluar el reintento (escalar, mismo monto) y el checkout pasó intacto con la aprobación, que ya quedó usada." }));
+  }
+  const v = compra.veredicto;
+  const cuerpo = cuerpoAprobacion(compra);
+  const enVivo = ctx.estado.fuente === "vivo" && ctx.estado.proxy.conectado === true;
+  const mensaje = ctx.mensajeAprobacion(compra.contextoId);
+  const aprobada = est.clave === "aprobada";
+  const malos = ordenarChequeos(v?.chequeos).filter((c) => c.resultado !== "ok");
+  return h("div", { class: ["panel-aprobacion", aprobada ? "t-ok" : "t-serious"] },
+    h("p", { class: "aprobacion-estado" },
+      icono(aprobada ? "check" : "up"),
+      h("strong", { text: aprobada ? "Aprobado por humano" : "Retenido — esperando decisión humana" })),
+    aprobada ? h("p", { class: "aprobacion-paso", text: "Pedile al agente que reintente el checkout." }) : null,
+    v ? [
+      h("p", { class: "rotulo", text: "Evidencia del Guard" }),
+      h("p", { class: "aprobacion-motivo", text: v.motivo ?? "" }),
+      compacto ? listaChequeos(v.chequeos) : tablaChequeos(malos.length ? malos : v.chequeos),
+    ] : h("p", { class: "nota", text: "Esta compra no trae el veredicto del Guard." }),
+    cuerpo ? h("p", { class: "nota mono", text: `contexto ${cuerpo.contexto_id} · ${cuerpo.cart_id}` }) : null,
+    est.clave === "retenido" ? h("div", { class: "aprobacion-acciones" },
+      h("button", {
+        class: "boton boton-primario", type: "button",
+        disabled: !enVivo || !cuerpo || ctx.aprobando(compra.contextoId) ? true : null,
+        onclick: () => ctx.aprobar(compra),
+      }, icono("check"), ctx.aprobando(compra.contextoId) ? "Aprobando…" : "Aprobar igual"),
+      h("span", { class: "nota", text: enVivo
+        ? "Vale una sola vez, para este contexto, este cart y este monto. El Guard vuelve a evaluar el reintento."
+        : "Solo en vivo, con el proxy conectado." })) : null,
+    mensaje ? h("p", { class: ["nota", mensaje.ok ? "t-ok" : "t-crit"], role: "status", text: mensaje.texto }) : null,
+    aprobada ? h("p", { class: "nota", text: est.texto }) : null);
 }
 
 export function tablaEvidencias(evidencias) {

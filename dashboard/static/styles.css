@@ -440,6 +440,23 @@ dl.comparacion dd { margin: 0; font-family: var(--mono); font-size: 0.88rem; fon
 .motivo-bloqueo { display: flex; gap: 10px; align-items: flex-start; color: var(--crit); font-weight: 700; font-size: 1.1rem; }
 .motivo-bloqueo .icono { width: 1.5em; height: 1.5em; stroke-width: 2.4; margin-top: 0.05em; }
 
+/* Escalar retenido y aprobación humana */
+.panel-aprobacion {
+  display: grid; gap: 10px; padding: 14px 16px; border-radius: var(--radius-sm);
+  background: var(--tono-bg); box-shadow: inset 4px 0 0 var(--tono-fill); min-width: 0;
+}
+.aprobacion-estado { display: flex; align-items: center; gap: 8px; color: var(--tono); font-size: 1.1rem; }
+.aprobacion-estado .icono { width: 1.4em; height: 1.4em; stroke-width: 2.6; }
+.aprobacion-motivo { color: var(--ink); font-weight: 600; }
+.aprobacion-paso { color: var(--ink); font-weight: 750; font-size: 1.05rem; }
+.aprobacion-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.panel-aprobacion .tabla { background: var(--surface); border-radius: var(--radius-sm); }
+.tarjeta-retenida { box-shadow: 0 0 0 2px var(--serious-fill), var(--shadow); }
+.linea-firma.t-serious { background: linear-gradient(var(--serious-bg), transparent); }
+.linea-firma.t-serious .linea-firma-estado { color: var(--serious); }
+.chips-fuente { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.atadura-grupo { margin: 4px 0 18px; }
+
 /* --------------------------------------------------------- momento clave */
 .momento-cab .frase { font-size: clamp(1.6rem, 1.1rem + 1.4vw, 2.5rem); line-height: 1.15; letter-spacing: -0.02em; max-width: 34ch; }
 .momento-cab .frase em { font-style: normal; color: var(--crit); }

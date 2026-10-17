@@ -1,7 +1,9 @@
 // Dashboard de la demo del Pre-Sign Guard. JS vanilla, sin build ni CDN.
 // Fuentes de eventos: "En vivo (proxy)" por SSE o "Replay (archivo)".
 
-import { aJsonl, agruparCompras, fusionarEventos } from "./lib/eventos.js";
+import {
+  aJsonl, agruparCompras, cuerpoAprobacion, estadoAprobacion, fusionarEventos,
+} from "./lib/eventos.js";
 import { decodificarSdJwt, resolverSdJwt, sha256B64url, verificarRecibo } from "./lib/jose.js";
 import { renderBenchmark } from "./views/benchmark.js";
 import { renderFicha } from "./views/ficha.js";
@@ -38,6 +40,8 @@ const estado = {
   momentoCon: null,
   escenarioFicha: null,
   proxy: { conectado: null, guard_activo: null, evaluador: null, merchant_url: null, cambiando: false },
+  // GET /guard/aprobaciones del proxy (solo en vivo).
+  aprobaciones: { pendientes: [], usadas: [] },
   sse: "cerrado",
   fixtures: [],
   catalogo: null,
@@ -56,6 +60,8 @@ const cache = {
 };
 const detallesAbiertos = new Set();
 const nuevos = new Set();
+const aprobando = new Set(); // contextos con un POST de aprobación en curso
+const mensajesAprobacion = new Map(); // contexto → {ok, texto}
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -160,6 +166,10 @@ function ctx() {
     },
     hashCoincide,
     mandato,
+    estadoAprobacion: (compra) => estadoAprobacion(compra, estado.aprobaciones),
+    aprobar,
+    aprobando: (contextoId) => aprobando.has(contextoId),
+    mensajeAprobacion: (contextoId) => mensajesAprobacion.get(contextoId) ?? null,
     verificacion: (recibo) => cache.verificaciones.get(claveRecibo(recibo)) ?? null,
     verificar,
     irARecibo(compra) {
@@ -285,7 +295,14 @@ function ingerir(lista, { marcarNuevos = true } = {}) {
         if (antes.has(e.id)) continue;
         nuevos.add(e.id);
         setTimeout(() => nuevos.delete(e.id), 1600);
-        if (e.tipo === "bloqueado") anunciar(`Bloqueado antes de la firma: ${e.datos?.motivo ?? ""}`);
+        if (e.tipo === "bloqueado" && e.datos?.requiere_aprobacion) {
+          anunciar(`Retenido: requiere aprobación humana. ${e.datos?.motivo ?? ""}`);
+          refrescarAprobaciones();
+        } else if (e.tipo === "bloqueado") anunciar(`Bloqueado antes de la firma: ${e.datos?.motivo ?? ""}`);
+        else if (e.tipo === "reenviado" && e.datos?.aprobacion_humana) {
+          anunciar("Aprobado por humano: el checkout pasó intacto");
+          refrescarAprobaciones();
+        }
         else if (e.tipo === "veredicto") anunciar(`Veredicto del Guard: ${e.datos?.veredicto?.status ?? ""}`);
       }
     }
@@ -380,7 +397,11 @@ async function cambiarFuente(fuente) {
   detenerReplay();
   estado.eventos = [];
   nuevos.clear();
-  Object.assign(estado, { compraSel: null, seguirUltima: true, momentoSin: null, momentoCon: null });
+  mensajesAprobacion.clear();
+  Object.assign(estado, {
+    compraSel: null, seguirUltima: true, momentoSin: null, momentoCon: null,
+    aprobaciones: { pendientes: [], usadas: [] },
+  });
   if (fuente === "vivo") {
     conectarSse();
     render();
@@ -409,6 +430,49 @@ async function refrescarProxy() {
     estado.proxy = { ...estado.proxy, conectado: false };
   }
   renderBarra();
+  if (estado.proxy.conectado) refrescarAprobaciones();
+}
+
+// ---------------------------------------------------------------------------
+// Aprobación humana de un checkout retenido (escalar)
+// ---------------------------------------------------------------------------
+
+async function refrescarAprobaciones() {
+  if (estado.fuente !== "vivo") return;
+  try {
+    const { datos } = await pedirJson("/api/proxy/guard/aprobaciones", { timeout: 3500 });
+    if (!datos || !Array.isArray(datos.pendientes)) return;
+    const nuevas = { pendientes: datos.pendientes, usadas: Array.isArray(datos.usadas) ? datos.usadas : [] };
+    if (JSON.stringify(nuevas) !== JSON.stringify(estado.aprobaciones)) {
+      estado.aprobaciones = nuevas;
+      programarRender();
+    }
+  } catch { /* proxy caído: queda lo último que se vio */ }
+}
+
+/** "Aprobar igual": POST /guard/aprobaciones (vía el servidor del panel). */
+async function aprobar(compra) {
+  const cuerpo = cuerpoAprobacion(compra);
+  if (!cuerpo || aprobando.has(compra.contextoId)) return;
+  aprobando.add(compra.contextoId);
+  render();
+  try {
+    await pedirJson("/api/proxy/guard/aprobaciones", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo),
+    });
+    mensajesAprobacion.set(compra.contextoId, { ok: true, texto: "Aprobación registrada: pedile al agente que reintente el checkout." });
+    anunciar("Aprobado por humano: pedile al agente que reintente el checkout");
+  } catch (e) {
+    const texto = e.status === 409
+      ? "El proxy no tiene un escalar vigente para esta compra (puede que ya haya otro intento)."
+      : `No se pudo registrar la aprobación: ${e.message}`;
+    mensajesAprobacion.set(compra.contextoId, { ok: false, texto });
+    anunciar(texto);
+  } finally {
+    aprobando.delete(compra.contextoId);
+    await refrescarAprobaciones();
+    render();
+  }
 }
 
 async function cambiarGuard() {

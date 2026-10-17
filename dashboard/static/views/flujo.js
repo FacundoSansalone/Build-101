@@ -2,6 +2,7 @@
 
 import { describirEvento, estadoCompra } from "../lib/eventos.js";
 import { chip, chipGuard, h, hora, icono, vacio, vistaJson } from "./comunes.js";
+import { panelAprobacion } from "./piezas.js";
 
 const ICONO_EVENTO = {
   busqueda_enviada: "search",
@@ -15,9 +16,14 @@ const ICONO_EVENTO = {
   error: "alert",
 };
 
-const TONO_ESTADO = { bloqueado: "crit", firmado: "ok", para_firmar: "neutro", escalar: "serious", error: "crit", en_curso: "neutro" };
+const TONO_ESTADO = {
+  bloqueado: "crit", retenido: "serious", aprobado_humano: "ok", firmado: "ok", para_firmar: "neutro",
+  escalar: "serious", error: "crit", en_curso: "neutro",
+};
 
 function tonoEvento(e) {
+  if (e.tipo === "bloqueado" && e.datos?.requiere_aprobacion) return "serious";
+  if (e.tipo === "reenviado" && e.datos?.aprobacion_humana) return "ok";
   if (e.tipo === "bloqueado" || e.tipo === "error") return "crit";
   if (e.tipo === "veredicto") {
     return { aprobado: "ok", con_avisos: "warn", escalar: "serious", bloqueado: "crit" }[e.datos?.veredicto?.status] ?? "neutro";
@@ -101,6 +107,7 @@ function lineaDeTiempo(compra, ctx) {
       chipGuard(compra.guardActivo),
       chip(est.texto, { tono: TONO_ESTADO[est.clave] ?? "neutro" }),
       compra.busqueda ? h("p", { class: "lt-busqueda" }, h("span", { class: "rotulo", text: "Búsqueda" }), h("q", { text: compra.busqueda })) : null),
+    panelAprobacion(compra, ctx, { compacto: true }),
     h("ol", { class: "eventos" }, compra.eventos.map((e) => {
       const d = describirEvento(e);
       const tono = tonoEvento(e);

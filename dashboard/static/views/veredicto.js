@@ -1,9 +1,20 @@
 // Vista 3: veredicto del Guard con sus chequeos agrupados por tipo.
 
-import { cartDe } from "../lib/eventos.js";
+import { cartDe, estadoCompra } from "../lib/eventos.js";
 import { RESULTADO, chip, chipGuard, dinero, h, icono, insignia, vacio } from "./comunes.js";
-import { TIPOS_CHEQUEO, bannerStatus, tablaChequeos } from "./piezas.js";
+import {
+  TIPOS_CHEQUEO, bannerStatus, bloqueAtadura, chipsFuente, panelAprobacion, tablaChequeos,
+} from "./piezas.js";
 import { selectorCompra } from "./flujo.js";
+
+/** Chip del desenlace del checkout (bloqueado, retenido, aprobado por humano). */
+export function chipDesenlace(compra) {
+  const est = estadoCompra(compra);
+  if (est.clave === "bloqueado") return chip("Bloqueado antes de la firma", { tono: "crit", icon: "block" });
+  if (est.clave === "retenido") return chip("Retenido — esperando decisión humana", { tono: "serious", icon: "up" });
+  if (est.clave === "aprobado_humano") return chip("Aprobado por humano", { tono: "ok", icon: "check" });
+  return null;
+}
 
 export function renderVeredicto(raiz, ctx) {
   const compra = ctx.compraConVeredicto();
@@ -28,8 +39,13 @@ function cuerpo(compra, v, ctx) {
   return h("div", { class: "veredicto" },
     h("div", { class: "veredicto-cab" },
       bannerStatus(v, { grande: true }),
-      h("div", { class: "veredicto-meta" }, chipGuard(compra.guardActivo),
-        compra.bloqueo ? chip("Bloqueado antes de la firma", { tono: "crit", icon: "block" }) : null)),
+      h("div", { class: "veredicto-meta" }, chipGuard(compra.guardActivo), chipDesenlace(compra), chipsFuente(compra))),
+    panelAprobacion(compra, ctx),
+    h("section", { class: "grupo atadura-grupo", "aria-label": "Cart evaluado contra el checkout firmado" },
+      h("header", { class: "grupo-cab" },
+        h("h3", { text: "Checkout firmado ↔ cart evaluado" }),
+        h("span", { class: "nota", text: "origen checkout_firmado: lo que firmó el comercio contra lo que evaluó el Guard" })),
+      bloqueAtadura(v, { tabla: true })),
     h("div", { class: "veredicto-grilla" },
       h("section", { class: "grupos", "aria-label": "Chequeos por tipo" },
         [...porTipo.entries()].map(([tipo, lista]) => h("section", { class: "grupo" },

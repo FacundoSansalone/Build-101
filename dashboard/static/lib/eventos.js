@@ -34,10 +34,11 @@ export const VENTANA_BUSQUEDA_MS = 60_000;
  * reciente a la más vieja, y aparte los eventos sin contexto (interruptor,
  * errores del proxy).
  *
- * El proxy emite `busqueda_enviada` antes de conocer el context_id (lo asigna
- * el comercio en la respuesta), así que llega con `contexto_id: null`. Se
- * asocia a la primera compra del mismo escenario que empieza después, dentro
- * de VENTANA_BUSQUEDA_MS. La vista lo marca como asociado por tiempo.
+ * El proxy actual manda `busqueda_enviada` con su `contexto_id` (el del pedido
+ * o el de la respuesta del comercio). Solo para registros viejos que llegan
+ * con `contexto_id: null` queda el respaldo: se asocia a la primera compra
+ * del mismo escenario que empieza después, dentro de VENTANA_BUSQUEDA_MS, y
+ * que todavía no tiene su búsqueda. La vista lo marca como asociado por tiempo.
  */
 export function agruparCompras(eventos) {
   const porContexto = new Map();
@@ -54,7 +55,10 @@ export function agruparCompras(eventos) {
   const inicios = [...porContexto.entries()]
     .map(([id, evs]) => ({ id, inicio: tiempo(evs[0]), escenario: evs.find((x) => x.escenario)?.escenario ?? null }))
     .sort((a, b) => a.inicio - b.inicio);
-  const conBusqueda = new Set();
+  // Las compras que ya trajeron su búsqueda con contexto no entran al respaldo.
+  const conBusqueda = new Set([...porContexto.entries()]
+    .filter(([, evs]) => evs.some((x) => x.tipo === "busqueda_enviada"))
+    .map(([id]) => id));
   const sistema = [];
   for (const e of sueltos) {
     if (e.tipo !== "busqueda_enviada") {
@@ -90,6 +94,7 @@ export function armarCompra(contextoId, eventos) {
   const decisivo = veredictoEvento || checkoutEvento || eventos[eventos.length - 1];
   const escenario = [...eventos].reverse().find((e) => e.escenario)?.escenario ?? null;
   const ofertas = datos("ofertas_recibidas");
+  const datosVeredicto = veredictoEvento?.datos ?? null;
   return {
     contextoId,
     eventos,
@@ -104,7 +109,12 @@ export function armarCompra(contextoId, eventos) {
     checkoutPedido: datos("checkout_pedido")?.cart_id ?? null,
     checkout: checkoutEvento?.datos ?? null,
     veredicto: datos("veredicto")?.veredicto ?? null,
+    // Fuente del catálogo que usó el Guard ("http" = :8011, "fixture" = copia
+    // local) y si el recibo quedó firmado. Solo si el proxy los manda.
+    fuenteCatalogo: typeof datosVeredicto?.fuente === "string" ? datosVeredicto.fuente : null,
+    reciboFirmado: typeof datosVeredicto?.recibo_firmado === "boolean" ? datosVeredicto.recibo_firmado : null,
     bloqueo: datos("bloqueado"),
+    desenlace: desenlaceCheckout(eventos),
     checkoutTs: checkoutEvento ? tiempo(checkoutEvento) : null,
     reenviados: eventos.filter((e) => e.tipo === "reenviado"),
     errores: eventos.filter((e) => e.tipo === "error").map((e) => e.datos?.mensaje ?? ""),
@@ -150,17 +160,41 @@ export function nombreMandato(clave) {
 }
 
 /**
+ * El último desenlace de un pedido de checkout en la compra: `bloqueado`
+ * (bloqueado o retenido) o `reenviado` de create_checkout. Una compra puede
+ * tener varios intentos (retenido → aprobado por humano → reintento).
+ */
+export function desenlaceCheckout(eventos) {
+  for (let i = (eventos || []).length - 1; i >= 0; i--) {
+    const e = eventos[i];
+    if (e.tipo === "bloqueado") return e;
+    if (e.tipo === "reenviado" && e.datos?.metodo === "create_checkout") return e;
+  }
+  return null;
+}
+
+const esRetencion = (e) => e?.tipo === "bloqueado" && e.datos?.requiere_aprobacion === true;
+const esAprobacionHumana = (e) => e?.tipo === "reenviado" && e.datos?.aprobacion_humana === true;
+
+/**
  * En qué terminó la compra, desde el punto de vista de la firma:
+ * - retenido: el Guard escaló y el proxy retuvo el checkout; decide un humano.
  * - bloqueado: el proxy cortó antes de que el usuario firme.
  * - firmado: el pago se reenvió con mandatos firmados por el usuario.
+ * - aprobado_humano: un humano aprobó el escalado y el reintento pasó intacto.
  * - para_firmar: el checkout firmado llegó intacto al agente.
  */
 export function estadoCompra(compra) {
-  if (compra.bloqueo) return { clave: "bloqueado", texto: "Bloqueado antes de la firma" };
+  const fin = compra.desenlace ?? desenlaceCheckout(compra.eventos);
+  if (esRetencion(fin)) return { clave: "retenido", texto: "Retenido — esperando decisión humana" };
+  if (fin?.tipo === "bloqueado") return { clave: "bloqueado", texto: "Bloqueado antes de la firma" };
   if (mandatosDe(compra).length > 0) return { clave: "firmado", texto: "El usuario firmó los mandatos" };
   const metodo = (r) => String(r.datos?.metodo ?? "");
   if (compra.reenviados.some((r) => /payment|pago/i.test(metodo(r)))) {
     return { clave: "firmado", texto: "Pago reenviado al comercio" };
+  }
+  if (esAprobacionHumana(fin)) {
+    return { clave: "aprobado_humano", texto: "Aprobado por humano: checkout presentado para firmar" };
   }
   if (compra.veredicto?.status === "escalar") return { clave: "escalar", texto: "Escalado: decide el humano" };
   const checkoutReenviado = compra.reenviados.some((r) =>
@@ -170,6 +204,49 @@ export function estadoCompra(compra) {
   }
   if (compra.errores.length > 0) return { clave: "error", texto: "Error en el proxy" };
   return { clave: "en_curso", texto: "En curso" };
+}
+
+/**
+ * Lo que hay que mandar a POST /guard/aprobaciones para "Aprobar igual":
+ * el contexto de la compra y el cart retenido. null si no está retenida.
+ */
+export function cuerpoAprobacion(compra) {
+  const fin = compra?.desenlace ?? desenlaceCheckout(compra?.eventos);
+  if (!esRetencion(fin)) return null;
+  const cartId = fin.datos?.cart_id ?? cartIdElegido(compra);
+  if (!compra.contextoId || !cartId) return null;
+  return { contexto_id: compra.contextoId, cart_id: cartId };
+}
+
+/**
+ * Estado de la decisión humana de una compra, con la lista de
+ * GET /guard/aprobaciones ({pendientes, usadas}) del proxy.
+ * - retenido: esperando que alguien decida.
+ * - aprobada: hay una aprobación pendiente; falta que el agente reintente.
+ * - aprobado_humano: el reintento pasó con la aprobación (evento reenviado).
+ */
+export function estadoAprobacion(compra, aprobaciones) {
+  const fin = compra?.desenlace ?? desenlaceCheckout(compra?.eventos);
+  if (esAprobacionHumana(fin)) {
+    return { clave: "aprobado_humano", texto: "Aprobado por humano: el reintento pasó con el checkout intacto.", aprobacion: null };
+  }
+  const cuerpo = cuerpoAprobacion(compra);
+  if (!cuerpo) return { clave: null, texto: "", aprobacion: null };
+  const pendiente = (aprobaciones?.pendientes || []).find((a) =>
+    a?.contexto_id === cuerpo.contexto_id && a?.cart_id === cuerpo.cart_id) ?? null;
+  if (pendiente) {
+    return {
+      clave: "aprobada",
+      texto: "Aprobado por humano: pedile al agente que reintente el checkout. El Guard lo vuelve a evaluar y, si sigue en escalar con el mismo monto, pasa intacto.",
+      aprobacion: pendiente,
+    };
+  }
+  return { clave: "retenido", texto: "Retenido — esperando decisión humana", aprobacion: null };
+}
+
+/** Chequeos que atan el cart evaluado al checkout que firmó el comercio. */
+export function chequeosCheckoutFirmado(veredicto) {
+  return (veredicto?.chequeos || []).filter((c) => c?.origen === "checkout_firmado");
 }
 
 /**
@@ -282,9 +359,21 @@ export function describirEvento(e) {
       resumen = `${d.cart_id ?? "—"} · ${d.jwt_header?.alg ?? "?"} kid ${d.jwt_header?.kid ?? "?"} · ${ap2}`;
       break;
     }
-    case "veredicto": resumen = d.veredicto ? `${d.veredicto.status} · ${d.veredicto.motivo ?? ""}` : ""; break;
-    case "reenviado": resumen = `${d.metodo ?? "respuesta"}${d.mandatos ? " · con mandatos firmados" : ""}`; break;
-    case "bloqueado": resumen = d.motivo ?? ""; break;
+    case "veredicto": {
+      const extra = [];
+      if (typeof d.fuente === "string") extra.push(`catálogo: ${d.fuente}`);
+      if (typeof d.recibo_firmado === "boolean") extra.push(d.recibo_firmado ? "recibo firmado" : "recibo sin firmar");
+      resumen = d.veredicto ? `${d.veredicto.status} · ${d.veredicto.motivo ?? ""}` : "";
+      if (extra.length) resumen += ` (${extra.join(" · ")})`;
+      break;
+    }
+    case "reenviado":
+      resumen = `${d.metodo ?? "respuesta"}${d.aprobacion_humana ? " · aprobado por humano" : ""}${d.mandatos ? " · con mandatos firmados" : ""}`;
+      break;
+    case "bloqueado":
+      resumen = d.motivo ?? "";
+      if (d.requiere_aprobacion) return { titulo: "Retenido: requiere aprobación humana", resumen };
+      break;
     case "guard_cambiado": resumen = d.guard_activo ? "Guard activado" : "Guard apagado"; break;
     case "error": resumen = d.mensaje ?? ""; break;
     default: resumen = "";
