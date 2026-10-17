@@ -164,8 +164,8 @@ export function tablaChequeos(chequeos) {
     h("tbody", {}, ordenarChequeos(chequeos).map((c) => h("tr", {},
       h("td", {}, insignia(RESULTADO, c.resultado)),
       h("td", { class: "mono", text: c.campo ?? "—" }),
-      h("td", { class: "mono", text: valorTexto(c.esperado) }),
-      h("td", { class: "mono", text: valorTexto(c.observado) }),
+      h("td", { class: "mono valor", text: valorTexto(c.esperado) }),
+      h("td", { class: "mono valor", text: valorTexto(c.observado) }),
       h("td", { class: "mono", text: c.origen ?? "—" }),
       h("td", { text: c.detalle }),
     )))));
@@ -241,7 +241,10 @@ export function panelAprobacion(compra, ctx, { compacto = false } = {}) {
       h("span", { class: "nota", text: enVivo
         ? "Vale una sola vez, para este contexto, este cart y este monto. El Guard vuelve a evaluar el reintento."
         : "Solo en vivo, con el proxy conectado." })) : null,
-    mensaje ? h("p", { class: ["nota", mensaje.ok ? "t-ok" : "t-crit"], role: "status", text: mensaje.texto }) : null,
+    // Con la aprobación pendiente ya se muestra el paso siguiente: el aviso del
+    // POST solo hace falta si falló o si todavía no se ve como aprobada.
+    mensaje && (!mensaje.ok || !aprobada)
+      ? h("p", { class: ["nota", mensaje.ok ? "t-ok" : "t-crit"], role: "status", text: mensaje.texto }) : null,
     aprobada ? h("p", { class: "nota", text: est.texto }) : null);
 }
 
@@ -252,8 +255,8 @@ export function tablaEvidencias(evidencias) {
       ["Campo", "Declarado", "Catálogo público", "Estado", "Origen usado"].map((t) => h("th", { scope: "col", text: t })))),
     h("tbody", {}, evidencias.map((e) => h("tr", {},
       h("td", { class: "mono", text: e.campo }),
-      h("td", { class: "mono", text: valorTexto(e.declarado) }),
-      h("td", { class: "mono", text: valorTexto(e.publico) }),
+      h("td", { class: "mono valor", text: valorTexto(e.declarado) }),
+      h("td", { class: "mono valor", text: valorTexto(e.publico) }),
       h("td", {}, insignia(EVIDENCIA, e.estado)),
       h("td", { class: "mono", text: e.origen_usado ?? "—" }),
     )))));

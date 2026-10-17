@@ -407,6 +407,8 @@ details.mas[open] > summary { margin-bottom: 6px; }
 .tabla th, .tabla td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
 .tabla thead th { color: var(--muted); font-size: 0.76rem; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; border-bottom-color: var(--line-2); }
 .tabla td.mono { overflow-wrap: break-word; }
+/* anywhere en los valores: un hash largo también achica el ancho mínimo de la columna. */
+.tabla td.valor { overflow-wrap: anywhere; min-width: 6ch; }
 .tabla-scroll { overflow-x: auto; max-width: 100%; }
 .tarjeta .tabla { font-size: 0.8rem; }
 .tarjeta .tabla th, .tarjeta .tabla td { padding: 6px 8px; }
@@ -502,6 +504,8 @@ dl.comparacion dd { margin: 0; font-family: var(--mono); font-size: 0.88rem; fon
 .compra-item:hover { background: var(--surface-2); }
 .compra-item.activa { box-shadow: 0 0 0 2px var(--accent); }
 .compra-linea { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+/* Los estados largos ("Retenido — esperando decisión humana") se parten en la lista angosta. */
+.compra-linea .chip { white-space: normal; max-width: 100%; }
 .sistema ul { list-style: none; display: grid; gap: 4px; font-size: 0.86rem; }
 .sistema li { color: var(--ink-2); }
 
