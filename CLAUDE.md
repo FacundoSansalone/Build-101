@@ -1,5 +1,21 @@
 # Pre-Sign Guard — contexto para Claude Code
 
+> **Si sos un Claude Code nuevo en este repo, leé primero `docs/onboarding/`
+> según el dev que te use** (`dev1-world.md`, `dev2-guard.md` o
+> `dev3-proxy-dashboard.md`). Si no sabés qué dev es, preguntá.
+
+## Índice de `docs/`
+
+| Archivo | Para qué |
+|---|---|
+| [`docs/CONTEXTO.md`](docs/CONTEXTO.md) | El porqué: problema, investigación, quién cubre qué, posicionamiento |
+| [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) | El cómo: flujo AP2 real, dónde va el Guard, chequeos, veredictos, datos de `world/` |
+| [`docs/CONTRATOS_PROPUESTOS.md`](docs/CONTRATOS_PROPUESTOS.md) | **Borrador** de modelos para `contracts/` y decisiones abiertas del paso 0 |
+| [`docs/DEMO.md`](docs/DEMO.md) | Escenarios, guion, momento clave, benchmark y pitch |
+| [`docs/PLAN.md`](docs/PLAN.md) | División del trabajo, fases, puntos de control, plan B, estado por dev |
+| [`docs/PREGUNTAS_DEL_JURADO.md`](docs/PREGUNTAS_DEL_JURADO.md) | Objeciones esperables y respuestas |
+| [`docs/onboarding/`](docs/onboarding/) | Una guía por dev, con primer prompt sugerido |
+
 Proyecto de hackatón. Equipo de 3 desarrolladores, cada uno con Claude Code.
 
 ## Qué construimos
@@ -55,6 +71,12 @@ Catálogo público (verdad): `GET http://localhost:8011/products` y
 `/products/<sku>`. El pedido del usuario y sus requisitos están en
 `fixtures/scenario_*.json` → `intent`.
 
+Los carts no están firmados. Lo que sí está firmado: el `ap2.checkout`
+(`checkout_jwt` del comercio, que lleva el `item_label` como título) y los
+mandatos SD-JWT del usuario (`CheckoutMandate`, `PaymentMandate`). En el flujo
+human-present del sample **no se firma un `IntentMandate`**: el pedido viaja
+como texto en `catalog_search`. Detalle en `docs/ARQUITECTURA.md`.
+
 Contrato **provisorio** del Guard que usa el benchmark (a confirmar en `contracts/`):
 
 ```python
@@ -78,3 +100,15 @@ bash world/run_world.sh B                       # levanta todo en el escenario B
 cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.benchmark --trials 10
 cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.export_fixtures
 ```
+
+Los resultados del benchmark quedan en `world/ap2/results/`, que hoy está en
+`.gitignore`. Cómo commitearlos está en las decisiones abiertas de
+`docs/PLAN.md`.
+
+## Decisiones
+
+Anotá acá lo que se acuerde entre los tres (contratos, veredictos, puertos).
+Las preguntas pendientes están en `docs/CONTRATOS_PROPUESTOS.md` y
+`docs/PLAN.md`.
+
+- _(todavía ninguna)_

@@ -29,6 +29,22 @@ bash world/run_world.sh B      # levanta el flujo AP2 en el escenario B
 Más detalle en [`world/README.md`](world/README.md). Contexto para Claude Code
 en [`CLAUDE.md`](CLAUDE.md).
 
+## Para el equipo
+
+1. Leé [`docs/CONTEXTO.md`](docs/CONTEXTO.md) y
+   [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
+2. Mirá cómo trabajamos en [`docs/PLAN.md`](docs/PLAN.md) (fases, puntos de
+   control, estado por dev).
+3. Abrí tu guía de onboarding y pasale el primer prompt a tu Claude Code:
+   - Dev 1, `world/`: [`docs/onboarding/dev1-world.md`](docs/onboarding/dev1-world.md)
+   - Dev 2, `guard/`: [`docs/onboarding/dev2-guard.md`](docs/onboarding/dev2-guard.md)
+   - Dev 3, `proxy/` y `dashboard/`: [`docs/onboarding/dev3-proxy-dashboard.md`](docs/onboarding/dev3-proxy-dashboard.md)
+4. Paso 0, los tres juntos: acordar los contratos a partir de
+   [`docs/CONTRATOS_PROPUESTOS.md`](docs/CONTRATOS_PROPUESTOS.md).
+
+Demo y pitch: [`docs/DEMO.md`](docs/DEMO.md). Objeciones del jurado:
+[`docs/PREGUNTAS_DEL_JURADO.md`](docs/PREGUNTAS_DEL_JURADO.md).
+
 ## Referencias
 
 - *Whispers of Wealth: A Systematic Red-Teaming Study of AP2* — arXiv 2601.22569
