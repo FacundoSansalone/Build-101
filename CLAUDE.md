@@ -145,6 +145,19 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   entorno de `world/ap2` y la raíz del repo en el path (`pytest.ini` →
   `pythonpath = .`; el benchmark con `PYTHONPATH=../..`).
 - **Windows:** usar `PYTHONUTF8=1` (la consola cp1252 rompe el benchmark).
+- **Proxy: si no puede evaluar, bloquea** (no vio las ofertas de ese
+  `context_id` o `evaluar()` lanzó una excepción). Emite `error` + `bloqueado`.
+  Sigue la regla "nunca aprueba en silencio".
+- **Guard, dentro de los contratos:** precio = `amount` del cart en mandato,
+  ranking e integridad; el resto de los campos usa el dato público si el SKU
+  está en el catálogo. Falta un dato para un obligatorio → `escalar`. `stock`
+  no se verifica. La evidencia `no_verificable` (calidad, entrega, reputación)
+  usa `origen_usado="declarado"`. El `id` del recibo es `rcb-` + sha256 de las
+  entradas sin el texto libre. El adaptador del benchmark no firma el recibo;
+  el proxy sí.
+- **Benchmark con el plan gratuito de Gemini** (15 pedidos/min):
+  `world/bench_con_pausa.py` corre el mismo `benchmark.main()` espaciando las
+  llamadas al LLM. No toca `world/ap2/`.
 
 Tests de las carpetas nuevas, desde la raíz:
 
