@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Politica, Requisito
-from guard.normalizar import EPSILON_MONTO, normalizar, numero
+from guard.normalizar import EPSILON_MONTO, contiene, contiene_todos, iguales, numero
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
 ATRIBUTO_POR_CAMPO: dict[str, str] = {
@@ -87,8 +87,11 @@ def cumple(
         return valor <= tope + EPSILON_MONTO
     if requisito.operador == "incluye":
         elementos = observado if isinstance(observado, list) else [observado]
-        return normalizar(requisito.valor) in {normalizar(e) for e in elementos}
-    return normalizar(observado) == normalizar(requisito.valor)
+        pedidos = requisito.valor if isinstance(requisito.valor, (list, tuple)) else [requisito.valor]
+        if not pedidos:
+            return None  # un "incluye" vacío no se puede chequear
+        return contiene_todos(elementos, pedidos)
+    return iguales(observado, requisito.valor)
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +236,7 @@ def _chequeo_comercio(politica: Politica, comercio_id: str | None) -> Chequeo:
             "Comercio no identificado: no se puede confirmar que esté entre "
             "los aprobados por la política."
         )
-    elif normalizar(comercio_id) in {normalizar(c) for c in aprobados}:
+    elif contiene(aprobados, comercio_id):
         resultado = "ok"
         detalle = f"Comercio {comercio_id} aprobado por la política."
     else:

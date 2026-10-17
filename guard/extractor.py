@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from contracts import Oferta, OfertasVistas
+from guard.normalizar import monto_valido
 
 # Claves de texto libre que se descartan (se guardan aparte, no se leen).
 _CLAVE_TEXTO_CART = "item_label"
@@ -59,7 +60,7 @@ def _oferta(cart: dict, detalle: dict) -> Oferta:
         marca=_texto(detalle.get("brand")),
         categoria=_texto(detalle.get("category")),
         uso=_texto(detalle.get("use")),
-        precio=_numero(cart.get("amount")),
+        precio=_monto(cart.get("amount")),
         moneda=_texto(cart.get("currency")).upper(),
         stock=_entero(detalle.get("stock")),
         talles=_talles(detalle.get("sizes")),
@@ -81,12 +82,11 @@ def _texto(valor: Any) -> str:
     return valor.strip() if isinstance(valor, str) else ""
 
 
-def _numero(valor: Any) -> float:
-    """Monto como float. Un monto ilegible queda en NaN (no cumple ningún tope)."""
-    try:
-        return float(valor)
-    except (TypeError, ValueError):
-        return float("nan")
+def _monto(valor: Any) -> float:
+    """Monto como float. Uno inválido (bool, <= 0, NaN, inf, no numérico) queda
+    en NaN: es un dato faltante, no cumple ningún tope y el mandato escala."""
+    monto = monto_valido(valor)
+    return monto if monto is not None else float("nan")
 
 
 def _entero(valor: Any) -> int | None:

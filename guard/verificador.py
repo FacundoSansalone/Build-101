@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from contracts import Evidencia, Oferta
-from guard.normalizar import iguales, numero
+from guard.normalizar import iguales, monto_valido, numero
 
 # Atributo de Oferta -> clave del producto en el catálogo público.
 CLAVE_CATALOGO: dict[str, str] = {
@@ -94,7 +94,7 @@ def _valor_publico(producto: dict | None, clave: str, atributo: str) -> Any:
         talles = [numero(t) for t in valor]
         return [int(t) for t in talles if t is not None and t.is_integer()] or None
     if atributo == "precio":
-        return numero(valor)
+        return monto_valido(valor)
     if isinstance(valor, str) and valor.strip():
         return valor.strip().upper() if atributo == "moneda" else valor.strip()
     return None
