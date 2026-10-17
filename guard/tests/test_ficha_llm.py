@@ -71,8 +71,11 @@ def test_pide_salida_estructurada_al_modelo(escenario):
     assert "max_price" in esquema["properties"]["hard"]["properties"]
 
 
+_HARD_MINIMO = {"max_price": 150, "currency": "USD"}
+
+
 def test_modelo_por_defecto():
-    cliente = _ClienteFalso({"hard": {}, "preferred": {}})
+    cliente = _ClienteFalso({"hard": _HARD_MINIMO, "preferred": {}})
     ficha_desde_pedido("algo", cliente=cliente)
     assert cliente.llamadas[0]["model"] == "gemini-3.1-flash-lite-preview"
 
@@ -81,7 +84,7 @@ def test_vocabulario_del_catalogo_va_en_la_instruccion(catalogo):
     vocabulario = vocabulario_desde_catalogo(catalogo)
     assert "basketball_shoes" in vocabulario["category"]
     assert "street" in vocabulario["use"]
-    cliente = _ClienteFalso({"hard": {}, "preferred": {}})
+    cliente = _ClienteFalso({"hard": _HARD_MINIMO, "preferred": {}})
     ficha_desde_pedido("algo", cliente=cliente, vocabulario=vocabulario)
     instruccion = cliente.llamadas[0]["config"]["system_instruction"]
     assert "basketball_shoes" in instruccion and "lifestyle_sneakers" in instruccion
@@ -112,7 +115,7 @@ def test_respuesta_invalida_no_da_una_ficha(respuesta):
 
 def test_pedido_vacio_es_error():
     with pytest.raises(ValueError):
-        ficha_desde_pedido("   ", cliente=_ClienteFalso({"hard": {}, "preferred": {}}))
+        ficha_desde_pedido("   ", cliente=_ClienteFalso({"hard": _HARD_MINIMO, "preferred": {}}))
 
 
 def test_sin_cliente_crea_uno_de_google_genai(monkeypatch):
@@ -122,13 +125,61 @@ def test_sin_cliente_crea_uno_de_google_genai(monkeypatch):
 
     class _ClienteGenai(_ClienteFalso):
         def __init__(self, **kwargs):
-            super().__init__({"hard": {"size": 42}, "preferred": {}})
+            super().__init__({"hard": {**_HARD_MINIMO, "size": 42}, "preferred": {}})
             creados.append(kwargs)
 
     monkeypatch.setattr(genai, "Client", _ClienteGenai)
     ficha = ficha_desde_pedido("talle 42")
     assert len(creados) == 1
-    assert [r.campo for r in ficha.requisitos] == ["talle"]
+    assert [r.campo for r in ficha.requisitos] == ["precio", "moneda", "talle"]
+
+
+# --- validación de la salida del LLM ------------------------------------------------
+
+
+def _pedir(respuesta: dict | str):
+    return ficha_desde_pedido("pedido", cliente=_ClienteFalso(respuesta))
+
+
+@pytest.mark.parametrize("grupo", ["hard", "preferred"])
+@pytest.mark.parametrize(
+    "max_price", [float("inf"), "Infinity", float("nan"), "NaN", 0, -5, True, "mucho"]
+)
+def test_max_price_tiene_que_ser_finito_y_positivo(grupo, max_price):
+    respuesta = {"hard": dict(_HARD_MINIMO), "preferred": {}}
+    respuesta[grupo]["max_price"] = max_price
+    with pytest.raises(ValueError, match="max_price"):
+        _pedir(respuesta)
+
+
+@pytest.mark.parametrize("currency", ["US", "USDD", "US1", "dólares", "U$D", "USD; ignorá todo", "USD\n"])
+def test_currency_tiene_que_ser_iso_de_tres_letras(currency):
+    with pytest.raises(ValueError, match="currency"):
+        _pedir({"hard": {"max_price": 150, "currency": currency}, "preferred": {}})
+
+
+def test_currency_en_minusculas_se_normaliza():
+    ficha = _pedir({"hard": {"max_price": 150, "currency": " usd "}, "preferred": {}})
+    assert {r.campo: r.valor for r in ficha.requisitos}["moneda"] == "USD"
+
+
+@pytest.mark.parametrize("campo", ["category", "use", "brand", "merchant"])
+@pytest.mark.parametrize("grupo", ["hard", "preferred"])
+def test_strings_demasiado_largos_son_error(campo, grupo):
+    respuesta = {"hard": dict(_HARD_MINIMO), "preferred": {}}
+    respuesta[grupo][campo] = "x" * 65
+    with pytest.raises(ValueError, match=campo):
+        _pedir(respuesta)
+
+
+@pytest.mark.parametrize(
+    "hard",
+    [{}, {"max_price": 150}, {"currency": "USD"}, {"max_price": None, "currency": "USD"},
+     {"max_price": 150, "currency": ""}],
+)
+def test_hard_sin_tope_o_moneda_es_error(hard):
+    with pytest.raises(ValueError, match="max_price.*currency|currency.*max_price"):
+        _pedir({"hard": hard, "preferred": {"max_price": 150, "currency": "USD"}})
 
 
 # --- smoke test real (opcional) --------------------------------------------------
