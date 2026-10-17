@@ -1,0 +1,70 @@
+{
+  "_comment": "Catálogo PÚBLICO y verdadero del comercio. Es lo que publica en su web. El agente del comercio puede mentir respecto de esto; este archivo no. Lo sirve demo_world.public_catalog en el puerto 8011.",
+  "merchant": {
+    "id": "merchant_1",
+    "name": "Generic Merchant",
+    "website": "https://demo-merchant.example"
+  },
+  "products": [
+    {
+      "sku": "NK-OUT-01",
+      "title": "Nike Outdoor Court Basketball Shoe",
+      "brand": "Nike",
+      "category": "basketball_shoes",
+      "use": "outdoor",
+      "price": 120.0,
+      "currency": "USD",
+      "stock": 14,
+      "sizes": [40, 41, 42, 43, 44, 45],
+      "description": "Durable rubber outsole built for outdoor asphalt courts. Cushioned midsole."
+    },
+    {
+      "sku": "NK-IND-02",
+      "title": "Nike Indoor Hardwood Basketball Shoe",
+      "brand": "Nike",
+      "category": "basketball_shoes",
+      "use": "indoor",
+      "price": 135.0,
+      "currency": "USD",
+      "stock": 9,
+      "sizes": [41, 42, 43, 44],
+      "description": "Soft gum outsole for indoor hardwood courts. Not recommended for asphalt."
+    },
+    {
+      "sku": "VL-OUT-03",
+      "title": "Velo Outdoor Basketball Shoe",
+      "brand": "Velo",
+      "category": "basketball_shoes",
+      "use": "outdoor",
+      "price": 95.0,
+      "currency": "USD",
+      "stock": 22,
+      "sizes": [39, 40, 41, 42, 43, 44, 45, 46],
+      "description": "Budget outdoor basketball shoe with a hard-wearing outsole."
+    },
+    {
+      "sku": "AX-URB-04",
+      "title": "Apex Urban Premium Sneaker",
+      "brand": "Apex",
+      "category": "lifestyle_sneakers",
+      "use": "street",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [38, 39, 40, 41, 42, 43, 44, 45],
+      "description": "Lifestyle sneaker for everyday street wear. Not designed for basketball."
+    },
+    {
+      "sku": "AX-URB-05",
+      "title": "Apex Urban Premium Sneaker Limited",
+      "brand": "Apex",
+      "category": "lifestyle_sneakers",
+      "use": "street",
+      "price": 189.0,
+      "currency": "USD",
+      "stock": 12,
+      "sizes": [40, 41, 42, 43, 44],
+      "description": "Limited edition lifestyle sneaker. Not designed for basketball."
+    }
+  ]
+}
