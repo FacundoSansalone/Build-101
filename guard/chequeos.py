@@ -9,6 +9,8 @@ toca acá.
 - **cumplimiento**: el resto de los requisitos de la ficha. Un obligatorio
   que falla `bloquea`; un preferido que falla es `aviso`. Si falta el dato,
   no se aprueba en silencio: `escalar` (obligatorio) o `aviso` (preferido).
+  Un obligatorio que se cumple solo con lo que declara el comercio (SKU
+  fuera del catálogo, dato no publicado) también escala.
 - **evidencia**: cada campo verificado contra el catálogo público. Un dato
   `contradicho` se escala (nunca se bloquea: puede haber razones legítimas);
   uno `solo_declarado` es `aviso`.
@@ -19,6 +21,10 @@ toca acá.
   `escalar` (`chequeos_ficha`).
 
 La integridad de la elección (ranking propio) está en `guard.ranking`.
+
+Textos: ningún `detalle` interpola lo que escribe el comercio (ver
+`guard.textos`): solo nombres de campo, valores de la ficha y del catálogo
+público, montos y talles. Lo declarado va en `observado`, acotado.
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ from guard.normalizar import (
     monto_valido,
     numero,
 )
-from guard.textos import moneda_legible
+from guard.textos import ELEMENTOS_MAXIMOS, LARGO_MAXIMO, acotar, moneda_legible, sin_control
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
 ATRIBUTO_POR_CAMPO: dict[str, str] = {
@@ -59,6 +65,7 @@ _NOMBRES = {
     "marca": "Marca",
     "titulo": "Título",
     "comercio": "Comercio",
+    "sku": "SKU",
 }
 
 
@@ -225,16 +232,35 @@ def _chequeo_requisito(
             f"dato del catálogo público) y es obligatorio ({formatear(requisito.valor)})."
         )
     else:
-        detalle = _detalle_requisito(requisito, oferta, observado, resultado_cumple, tipo)
+        detalle = _detalle_requisito(
+            requisito, oferta, _mostrable(requisito.campo, oferta, observado),
+            resultado_cumple, tipo,
+        )
     return Chequeo(
         tipo=tipo,
         resultado=resultado,
         detalle=detalle,
         campo=requisito.campo,
         esperado=requisito.valor,
-        observado=observado,
+        observado=acotar(observado),
         origen=origen_del_campo(requisito.campo, oferta),
     )
+
+
+def _mostrable(campo: str, oferta: Oferta, observado: Any) -> Any:
+    """El valor observado solo si se puede escribir en un `detalle`; si no, None.
+
+    Se puede: el dato del catálogo público, el comercio (lo da quien llama),
+    los talles (enteros), los montos y una moneda ISO. Lo que declara el
+    comercio (texto) va solo en `observado`, acotado.
+    """
+    if observado is None:
+        return None
+    if campo in ("comercio", "precio", "talle"):
+        return observado
+    if campo == "moneda":
+        return moneda_legible(observado) or None
+    return observado if origen_del_campo(campo, oferta) == "catalogo_publico" else None
 
 
 def origen_del_campo(campo: str, oferta: Oferta) -> Origen | None:
@@ -278,6 +304,7 @@ def chequeos_evidencia(oferta: Oferta) -> list[Chequeo]:
 
 
 def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
+    """Sin lo que declara el comercio: solo el nombre, el dato público y montos."""
     nombre = nombre_campo(evidencia.campo)
     if evidencia.campo == "precio":
         cobrado = monto(evidencia.declarado, moneda)
@@ -288,17 +315,21 @@ def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
             return f"Precio {cobrado}: no está en el catálogo público para compararlo."
         return f"Precio {cobrado} coincide con el catálogo público."
 
-    declarado = formatear(evidencia.declarado)
     publico = formatear(evidencia.publico)
     if evidencia.estado == "contradicho":
         return (
-            f"{nombre}: el comercio declara {declarado} pero el catálogo "
-            f"público dice {publico}."
+            f"{nombre}: lo que declara el comercio no coincide con el catálogo "
+            f"público ({publico})."
         )
     if evidencia.estado == "solo_declarado":
+        if evidencia.declarado is None:
+            return (
+                f"{nombre}: el comercio no lo declaró (no se completa con el "
+                "catálogo público)."
+            )
         return (
-            f"{nombre} {declarado}: solo lo declara el comercio, no hay fuente "
-            "independiente para verificarlo."
+            f"{nombre}: solo lo declara el comercio, no hay fuente independiente "
+            "para verificarlo."
         )
     return f"{nombre} {publico}: coincide con el catálogo público."
 
@@ -330,12 +361,12 @@ def _chequeo_comercio(politica: Politica, comercio_id: str | None) -> Chequeo:
         )
     elif contiene(aprobados, comercio_id):
         resultado = "ok"
-        detalle = f"Comercio {comercio_id} aprobado por la política."
+        detalle = f"Comercio {formatear(comercio_id)} aprobado por la política."
     else:
         resultado = "bloquea"
         detalle = (
-            f"Comercio {comercio_id} fuera de los aprobados por la política "
-            f"({formatear(list(aprobados))})."
+            f"Comercio {formatear(comercio_id)} fuera de los aprobados por la "
+            f"política ({formatear(list(aprobados))})."
         )
     return Chequeo(
         tipo="politica",
@@ -343,7 +374,7 @@ def _chequeo_comercio(politica: Politica, comercio_id: str | None) -> Chequeo:
         detalle=detalle,
         campo="comercio",
         esperado=list(aprobados),
-        observado=comercio_id,
+        observado=acotar(comercio_id),
     )
 
 
@@ -382,14 +413,18 @@ def _chequeo_monto(maximo: float, oferta: Oferta) -> Chequeo:
 
 
 def formatear(valor: Any) -> str:
-    """Valor legible: listas separadas por comas y floats enteros sin decimales."""
+    """Valor legible (de la ficha o del catálogo público; nunca texto del comercio).
+
+    Listas separadas por comas (hasta 20), floats enteros sin decimales y
+    strings sin caracteres de control y acotados.
+    """
     if valor is None:
         return "sin dato"
-    if isinstance(valor, list):
-        return ", ".join(formatear(v) for v in valor) or "ninguno"
+    if isinstance(valor, (list, tuple)):
+        return ", ".join(formatear(v) for v in list(valor)[:ELEMENTOS_MAXIMOS]) or "ninguno"
     if isinstance(valor, float) and valor.is_integer():
         return str(int(valor))
-    return str(valor)
+    return sin_control(str(valor))[:LARGO_MAXIMO]
 
 
 def monto(precio: Any, moneda: Any) -> str:
@@ -425,19 +460,21 @@ def _detalle_requisito(
             return f"Precio {cobrado} dentro del tope {tope}."
         return f"Precio {cobrado} supera el tope {tope}."
 
+    # `observado` llega ya filtrado por `_mostrable`: None si es texto del comercio.
     pedido = formatear(requisito.valor)
     if resultado_cumple is None:
         return f"{nombre}: sin dato para comparar con {referencia} ({pedido})."
 
     if requisito.operador == "incluye":
-        ofrecidos = formatear(observado)
+        ofrecidos = f" (ofrecidos: {formatear(observado)})" if observado is not None else ""
         if resultado_cumple:
-            return f"{nombre} {pedido} disponible (ofrecidos: {ofrecidos})."
-        return (
-            f"{nombre} {pedido} no disponible (ofrecidos: {ofrecidos}): "
-            f"no cumple {referencia}."
-        )
+            return f"{nombre} {pedido} disponible{ofrecidos}."
+        return f"{nombre} {pedido} no disponible{ofrecidos}: no cumple {referencia}."
 
+    if observado is None:
+        if resultado_cumple:
+            return f"{nombre} cumple {referencia} ({pedido})."
+        return f"{nombre}: lo que indica el comercio no cumple {referencia} ({pedido})."
     if resultado_cumple:
         return f"{nombre} {formatear(observado)} cumple {referencia} ({pedido})."
     return f"{nombre} {formatear(observado)} no cumple {referencia} ({pedido})."

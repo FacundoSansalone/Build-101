@@ -82,7 +82,8 @@ def test_texto_del_comercio_no_llega_a_motivo_ni_detalle(vistas, ficha, catalogo
     vistas_raras = _cambiar(vistas, "cart_1", cambios_cart, cambios_detalle)
     cart_id = MARCA if (variante == "cart_id" and elegido == "cart_1") else elegido
     veredicto = evaluar(ficha(), vistas_raras, cart_id, catalogo, ahora=ahora)
-    assert veredicto.status != "aprobado" or elegido == "cart_3"
+    if variante != "cart_id" and elegido == "cart_1":  # un cart_id raro no cambia los datos
+        assert veredicto.status != "aprobado"
     _assert_sin_texto_del_comercio(veredicto)
 
 

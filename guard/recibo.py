@@ -145,8 +145,8 @@ def _por_que_gano(
 ) -> str:
     if elegida is None or not puntajes:
         return (
-            f"El carrito elegido ({cart_id_elegido}) no está entre las ofertas "
-            "recibidas: no hay con qué justificar la elección."
+            "El carrito elegido no está entre las ofertas recibidas: no hay con "
+            "qué justificar la elección."
         )
     elegido = next(p for p in puntajes if p.cart_id == cart_id_elegido)
     primero = puntajes[0]

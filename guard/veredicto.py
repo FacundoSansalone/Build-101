@@ -41,6 +41,7 @@ from guard.chequeos import (
 from guard.extractor import extraer
 from guard.ranking import chequeo_integridad, rankear
 from guard.recibo import armar_recibo
+from guard.textos import acotar, sin_control
 from guard.verificador import verificar_todas
 
 _STATUS_POR_RESULTADO: dict[str, Status] = {
@@ -76,7 +77,7 @@ def redactar_motivo(status: Status, chequeos: list[Chequeo]) -> str:
         return _motivo_aprobado(chequeos)
     resultado = next(r for r, s in _STATUS_POR_RESULTADO.items() if s == status)
     detalles = [c.detalle for c in chequeos if c.resultado == resultado]
-    return f"{_PREFIJO[status]}: " + " ".join(detalles)
+    return sin_control(f"{_PREFIJO[status]}: " + " ".join(detalles))
 
 
 def _motivo_aprobado(chequeos: list[Chequeo]) -> str:
@@ -197,9 +198,9 @@ def _chequeo_elegido_desconocido(cart_id: str) -> Chequeo:
         tipo="integridad",
         resultado="escalar",
         detalle=(
-            f"El carrito elegido ({cart_id}) no está entre las ofertas que "
-            "mandó el comercio: no hay datos para verificarlo."
+            "El carrito elegido no está entre las ofertas que mandó el "
+            "comercio: no hay datos para verificarlo."
         ),
         campo="cart_id",
-        observado=cart_id,
+        observado=acotar(cart_id),
     )
