@@ -24,7 +24,14 @@ from __future__ import annotations
 from typing import Any
 
 from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Politica, Requisito
-from guard.normalizar import EPSILON_MONTO, contiene, contiene_todos, iguales, numero
+from guard.normalizar import (
+    EPSILON_MONTO,
+    contiene,
+    contiene_todos,
+    iguales,
+    monto_valido,
+    numero,
+)
 from guard.textos import moneda_legible
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
@@ -82,8 +89,8 @@ def cumple(
     if observado is None:
         return None
     if requisito.operador == "maximo":
-        valor, tope = numero(observado), numero(requisito.valor)
-        if valor is None or tope is None:
+        valor, tope = numero(observado), monto_valido(requisito.valor)
+        if valor is None or tope is None:  # monto o tope inválido: no se puede comparar
             return None
         return valor <= tope + EPSILON_MONTO
     if requisito.operador == "incluye":
@@ -102,6 +109,56 @@ def cumple(
 
 def es_de_mandato(requisito: Requisito) -> bool:
     return requisito.obligatorio and requisito.campo in CAMPOS_MANDATO
+
+
+def chequeos_ficha(ficha: Ficha) -> list[Chequeo]:
+    """La ficha tiene que traer el mandato y estar confirmada; si no, escalar.
+
+    Sin un tope de precio obligatorio válido, sin una moneda obligatoria o
+    sin la confirmación del usuario no hay contra qué aprobar: como mínimo
+    `escalar`, con un chequeo de mandato que lo explique. Lista vacía si la
+    ficha está bien (los chequeos de cada oferta van aparte).
+    """
+    chequeos: list[Chequeo] = []
+    if not ficha.confirmada:
+        chequeos.append(
+            Chequeo(
+                tipo="mandato", resultado="escalar", campo="ficha", origen="ficha",
+                detalle=(
+                    "La ficha del pedido no está confirmada por el usuario: sin "
+                    "confirmación no hay mandato contra el cual aprobar."
+                ),
+                esperado=True, observado=False,
+            )
+        )
+    topes = [
+        r for r in ficha.requisitos
+        if es_de_mandato(r) and r.campo == "precio" and r.operador == "maximo"
+    ]
+    if not any(monto_valido(r.valor) is not None for r in topes):
+        chequeos.append(
+            Chequeo(
+                tipo="mandato", resultado="escalar", campo="precio", origen="ficha",
+                detalle=(
+                    "La ficha no tiene un tope de precio obligatorio válido: no hay "
+                    "mandato contra el cual comparar el monto."
+                ),
+                observado=[r.valor for r in topes] or None,
+            )
+        )
+    monedas = [r for r in ficha.requisitos if es_de_mandato(r) and r.campo == "moneda"]
+    if not any(isinstance(r.valor, str) and r.valor.strip() for r in monedas):
+        chequeos.append(
+            Chequeo(
+                tipo="mandato", resultado="escalar", campo="moneda", origen="ficha",
+                detalle=(
+                    "La ficha no tiene una moneda obligatoria: no hay mandato contra "
+                    "el cual comparar la moneda."
+                ),
+                observado=[r.valor for r in monedas] or None,
+            )
+        )
+    return chequeos
 
 
 def chequeos_mandato(

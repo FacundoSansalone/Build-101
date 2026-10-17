@@ -34,6 +34,7 @@ from guard.checkout import chequeos_checkout
 from guard.chequeos import (
     chequeos_cumplimiento,
     chequeos_evidencia,
+    chequeos_ficha,
     chequeos_mandato,
     chequeos_politica,
 )
@@ -66,15 +67,43 @@ def agregar(chequeos: Iterable[Chequeo]) -> Status:
 
 
 def redactar_motivo(status: Status, chequeos: list[Chequeo]) -> str:
-    """Una frase para el dashboard: por qué este veredicto."""
+    """Una frase para el dashboard (y el agente): por qué este veredicto.
+
+    Plantilla fija: solo dice lo que efectivamente se chequeó. Los `detalle`
+    que junta no interpolan texto del comercio (ver `guard.textos`).
+    """
     if status == "aprobado":
-        return (
-            "Aprobado: cumple el mandato, los requisitos del pedido y la "
-            "política, y no hay datos contradichos ni sin verificar."
-        )
+        return _motivo_aprobado(chequeos)
     resultado = next(r for r, s in _STATUS_POR_RESULTADO.items() if s == status)
     detalles = [c.detalle for c in chequeos if c.resultado == resultado]
     return f"{_PREFIJO[status]}: " + " ".join(detalles)
+
+
+def _motivo_aprobado(chequeos: list[Chequeo]) -> str:
+    ok = [c for c in chequeos if c.resultado == "ok"]
+    mandato = {c.campo for c in ok if c.tipo == "mandato" and c.origen != "checkout_firmado"}
+    partes: list[str] = []
+    if {"precio", "moneda"} <= mandato:
+        partes.append("el monto y la moneda cumplen el mandato")
+    elif "precio" in mandato:
+        partes.append("el monto cumple el tope del mandato")
+    elif "moneda" in mandato:
+        partes.append("la moneda cumple el mandato")
+    cumplidos = sum(c.tipo == "cumplimiento" for c in ok)
+    if cumplidos:
+        plural = "s" if cumplidos != 1 else ""
+        partes.append(f"{cumplidos} requisito{plural} del pedido cumplido{plural}")
+    if any(c.tipo == "evidencia" for c in ok):
+        partes.append("los datos coinciden con el catálogo público")
+    if any(c.tipo == "politica" and c.origen != "checkout_firmado" for c in ok):
+        partes.append("la política de compras se cumple")
+    if any(c.tipo == "integridad" and c.origen is None for c in ok):
+        partes.append("ninguna otra opción la supera en todo")
+    if any(c.origen == "checkout_firmado" for c in ok):
+        partes.append("el checkout firmado coincide con lo evaluado")
+    if not partes:
+        return "Aprobado: ningún chequeo objetó la compra."
+    return "Aprobado: " + "; ".join(partes) + "."
 
 
 def evaluar(
@@ -102,11 +131,12 @@ def evaluar(
     ranking = [p.cart_id for p in puntajes]
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
 
+    chequeos = chequeos_ficha(ficha)
     if elegida is None:
-        chequeos = [_chequeo_elegido_desconocido(cart_id_elegido)]
+        chequeos.append(_chequeo_elegido_desconocido(cart_id_elegido))
     else:
         puntaje_elegido = next(p for p in puntajes if p.cart_id == cart_id_elegido)
-        chequeos = [
+        chequeos += [
             *chequeos_mandato(ficha, elegida, comercio_id),
             *chequeos_cumplimiento(ficha, elegida, comercio_id),
             *chequeos_evidencia(elegida),
