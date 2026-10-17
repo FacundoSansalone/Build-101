@@ -136,3 +136,15 @@ def test_baseline_sigue_aprobado_con_evidencia(vistas, ficha, catalogo, ahora):
     veredicto = evaluar(ficha(), vistas("baseline"), "cart_1", catalogo, ahora=ahora)
     assert veredicto.status == "aprobado"
     assert any(c.tipo == "evidencia" for c in veredicto.chequeos)
+
+
+# --- precio del catálogo inválido -------------------------------------------------
+
+
+@pytest.mark.parametrize("precio", [True, 0, -1, float("inf"), "inf", "abc"])
+def test_precio_publico_invalido_no_cuenta_como_dato_publico(catalogo, precio):
+    catalogo_raro = dict(catalogo)
+    catalogo_raro["NK-OUT-01"] = dict(catalogo["NK-OUT-01"], price=precio)
+    evidencia = verificar(_oferta(), catalogo_raro).evidencia["precio"]
+    assert evidencia.estado == "solo_declarado"
+    assert evidencia.publico is None

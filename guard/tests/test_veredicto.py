@@ -129,6 +129,21 @@ def test_evaluar_no_hace_io(vistas, ficha, catalogo, ahora, monkeypatch):
     assert veredicto.status == "bloqueado"
 
 
+@pytest.mark.parametrize("amount", [True, 0, -5, float("nan"), float("inf"), "inf", "abc", None])
+def test_monto_invalido_en_el_cart_se_escala(vistas, ficha, catalogo, ahora, amount):
+    """Un monto inválido queda como faltante: el mandato no se aprueba, se escala."""
+    originales = vistas("baseline")
+    carts = [dict(c, amount=amount) if c["cart_id"] == "cart_1" else c for c in originales.carts]
+    vistas_raras = OfertasVistas(
+        carts=carts, offer_details=originales.offer_details, comercio_id="merchant_1"
+    )
+    veredicto = evaluar(ficha(), vistas_raras, "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "escalar"
+    (precio,) = [c for c in veredicto.chequeos if c.tipo == "mandato" and c.campo == "precio"]
+    assert precio.resultado == "escalar"
+    assert precio.observado is None
+
+
 def test_evaluar_respeta_la_firma_del_contrato():
     contrato = list(inspect.signature(Evaluador.__call__).parameters.values())[1:]
     real = list(inspect.signature(evaluar).parameters.values())
