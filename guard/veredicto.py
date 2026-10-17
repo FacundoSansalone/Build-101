@@ -4,9 +4,16 @@ Implementa el protocolo `contracts.Evaluador`. Recibe todo ya cargado (la
 ficha, lo que mandó el comercio, el catálogo público y la política) y
 devuelve un `Veredicto`.
 
+Pasos: extractor (solo campos tipados) → verificador (catálogo público) →
+ranking propio → chequeos sobre la elegida (mandato, cumplimiento,
+evidencia, integridad y política) → veredicto.
+
 Agregación de los chequeos: alguno `bloquea` → `bloqueado`; si no, alguno
 `escalar` → `escalar`; si no, alguno `aviso` → `con_avisos`; si no,
 `aprobado`.
+
+Si no se pasa `politica`, se usa `Politica()` (los valores por defecto del
+contrato).
 """
 
 from __future__ import annotations
@@ -19,8 +26,10 @@ from guard.chequeos import (
     chequeos_cumplimiento,
     chequeos_evidencia,
     chequeos_mandato,
+    chequeos_politica,
 )
 from guard.extractor import extraer_ofertas
+from guard.ranking import chequeo_integridad, rankear
 from guard.verificador import verificar_todas
 
 _STATUS_POR_RESULTADO: dict[str, Status] = {
@@ -68,18 +77,24 @@ def evaluar(
     ahora: datetime | None = None,
 ) -> Veredicto:
     """Determinística y sin I/O. Mismas entradas, mismo veredicto."""
+    if politica is None:
+        politica = Politica()
+    comercio_id = ofertas_vistas.comercio_id
     ofertas = verificar_todas(extraer_ofertas(ofertas_vistas), catalogo)
-    ranking = [o.cart_id for o in ofertas]
+    puntajes = rankear(ficha, ofertas, comercio_id)
+    ranking = [p.cart_id for p in puntajes]
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
 
     if elegida is None:
         chequeos = [_chequeo_elegido_desconocido(cart_id_elegido)]
     else:
-        comercio_id = ofertas_vistas.comercio_id
+        puntaje_elegido = next(p for p in puntajes if p.cart_id == cart_id_elegido)
         chequeos = [
             *chequeos_mandato(ficha, elegida, comercio_id),
             *chequeos_cumplimiento(ficha, elegida, comercio_id),
             *chequeos_evidencia(elegida),
+            chequeo_integridad(puntajes, puntaje_elegido, elegida.moneda),
+            *chequeos_politica(politica, elegida, comercio_id),
         ]
 
     status = agregar(chequeos)

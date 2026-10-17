@@ -12,13 +12,18 @@ toca acá.
 - **evidencia**: cada campo verificado contra el catálogo público. Un dato
   `contradicho` se escala (nunca se bloquea: puede haber razones legítimas);
   uno `solo_declarado` es `aviso`.
+- **política**: comercio aprobado (fuera de la lista `bloquea`; sin
+  identificar es `aviso`) y monto máximo sin aprobación (si se supera,
+  `escalar`).
+
+La integridad de la elección (ranking propio) está en `guard.ranking`.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Requisito
+from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Politica, Requisito
 from guard.normalizar import EPSILON_MONTO, normalizar, numero
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
@@ -203,6 +208,77 @@ def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
             "independiente para verificarlo."
         )
     return f"{nombre} {publico} verificado contra el catálogo público."
+
+
+# ---------------------------------------------------------------------------
+# Política de compras
+# ---------------------------------------------------------------------------
+
+
+def chequeos_politica(
+    politica: Politica, oferta: Oferta, comercio_id: str | None
+) -> list[Chequeo]:
+    """Comercio aprobado y monto máximo sin aprobación."""
+    chequeos = [_chequeo_comercio(politica, comercio_id)]
+    if politica.monto_maximo_sin_aprobacion is not None:
+        chequeos.append(_chequeo_monto(politica.monto_maximo_sin_aprobacion, oferta))
+    return chequeos
+
+
+def _chequeo_comercio(politica: Politica, comercio_id: str | None) -> Chequeo:
+    aprobados = politica.comercios_aprobados
+    if not comercio_id:
+        resultado = "aviso"
+        detalle = (
+            "Comercio no identificado: no se puede confirmar que esté entre "
+            "los aprobados por la política."
+        )
+    elif normalizar(comercio_id) in {normalizar(c) for c in aprobados}:
+        resultado = "ok"
+        detalle = f"Comercio {comercio_id} aprobado por la política."
+    else:
+        resultado = "bloquea"
+        detalle = (
+            f"Comercio {comercio_id} fuera de los aprobados por la política "
+            f"({formatear(list(aprobados))})."
+        )
+    return Chequeo(
+        tipo="politica",
+        resultado=resultado,
+        detalle=detalle,
+        campo="comercio",
+        esperado=list(aprobados),
+        observado=comercio_id,
+    )
+
+
+def _chequeo_monto(maximo: float, oferta: Oferta) -> Chequeo:
+    cobrado = valor_observado("precio", oferta)
+    tope = monto(maximo, oferta.moneda)
+    if cobrado is None:
+        resultado = "escalar"
+        detalle = f"Monto ilegible: no se puede comparar con el máximo sin aprobación ({tope})."
+    elif cobrado > maximo + EPSILON_MONTO:
+        resultado = "escalar"
+        detalle = (
+            f"Monto {monto(cobrado, oferta.moneda)} supera el máximo sin "
+            f"aprobación de la política ({tope}): requiere aprobación."
+        )
+    else:
+        resultado = "ok"
+        detalle = (
+            f"Monto {monto(cobrado, oferta.moneda)} dentro del máximo sin "
+            f"aprobación ({tope})."
+        )
+    return Chequeo(
+        tipo="politica",
+        resultado=resultado,
+        detalle=detalle,
+        campo="monto",
+        esperado=maximo,
+        observado=cobrado,
+        origen="cart_ap2",
+    )
 
 
 # ---------------------------------------------------------------------------
