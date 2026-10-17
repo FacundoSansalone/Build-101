@@ -14,8 +14,10 @@ import math
 from dataclasses import dataclass
 
 from contracts import Chequeo, Ficha, Oferta
-from guard.chequeos import cumple, monto
+from guard.chequeos import cumple, cumple_respaldado, monto
 from guard.normalizar import EPSILON_MONTO
+from guard.textos import acotar
+from guard.verificador import sku_publico
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class Puntaje:
     total_preferidos: int
     precio: float            # lo que se cobra (NaN si es ilegible)
     posicion: int            # orden de llegada, para desempatar
+    sku_publico: str | None = None  # el SKU solo si está en el catálogo público
 
     @property
     def precio_orden(self) -> float:
@@ -48,17 +51,21 @@ class Puntaje:
 def puntuar(
     ficha: Ficha, oferta: Oferta, posicion: int, comercio_id: str | None = None
 ) -> Puntaje:
+    """Un obligatorio cuenta solo si se cumple con un dato que no es solo
+    declarado: una oferta inverificable no puede desplazar (ni "dominar") a
+    una verificada. Un preferido solo declarado cuenta (es un aviso)."""
     obligatorios = [r for r in ficha.requisitos if r.obligatorio]
     preferidos = [r for r in ficha.requisitos if not r.obligatorio]
     return Puntaje(
         cart_id=oferta.cart_id,
         sku=oferta.sku,
-        obligatorios=sum(cumple(r, oferta, comercio_id) is True for r in obligatorios),
+        obligatorios=sum(cumple_respaldado(r, oferta, comercio_id) for r in obligatorios),
         total_obligatorios=len(obligatorios),
         preferidos=sum(cumple(r, oferta, comercio_id) is True for r in preferidos),
         total_preferidos=len(preferidos),
         precio=oferta.precio,
         posicion=posicion,
+        sku_publico=sku_publico(oferta),
     )
 
 
@@ -89,12 +96,16 @@ def domina(a: Puntaje, b: Puntaje) -> bool:
 
 
 def describir(puntaje: Puntaje, moneda: str) -> str:
-    """Ej.: cart_1 (NK-OUT-01): 5/5 obligatorios, 1/1 preferidos, USD 120.00."""
-    sku = f" ({puntaje.sku})" if puntaje.sku else ""
+    """Ej.: oferta 1 (NK-OUT-01): 5/5 obligatorios, 1/1 preferidos, USD 120.00.
+
+    Sin el cart_id ni un SKU que no esté en el catálogo: son texto del
+    comercio. La oferta se nombra por su orden de llegada.
+    """
+    sku = puntaje.sku_publico or "SKU fuera del catálogo público"
     return (
-        f"{puntaje.cart_id}{sku}: {puntaje.obligatorios}/{puntaje.total_obligatorios}"
-        f" obligatorios, {puntaje.preferidos}/{puntaje.total_preferidos} preferidos,"
-        f" {monto(puntaje.precio, moneda)}"
+        f"oferta {puntaje.posicion + 1} ({sku}): {puntaje.obligatorios}/"
+        f"{puntaje.total_obligatorios} obligatorios, {puntaje.preferidos}/"
+        f"{puntaje.total_preferidos} preferidos, {monto(puntaje.precio, moneda)}"
     )
 
 
@@ -116,8 +127,8 @@ def chequeo_integridad(puntajes: list[Puntaje], elegido: Puntaje, moneda: str) -
                 f"{describir(mejor, moneda)}; elegida {describir(elegido, moneda)}."
             ),
             campo="cart_id",
-            esperado=mejor.cart_id,
-            observado=elegido.cart_id,
+            esperado=acotar(mejor.cart_id),
+            observado=acotar(elegido.cart_id),
         )
     primero = puntajes[0]
     if primero.cart_id == elegido.cart_id:
@@ -127,14 +138,14 @@ def chequeo_integridad(puntajes: list[Puntaje], elegido: Puntaje, moneda: str) -
         )
     else:
         detalle = (
-            f"La elección no es la primera del ranking propio ({primero.cart_id}), "
-            "pero ninguna otra opción la supera en todo."
+            f"La elección no es la primera del ranking propio "
+            f"({describir(primero, moneda)}), pero ninguna otra opción la supera en todo."
         )
     return Chequeo(
         tipo="integridad",
         resultado="ok",
         detalle=detalle,
         campo="cart_id",
-        esperado=primero.cart_id,
-        observado=elegido.cart_id,
+        esperado=acotar(primero.cart_id),
+        observado=acotar(elegido.cart_id),
     )

@@ -2,6 +2,7 @@
 
 import copy
 import json
+import math
 import re
 
 import pytest
@@ -149,3 +150,18 @@ def test_talles_se_normalizan_a_enteros():
     assert oferta.talles == [42, 43]
     assert oferta.precio == 99.5
     assert oferta.moneda == "USD"
+
+
+# --- montos inválidos ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "amount",
+    [True, False, 0, 0.0, -5, float("nan"), float("inf"), "inf", "abc", None, [120]],
+)
+def test_monto_invalido_queda_faltante(amount):
+    vistas_raras = OfertasVistas(
+        carts=[{"cart_id": "c1", "amount": amount, "currency": "USD"}], offer_details=[]
+    )
+    (oferta,) = extraer_ofertas(vistas_raras)
+    assert math.isnan(oferta.precio)  # NaN = sin dato: nunca cumple un tope

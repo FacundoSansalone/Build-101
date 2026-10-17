@@ -91,18 +91,18 @@ Actualizar esta tabla al pasar cada punto de control.
 | Dev 2 (`guard/`) | 1. Contratos | — | Tests del chequeo de cumplimiento con `fixtures/scenario_B.json` | Contratos |
 | Dev 3 (`proxy/`, `dashboard/`) | 1. Contratos | — | Proxy transparente `:8010` → `:8001` | Contratos (puede arrancar con el proxy transparente) |
 
-## Decisiones abiertas
+## Decisiones (antes abiertas)
 
-Además de las de [CONTRATOS_PROPUESTOS.md](CONTRATOS_PROPUESTOS.md#6-decisiones-abiertas-para-el-paso-0):
+Todas resueltas el 2026-10-17; el detalle está en
+[`CLAUDE.md`](../CLAUDE.md#decisiones), junto con las de
+[CONTRATOS_PROPUESTOS.md](CONTRATOS_PROPUESTOS.md#6-decisiones-abiertas-para-el-paso-0).
 
-- **Resultados del benchmark en git.** `.gitignore` ignora
-  `world/ap2/results/`, pero queremos commitear los resultados. Opciones:
-  sacar esa línea del `.gitignore`, usar `git add -f` para los resultados
-  "buenos", o copiarlos a otra carpeta (por ejemplo `results/`).
-- **Puerto del dashboard.** No está reservado.
-- **Cómo se presenta la ficha en vivo.** En la UI de ADK el usuario no ve la
-  ficha; hay que decidir si la confirma en el dashboard o si para la demo se
-  usa la de `scenarios.json`.
-- **Cómo se ve `escalar` en la UI de ADK.** El proxy puede devolver el
-  checkout con la evidencia aparte, pero el agente del sample no sabe mostrar
-  un veredicto. Probablemente se vea solo en el dashboard.
+- **Resultados del benchmark en git:** en `results/` (raíz), con
+  `--out ../../results`. `.gitignore` no cambia.
+- **Puerto del dashboard:** 8020.
+- **Ficha en vivo:** para la demo se usa la de `scenarios.json`
+  (`Ficha.desde_intent`), que el dashboard muestra como confirmada.
+- **`escalar` en la UI de ADK:** el proxy retiene el checkout y el Shopping
+  Agent muestra el motivo del Guard (cambio mínimo listado en
+  `world/NOTICE.md`). El humano ve la evidencia en el dashboard y puede
+  "Aprobar igual"; el reintento del checkout pasa intacto.

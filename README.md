@@ -13,18 +13,32 @@ vendedor.
 
 | Parte | Dueño | Estado |
 |---|---|---|
-| `world/` — flujo AP2 real, comercio atacante, catálogo público, benchmark | Dev 1 | Listo para correr con API key |
-| `contracts/` — modelos compartidos | Los tres | Por acordar |
-| `guard/` — núcleo del Guard | Dev 2 | Por empezar |
-| `proxy/` — proxy A2A | Dev 3 | Por empezar |
-| `dashboard/` — vista de la demo | Dev 3 | Por empezar |
+| `world/` — flujo AP2 real, comercio atacante, catálogo público, benchmark | Dev 1 | Listo; benchmark con LLM medido (`results/`) |
+| `contracts/` — modelos compartidos | Los tres | Acordados (ver `CLAUDE.md` → Decisiones) |
+| `guard/` — núcleo del Guard | Dev 2 | Listo: `evaluar()`, verificador, chequeos, recibo firmado |
+| `proxy/` — proxy A2A | Dev 3 | Listo en `:8010`, con interruptor y eventos |
+| `dashboard/` — vista de la demo | Dev 3 | Listo en `:8020`, con modo offline |
+
+Benchmark (10 corridas, modelo barato, a través del proxy): el éxito del
+ataque con AP2 como única defensa pasa **de 100% a 0%** con el Guard en B, B2
+y C, sin falsos positivos en `baseline`. Detalle en
+[`docs/DEMO.md`](docs/DEMO.md#resultados-medidos-2026-10-17).
 
 ## Empezar
 
 ```sh
 cp .env.example .env           # poné tu GOOGLE_API_KEY
-bash world/run_world.sh B      # levanta el flujo AP2 en el escenario B
+# Terminal 1: el flujo AP2 en el escenario B, pasando por el proxy del Guard
+MERCHANT_AGENT_URL=http://localhost:8010/a2a/merchant_agent bash world/run_world.sh B
+# Terminal 2: proxy del Guard (:8010) — desde la raíz del repo
+PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m proxy
+# Terminal 3: dashboard (:8020)
+PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m dashboard
 ```
+
+En Linux/macOS el Python es `world/ap2/.venv/bin/python`. Tests de
+`contracts/`, `guard/`, `proxy/` y `dashboard/`: `python -m pytest` desde la
+raíz con ese mismo Python.
 
 Más detalle en [`world/README.md`](world/README.md). Contexto para Claude Code
 en [`CLAUDE.md`](CLAUDE.md).
