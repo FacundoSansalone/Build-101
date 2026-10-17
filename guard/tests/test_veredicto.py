@@ -8,7 +8,7 @@ import socket
 
 import pytest
 
-from contracts import Chequeo, Evaluador, OfertasVistas, Veredicto
+from contracts import Chequeo, Evaluador, Ficha, OfertasVistas, Veredicto
 from guard import evaluar
 from guard.veredicto import agregar
 
@@ -180,6 +180,90 @@ def test_monto_invalido_en_el_cart_se_escala(vistas, ficha, catalogo, ahora, amo
     (precio,) = [c for c in veredicto.chequeos if c.tipo == "mandato" and c.campo == "precio"]
     assert precio.resultado == "escalar"
     assert precio.observado is None
+
+
+# --- ficha sin mandato (tope/moneda) o sin confirmar: como mínimo escalar ------------
+
+
+def _ficha_sin(escenario, *claves, confirmada=True) -> Ficha:
+    intent = escenario("baseline")["intent"]
+    for clave in claves:
+        intent["hard"].pop(clave)
+    return Ficha.desde_intent(intent, confirmada=confirmada)
+
+
+def _mandato_que_escala(veredicto, campo):
+    return [
+        c for c in veredicto.chequeos
+        if c.tipo == "mandato" and c.campo == campo and c.resultado == "escalar"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("claves", "campos"),
+    [(("max_price",), ["precio"]), (("currency",), ["moneda"]),
+     (("max_price", "currency"), ["precio", "moneda"])],
+)
+def test_ficha_sin_tope_o_moneda_obligatorios_se_escala(
+    escenario, vistas, catalogo, ahora, claves, campos
+):
+    veredicto = evaluar(_ficha_sin(escenario, *claves), vistas("baseline"), "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "escalar"
+    for campo in campos:
+        assert _mandato_que_escala(veredicto, campo), campo
+    assert "cumple el mandato" not in veredicto.motivo
+
+
+def test_tope_y_moneda_solo_preferidos_no_son_mandato(escenario, vistas, catalogo, ahora):
+    intent = escenario("baseline")["intent"]
+    intent["preferred"].update(
+        max_price=intent["hard"].pop("max_price"), currency=intent["hard"].pop("currency")
+    )
+    veredicto = evaluar(Ficha.desde_intent(intent), vistas("baseline"), "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "escalar"
+    assert _mandato_que_escala(veredicto, "precio") and _mandato_que_escala(veredicto, "moneda")
+
+
+@pytest.mark.parametrize("tope", [float("inf"), 0, -10, "abc", True, [150]])
+def test_tope_invalido_se_escala(escenario, vistas, catalogo, ahora, tope):
+    intent = escenario("baseline")["intent"]
+    intent["hard"]["max_price"] = tope
+    veredicto = evaluar(Ficha.desde_intent(intent), vistas("baseline"), "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "escalar"
+    assert _mandato_que_escala(veredicto, "precio")
+
+
+def test_ficha_no_confirmada_se_escala(escenario, vistas, catalogo, ahora):
+    veredicto = evaluar(
+        _ficha_sin(escenario, confirmada=False), vistas("baseline"), "cart_1", catalogo, ahora=ahora
+    )
+    assert veredicto.status == "escalar"
+    assert _mandato_que_escala(veredicto, "ficha")
+
+
+def test_ficha_vacia_no_dice_que_cumple_nada(vistas, catalogo, ahora):
+    from contracts import Ficha as FichaContrato
+
+    vacia = FichaContrato(pedido_original="", requisitos=[], confirmada=True)
+    # cart_3 es la más barata: sin requisitos, ninguna otra la domina.
+    veredicto = evaluar(vacia, vistas("baseline"), "cart_3", catalogo, ahora=ahora)
+    assert veredicto.status == "escalar"
+    assert "cumple el mandato" not in veredicto.motivo
+    assert "requisitos del pedido" not in veredicto.motivo
+
+
+def test_motivo_de_aprobado_no_afirma_lo_que_no_se_chequeo():
+    from guard.veredicto import redactar_motivo
+
+    motivo = redactar_motivo("aprobado", [])
+    assert "mandato" not in motivo and "requisitos" not in motivo
+
+
+def test_motivo_de_aprobado_en_baseline(vistas, ficha, catalogo, ahora):
+    veredicto = evaluar(ficha(), vistas("baseline"), "cart_1", catalogo, ahora=ahora)
+    assert veredicto.motivo.startswith("Aprobado")
+    assert "mandato" in veredicto.motivo
+    assert "4 requisitos del pedido" in veredicto.motivo
 
 
 def test_evaluar_respeta_la_firma_del_contrato():
