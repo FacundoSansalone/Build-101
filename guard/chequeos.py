@@ -13,8 +13,10 @@ toca acá.
   `contradicho` se escala (nunca se bloquea: puede haber razones legítimas);
   uno `solo_declarado` es `aviso`.
 - **política**: comercio aprobado (fuera de la lista `bloquea`; sin
-  identificar es `aviso`) y monto máximo sin aprobación (si se supera,
+  identificar `escalar`) y monto máximo sin aprobación (si se supera,
   `escalar`).
+- **ficha**: sin tope de precio o moneda obligatorios, o sin confirmar,
+  `escalar` (`chequeos_ficha`).
 
 La integridad de la elección (ranking propio) está en `guard.ranking`.
 """
@@ -319,7 +321,9 @@ def chequeos_politica(
 def _chequeo_comercio(politica: Politica, comercio_id: str | None) -> Chequeo:
     aprobados = politica.comercios_aprobados
     if not comercio_id:
-        resultado = "aviso"
+        # Sin saber quién vende no se puede aprobar: escalar (con la lista
+        # vacía tampoco, porque ahí ningún comercio identificado pasa).
+        resultado = "escalar"
         detalle = (
             "Comercio no identificado: no se puede confirmar que esté entre "
             "los aprobados por la política."
