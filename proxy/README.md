@@ -47,6 +47,7 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `CATALOGO_RESPALDO_FIXTURE` | `0` | `1` solo para la demo offline: si el catálogo no responde, usar `fixtures/public_catalog.json`. Con `0`, se evalúa sin catálogo |
 | `GUARD_ACTIVO` | `true` | Estado inicial del interruptor |
 | `GUARD_EVENTS_JSONL` | `.logs/guard_events.jsonl` | Copia de los eventos (relativo a la raíz del repo; se crea con modo 0600) |
+| `GUARD_EVENTS_JSONL_PRIVADO` | `.logs/guard_events_privados.jsonl` (junto a `GUARD_EVENTS_JSONL`) | Copia de los eventos de compras de integrador (modo 0600). El dashboard no la sirve. Tiene que ser otro archivo que `GUARD_EVENTS_JSONL` (si no, no arranca) |
 | `GUARD_KEY_PATH` | `.temp-db/guard_signing_key.pem` | Clave del recibo (la maneja `guard.recibo`) |
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control, nuevo en cada arranque (modo 0600 donde aplica). Lo lee el servidor del dashboard |
 | `PROXY_ALLOW_STUB` | `0` | `1` para arrancar con el stub si no hay `guard.evaluar()` real (solo pruebas) |
@@ -223,7 +224,11 @@ checkout pasa intacto y la aprobación queda usada.
 ### Eventos (`contracts.Evento`)
 
 Además van a `GUARD_EVENTS_JSONL`, una línea por evento. `escenario` es el
-`demo_scenario` de la compra; `contexto_id`, el `context_id` de A2A.
+`demo_scenario` de la compra; `contexto_id`, el `context_id` de A2A. Los de
+compras de integrador (los que sin token no salen por `/guard/*`: llevan
+checkout_jwt y mandatos de clientes del gateway) van a
+`GUARD_EVENTS_JSONL_PRIVADO` y no al principal, que el dashboard sirve para el
+replay. En memoria y en el SSE siguen todos.
 
 | `tipo` | `datos` |
 |---|---|
@@ -737,7 +742,7 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `seguridad.py` | Middleware de la API de control (`Host`, `Origin`, `Content-Type`, `X-Guard-Token`) y el token por arranque |
 | `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo` |
 | `guard_stub.py` | Stub con la firma de `contracts.Evaluador`: bloquea si el elegido es el último cart |
-| `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta 20) y JSONL |
+| `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta 20) y JSONL (los de compras de integrador, en el privado) |
 | `fuentes.py` | Intent y ficha de la demo (`ficha_del_intent`, con atributos), catálogo público (con su fuente), `intent_ap2(ficha)` y `ap2_check` con el tope de la compra |
 | `config.py` | Variables de entorno (también las `GATEWAY_*`), chequeo de loopback y `verificar_gateway` |
 | `persistencia.py` | Registro opcional en Supabase (veredictos y aprobaciones), en segundo plano y sin cortar el flujo si falla |

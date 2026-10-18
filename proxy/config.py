@@ -58,6 +58,11 @@ class Config:
     catalogo_respaldo_fixture: bool = False
     guard_activo: bool = True
     events_jsonl: Path | None = REPO_ROOT / ".logs" / "guard_events.jsonl"
+    # Los eventos de compras de integrador (llevan checkout_jwt y mandatos)
+    # van a otro archivo: el principal lo sirve el dashboard para el replay.
+    # None = junto al principal (`guard_events_privados.jsonl`); ver
+    # `jsonl_privado`.
+    events_jsonl_privado: Path | None = None
     guard_key_path: Path = REPO_ROOT / ".temp-db" / "guard_signing_key.pem"
     # Token de la API de control (uno por arranque) para el servidor del
     # dashboard. None: solo en memoria (tests).
@@ -107,6 +112,15 @@ class Config:
     compra_ttl_s: int = COMPRA_TTL_S
 
     @property
+    def jsonl_privado(self) -> Path | None:
+        """El JSONL de los eventos de compras de integrador: el pedido o,
+        junto al principal, `guard_events_privados.jsonl`. Sin JSONL
+        principal (None), tampoco privado."""
+        if self.events_jsonl is None:
+            return None
+        return _jsonl_privado(self.events_jsonl, self.events_jsonl_privado)
+
+    @property
     def rpc_path(self) -> str:
         """Ruta en la que el proxy atiende el JSON-RPC (la de PROXY_PUBLIC_URL)."""
         return urlparse(self.proxy_public_url).path.rstrip("/") or "/"
@@ -133,6 +147,14 @@ class Config:
         env = os.environ if env is None else env
         base = cls()
         jsonl = env.get("GUARD_EVENTS_JSONL")
+        events_jsonl = _ruta(jsonl) if jsonl else base.events_jsonl
+        privado = (env.get("GUARD_EVENTS_JSONL_PRIVADO") or "").strip()
+        events_jsonl_privado = _ruta(privado) if privado else None
+        if events_jsonl is not None and _jsonl_privado(events_jsonl, events_jsonl_privado) == events_jsonl:
+            raise ValueError(
+                "GUARD_EVENTS_JSONL_PRIVADO tiene que ser otro archivo que GUARD_EVENTS_JSONL "
+                "(el principal lo sirve el dashboard)"
+            )
         gateway_port = _entero_positivo(env.get("GATEWAY_PORT"), base.gateway_port, "GATEWAY_PORT")
         return cls(
             merchant_upstream_url=env.get(
@@ -147,7 +169,8 @@ class Config:
                 env.get("CATALOGO_RESPALDO_FIXTURE", "0"), "CATALOGO_RESPALDO_FIXTURE"
             ),
             guard_activo=_bool(env.get("GUARD_ACTIVO", "true"), "GUARD_ACTIVO"),
-            events_jsonl=_ruta(jsonl) if jsonl else base.events_jsonl,
+            events_jsonl=events_jsonl,
+            events_jsonl_privado=events_jsonl_privado,
             guard_key_path=_ruta(env["GUARD_KEY_PATH"])
             if env.get("GUARD_KEY_PATH")
             else base.guard_key_path,
@@ -213,6 +236,10 @@ def _segundos(valor: str | None, defecto: float, nombre: str) -> float:
     if not 0 < segundos < 600:
         raise ValueError(f"{nombre} tiene que estar entre 0 y 600 segundos, no {valor!r}")
     return segundos
+
+
+def _jsonl_privado(principal: Path, pedido: Path | None) -> Path:
+    return pedido or principal.with_name("guard_events_privados.jsonl")
 
 
 _FECHA_RE = re.compile(r"\d{4}-\d{2}-\d{2}")

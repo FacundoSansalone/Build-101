@@ -477,7 +477,10 @@ class ProxyGuard:
         self.evaluador = evaluador
         self.guard_activo = config.guard_activo
         self.bus = BusDeEventos(
-            config.events_jsonl, max_suscriptores=config.max_suscriptores_sse
+            config.events_jsonl,
+            max_suscriptores=config.max_suscriptores_sse,
+            # Los de compras de integrador, aparte: el principal lo sirve el dashboard.
+            jsonl_privado=config.jsonl_privado,
         )
         self.ping_segundos = ping_segundos
         # Secreto de los POST de /guard/* (N4): uno por arranque.
@@ -569,6 +572,7 @@ class ProxyGuard:
             guard_activo=guard_activo,
             contexto_id=contexto_id,
             escenario=escenario,
+            privado=privado,  # al JSONL privado, no al que sirve el dashboard
         )
         if privado:
             _recordar(self._eventos_privados, evento.id, True, _MAX_MARCAS_PRIVADAS)

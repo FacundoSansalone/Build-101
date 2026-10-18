@@ -1,4 +1,10 @@
-"""Eventos para el dashboard: memoria (últimos 200), suscriptores SSE y JSONL."""
+"""Eventos para el dashboard: memoria (últimos 200), suscriptores SSE y JSONL.
+
+Los eventos de compras de integrador (`privado=True`) van a otro JSONL: el
+principal lo sirve el dashboard para el replay y esos llevan checkout_jwt y
+mandatos de clientes del gateway. En memoria y en el SSE están todos (el
+proxy los filtra sin token, `ProxyGuard._visible`).
+"""
 
 from __future__ import annotations
 
@@ -25,10 +31,13 @@ class BusDeEventos:
         jsonl: Path | None,
         capacidad: int = CAPACIDAD,
         max_suscriptores: int = MAX_SUSCRIPTORES_SSE,
+        jsonl_privado: Path | None = None,
     ) -> None:
         self._buffer: deque[Evento] = deque(maxlen=capacidad)
         self._suscriptores: set[asyncio.Queue[Evento]] = set()
         self._jsonl = jsonl
+        # Sin archivo privado, los privados no se copian a ningún JSONL.
+        self._jsonl_privado = jsonl_privado
         self._max_suscriptores = max_suscriptores
 
     def emitir(
@@ -39,6 +48,7 @@ class BusDeEventos:
         guard_activo: bool,
         contexto_id: str | None = None,
         escenario: str | None = None,
+        privado: bool = False,
     ) -> Evento:
         evento = Evento(
             id=uuid.uuid4().hex,
@@ -50,7 +60,7 @@ class BusDeEventos:
             datos=datos or {},
         )
         self._buffer.append(evento)
-        self._escribir_jsonl(evento)
+        self._escribir_jsonl(evento, self._jsonl_privado if privado else self._jsonl)
         for cola in list(self._suscriptores):
             try:
                 cola.put_nowait(evento)
@@ -84,15 +94,15 @@ class BusDeEventos:
     def desuscribir(self, cola: asyncio.Queue[Evento]) -> None:
         self._suscriptores.discard(cola)
 
-    def _escribir_jsonl(self, evento: Evento) -> None:
-        if self._jsonl is None:
+    def _escribir_jsonl(self, evento: Evento, path: Path | None) -> None:
+        if path is None:
             return
         try:
-            self._jsonl.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
             # Lleva mandatos y checkouts completos: el archivo se crea solo
             # legible por el dueño (en Windows el modo se ignora).
-            fd = os.open(self._jsonl, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(evento.model_dump_json() + "\n")
         except OSError as e:
-            logger.warning("No se pudo escribir %s: %s", self._jsonl, e)
+            logger.warning("No se pudo escribir %s: %s", path, e)

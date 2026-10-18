@@ -4,6 +4,7 @@ marcas de tiempo, eventos privados, seguridad y robustez."""
 from __future__ import annotations
 
 import errno
+import json
 import logging
 import socket
 from dataclasses import replace
@@ -16,9 +17,18 @@ from proxy import compras as compras_mod
 from proxy.compras import RegistroCompras
 from proxy.config import Config
 from proxy.estado import EstadoMemoria
-from proxy.tests.ayudantes import RPC
+from proxy.tests.ayudantes import RPC, evaluador_espia
 from proxy.tests.fake_world import HEADERS_A2A, cuerpo, pedido_find_products
 from proxy.tests.test_compras_api import crear as crear_api
+from proxy.tests.gateway_ayudantes import (
+    GATEWAY_PUBLIC_URL,
+    armar_gateway,
+    buscar,
+    checkout,
+    cliente_local,
+    cliente_publico,
+    crear_compra,
+)
 
 # ---------------------------------------------------------------------------
 # DEMO_HOY: el "hoy" de la demo (las ofertas tienen fechas fijas)
@@ -262,3 +272,66 @@ async def test_hidratar_una_compra_que_cierra_su_espera_no_mueve_actualizada(arm
     fila = await almacen.cargar_compra(compra.id)
     assert restaurada.estado == fila["estado"] == "vencida"
     assert fila["actualizada"] == _INSTANTE.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Eventos de compras de integrador: a un JSONL aparte (el principal lo sirve
+# el dashboard)
+# ---------------------------------------------------------------------------
+
+
+def _leer_jsonl(path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [json.loads(linea) for linea in path.read_text("utf-8").splitlines() if linea]
+
+
+def test_jsonl_privado_desde_el_entorno(tmp_path):
+    por_defecto = Config.desde_entorno({})
+    assert por_defecto.jsonl_privado == por_defecto.events_jsonl.with_name(
+        "guard_events_privados.jsonl"
+    )
+    c = Config.desde_entorno({
+        "GUARD_EVENTS_JSONL": str(tmp_path / "e.jsonl"),
+        "GUARD_EVENTS_JSONL_PRIVADO": str(tmp_path / "p" / "privados.jsonl"),
+    })
+    assert c.jsonl_privado == tmp_path / "p" / "privados.jsonl"
+    # Sin variable, junto al principal (así un GUARD_EVENTS_JSONL de prueba
+    # no escribe los privados en el repo).
+    junto = Config.desde_entorno({"GUARD_EVENTS_JSONL": str(tmp_path / "e.jsonl")})
+    assert junto.jsonl_privado == tmp_path / "guard_events_privados.jsonl"
+    assert Config(events_jsonl=None).jsonl_privado is None
+    with pytest.raises(ValueError, match="GUARD_EVENTS_JSONL_PRIVADO"):
+        Config.desde_entorno({
+            "GUARD_EVENTS_JSONL": str(tmp_path / "e.jsonl"),
+            "GUARD_EVENTS_JSONL_PRIVADO": str(tmp_path / "e.jsonl"),
+        })
+
+
+@pytest.mark.anyio
+async def test_los_eventos_de_integrador_van_al_jsonl_privado(config):
+    mundo = armar_gateway(replace(config, gateway_public_url=GATEWAY_PUBLIC_URL),
+                          evaluador_espia()[0])
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(c))["compra_id"]
+        contexto = (await buscar(c, compra_id)).json()["result"]["contextId"]
+        await checkout(c, compra_id, contexto, "cart_1")
+    jwt = mundo.merchant.ultimo_checkout["checkout_jwt"]
+    async with cliente_local(mundo.app) as c:  # la demo: anónimo, sin clave
+        demo = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    contexto_demo = demo.json()["result"]["contextId"]
+
+    principal = _leer_jsonl(config.events_jsonl)
+    privados = _leer_jsonl(config.jsonl_privado)
+    assert {"busqueda_enviada", "ofertas_recibidas", "checkout_recibido", "veredicto"} <= {
+        e["tipo"] for e in privados
+    }
+    assert {e["contexto_id"] for e in privados} == {contexto}
+    assert all(e["contexto_id"] != contexto for e in principal)
+    assert jwt not in config.events_jsonl.read_text("utf-8")
+    # Los de la demo siguen en el principal, como siempre.
+    assert {"busqueda_enviada", "ofertas_recibidas"} <= {
+        e["tipo"] for e in principal if e["contexto_id"] == contexto_demo
+    }
+    # En memoria siguen todos (el SSE y el historial los filtran sin token).
+    assert {e.contexto_id for e in mundo.proxy.bus.historial()} >= {contexto, contexto_demo}
