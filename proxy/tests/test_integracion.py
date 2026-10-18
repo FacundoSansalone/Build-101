@@ -213,6 +213,62 @@ async def test_la_oportunidad_ve_las_ofertas_verificadas_con_el_fabricante(
     assert float(zento.atributos["memoria_ram"].valor) == 8.0
 
 
+# -- 3. AP2 con el tope de cada compra ------------------------------------------------
+
+
+async def _ap2(c: httpx.AsyncClient) -> list[Any] | None:
+    (evento,) = [e for e in await eventos(c) if e["tipo"] == "checkout_recibido"]
+    return evento["datos"]["ap2_violaciones"]
+
+
+async def test_ap2_usa_el_tope_de_la_compra_y_no_el_global(armar_proxy):
+    """El ataque de notebooks está dentro del tope de USD 1.200 de ese pedido:
+    AP2 no lo frena (con el tope global de zapatillas, USD 150, parecía que sí)."""
+    evaluador, _ = evaluador_espia()
+    async with cliente_de(armar_proxy(evaluador=evaluador)) as c:
+        contexto = await buscar(c, "notebook_malicioso")
+        await checkout(c, contexto, "cart_4")  # USD 899
+        assert await _ap2(c) == []
+
+
+async def test_ap2_frena_lo_que_supera_el_tope_de_la_compra(armar_proxy):
+    evaluador, _ = evaluador_espia()
+    async with cliente_de(armar_proxy(evaluador=evaluador)) as c:
+        contexto = await buscar(c, "notebook_malicioso")
+        await checkout(c, contexto, "cart_3")  # USD 1.599 > 1.200
+        violaciones = await _ap2(c)
+    assert violaciones and any("159900" in v or "1599" in v for v in violaciones)
+
+
+def test_intent_ap2_sale_de_la_ficha_de_la_compra():
+    from contracts import Ficha
+    from proxy.fuentes import intent_ap2
+
+    ficha = Ficha(
+        pedido_original="x",
+        requisitos=[
+            Requisito(campo="precio", operador="maximo", valor=1200.0, obligatorio=True),
+            Requisito(campo="moneda", operador="igual", valor="USD", obligatorio=True),
+        ],
+        confirmada=True,
+    )
+    assert intent_ap2(ficha) == {"hard": {"max_price": 1200.0, "currency": "USD"}}
+    # Sin tope o sin moneda obligatorios no hay mandato que chequear.
+    sin_tope = ficha.model_copy(update={"requisitos": ficha.requisitos[1:]})
+    assert intent_ap2(sin_tope) is None
+    preferido = ficha.model_copy(
+        update={"requisitos": [ficha.requisitos[0].model_copy(update={"obligatorio": False}),
+                               ficha.requisitos[1]]}
+    )
+    assert intent_ap2(preferido) is None
+
+
+def test_sin_intent_no_se_corre_ap2():
+    from proxy.fuentes import violaciones_ap2
+
+    assert violaciones_ap2({"cart_id": "c", "amount": 10.0, "currency": "USD"}, None) is None
+
+
 def test_python_m_proxy_arma_la_fuente_del_fabricante():
     from proxy.__main__ import cargar_fabricante
 
