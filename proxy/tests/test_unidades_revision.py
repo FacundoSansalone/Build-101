@@ -80,20 +80,7 @@ def _jwt(payload: dict) -> str:
     return f"eyJhbGciOiJFUzI1NiJ9.{b}.c2ln"
 
 
-def test_monto_checkout_prefiere_lo_firmado():
-    con_totales = {
-        "checkout_jwt": _jwt({"currency": "USD", "totals": [
-            {"type": "subtotal", "amount": 1}, {"type": "total", "amount": 14500}]}),
-        "amount": 1.0,
-        "currency": "EUR",
-    }
-    assert a2a.monto_checkout(con_totales) == (14500, "USD")
-    con_items = {"checkout_jwt": _jwt({"currency": "USD", "line_items": [
-        {"item": {"price": 1000}, "quantity": 2}]})}
-    assert a2a.monto_checkout(con_items) == (2000, "USD")
-    sin_jwt = {"checkout_jwt": "roto", "amount": 12.5, "currency": "USD"}
-    assert a2a.monto_checkout(sin_jwt) == (1250, "USD")
-    assert a2a.monto_checkout({"checkout_jwt": "x"}) == (None, None)
+# monto_firmado(): ver test_aprobacion_monto_firmado.py (N2, sin fallbacks)
 
 
 # ---------------------------------------------------------------------------
