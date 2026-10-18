@@ -32,10 +32,13 @@ el pedido del usuario hasta la firma**.
 
 ### Lo que NO es
 
-**No es "un detector de prompt injection".** Esa categoría está saturada y,
-además, contradice el diseño: el Guard no detecta inyecciones, las vuelve
-irrelevantes porque el agente que decide nunca ve el texto libre del vendedor.
-La inyección es el mejor **ejemplo** y la demo, no la definición del producto.
+**No es "un detector de prompt injection".** Esa categoría está saturada y
+nuestra garantía no depende de detectar. Tenemos un filtro que detecta y corta
+temprano (defensa en profundidad), pero lo que garantiza la compra es el
+Guard antes de la firma: verifica contra lo que autorizó el usuario y contra
+fuentes que el vendedor no controla, sin leer su texto libre, así que una
+inyección que pase el filtro igual no llega a la firma. La inyección es el
+mejor **ejemplo** y la demo, no la definición del producto.
 
 ### Cliente objetivo
 
@@ -52,8 +55,11 @@ Agentes de compras **B2B (procurement)**:
   cuando lo manipulan sin pasarse."
 - "AP2 firma lo que el agente decide. Nosotros garantizamos que esa decisión no
   fue manipulada."
-- "No detectamos ataques. Garantizamos que tu agente de compras decide con
-  datos verificados, aunque lo ataquen."
+- "Detectamos lo que podemos, pero no dependemos de detectar: garantizamos
+  que tu agente compra solo lo que autorizaste, con datos verificados, aunque
+  lo ataquen."
+- "El filtro no lo ve y el Guard igual frena."
+- "Los modelos entienden y proponen; vos autorizás; el código verifica."
 - "No sabemos si B miente. Sabemos cuándo lo que dice no coincide con lo que
   publica."
 

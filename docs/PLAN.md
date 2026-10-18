@@ -135,7 +135,7 @@ salvo un cambio mínimo para que reciba los parámetros autorizados.
 | 6. Acepta | proxy → agente del cliente | El proxy entrega la respuesta intacta y, en un artefacto aparte, los parámetros autorizados nuevos (`guard.parametros_autorizados`). Si el proveedor manda uno con esa clave, se borra, como hoy con `guard.veredicto`. La herramienta `find_products` del agente del cliente lo lee. |
 | 6. Rechaza | proxy | Entrega la respuesta sin cambios y el agente del cliente aplica el pedido literal. |
 | 6. No contesta | proxy | La respuesta sigue retenida. El cliente A2A del sample espera hasta 600 s por llamada (`DEFAULT_TIMEOUT` en `common/payment_remote_a2a_client.py`), y la pregunta del paso 1 y la consulta caen en la misma llamada. Al vencer, no se compra nada. |
-| 7. Verificación | `guard/` | `evaluar()` en `create_checkout`, con los parámetros autorizados **de esa compra** (hoy usa un pedido global, `proxy/fuentes.py`). Una oferta que necesitaba autorización y no la tiene no cumple y se bloquea. |
+| 7. Verificación | `guard/` | `evaluar()` en `create_checkout`, con los parámetros autorizados **de esa compra** (sin compra, la ficha del escenario) y la ficha del fabricante dentro del catálogo. Una oferta que necesitaba autorización y no la tiene no cumple y se bloquea. Es la garantía; el filtro es defensa en profundidad. |
 
 ### Contrato (los tres, primero)
 
@@ -231,21 +231,46 @@ Propuesta inicial; se ajusta al acordarla.
 12. **Opcional:** registrar oportunidades y decisiones en Supabase
     (`persistencia.py`).
 
-### Estado (2026-10-18, rama `etapa2/intencion`)
+### Estado (2026-10-18, rama `etapa2/integracion`)
+
+Posicionamiento: **la garantía es el Guard antes de la firma; el filtro es
+defensa en profundidad.** Los modelos entienden y proponen, el usuario
+autoriza, el código verifica. Las métricas son de muestras chicas (una
+corrida por caso, casos escritos por nosotros): sirven para el pitch como
+"de X a Y en esta medición", nunca como garantía.
 
 | Tarea | Estado |
 |---|---|
-| Contrato | Hecho y aditivo; falta que lo revisen los tres (ver CLAUDE.md → Decisiones) |
-| 1. Filtro (Dev 1) | Falta. Ya está el enganche en el proxy: `GUARD_FILTRO=paquete.modulo:funcion`, con la firma `contracts.Filtro` |
-| 2. Escenarios de computadoras en `world/` (Dev 1) | Falta. Hasta entonces, `fixtures/etapa2/computadoras.json` (escrito a mano) |
+| Contrato | Hecho y aditivo; falta que lo revisen los tres (ver CLAUDE.md → Decisiones). La integración no lo cambió |
+| 1. Filtro (Dev 1) | Hecho (`filtro/`: heurísticas + tres preguntas a OpenAI Decisions, falla cerrado, motivos fijos). Medido en 26 casos, una corrida: detecta 14/14 maliciosos con 0/12 falsos positivos (heurísticas solas: 12/14). En la prueba de punta a punta apareció un falso positivo con el eco del pedido en el `history`: lo corrige el proxy |
+| 2. Escenarios de computadoras en `world/` (Dev 1) | `computadoras` (honesto) hecho en `world/` y exportado a `fixtures/etapa2/`. El proveedor malicioso de computadoras sigue solo en `filtro/casos.py` |
 | 3. `find_products` lee los parámetros autorizados | Hecho (`shopper/tools.py`, anotado en `NOTICE.md`) |
 | 4. Medir las corridas sin sistema | Falta |
-| 5 y 6. Contexto y detector (`intencion/`) | Hecho, con tests (cliente de Gemini falso) |
-| 7. Medir el detector con Gemini real | Hecho: 9/9 (`gemini-3.1-flash-lite-preview`, 3 casos × 3; `python -m intencion.evaluar_casos`) |
-| 8. Guard con los parámetros de la compra | Hecho (`cantidad`, `entregas` y operador `cubre`) |
-| 9 y 10. Etapas en el proxy y API | Hecho, con tests de punta a punta contra el comercio falso |
-| 11. Dashboard: vista Agente | Hecho (pestaña 7, `#agente`), con tests de Python y JS; probado en el navegador contra un proxy falso |
+| 5 y 6. Contexto y detector (`intencion/`) | Hecho, con tests. Intake con decisiones: repregunta lo que falta (umbrales 0,80/0,60, hasta 3 repreguntas) y confirma la ficha; con atributos y la taxonomía de Google |
+| 7. Medir el detector con Gemini real | Hecho: 9/9 (`gemini-3.1-flash-lite-preview`, 3 casos × 3; `python -m intencion.evaluar_casos`). Intake con OpenAI Decisions: 60/60 decisiones de repreguntar o no en el turno 0 (12 pedidos), 0 valores resueltos equivocados |
+| 8. Guard con los parámetros de la compra | Hecho (`cantidad`, `entregas`, `cubre`, atributos con unidades, `minimo`, fuentes de verdad en orden y ficha del fabricante) |
+| 9 y 10. Etapas en el proxy y API | Hecho, con tests contra el comercio falso y una prueba de punta a punta real (abajo) |
+| 11. Dashboard: vista Agente | Hecho (pestaña 7, `#agente`), con tests de Python y JS; la oferta de una consulta se nombra con su título público o el SKU |
 | 12. Supabase | No se hizo (opcional) |
+| Integración (`etapa2/integracion`) | Hecho: ficha de la demo con atributos y taxonomía en el proxy y el dashboard; fabricante consultado por el proxy antes de `evaluar()` (`FABRICANTE_FUENTE`, registrado en el evento `veredicto`); AP2 con el tope de cada compra; atributos confirmados en la ficha autorizada (el Guard publica `CAMPOS_SOPORTADOS`/`OPERADORES_SOPORTADOS`); taxonomía en el intake; título público en la consulta; `Compra.nueva_espera()`; `PROXY_FICHA_DEMO=0`; escenario `notebook_dato_falso` |
+
+**Benchmark sin LLM** (`--source direct --decider target --trials 1`, Guard
+enchufado, catálogo del fixture y fabricante fixture): éxito del ataque solo
+con AP2 → con Guard: B, B2, C, `notebook_malicioso`, `notebook_dato_falso` y
+`auriculares_malicioso` de 100% a 0%; A lo frena AP2; los honestos, 0%.
+`--decider target` supone que el agente siempre cae: mide al Guard, no a un
+modelo.
+
+**Prueba de punta a punta (2026-10-18, puertos 9311-9313):** comercio real
+del sample, catálogo y proxy con filtro e intake de OpenAI Decisions,
+fabricante fixture y `PROXY_FICHA_DEMO=0`. "Quiero una notebook para
+programar con 16 GB de RAM" → el intake pregunta el porqué y lo que falta
+(tope, moneda, plazo) → repregunta → confirma la ficha (tope USD 1.200,
+memoria ≥ 16 GB, taxonomía 328 Laptops) → el filtro deja pasar
+`notebook_dato_falso` → `create_checkout(cart_4)` **bloqueado** antes de la
+firma: "memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)" con el
+fabricante (fixture rotulado); AP2 no lo frenaba (USD 899 ≤ 1.200). Con
+`notebook_malicioso`, el filtro corta en las heurísticas.
 
 ### Orden y puntos de control
 
@@ -259,7 +284,8 @@ Propuesta inicial; se ajusta al acordarla.
 
 ### Plan B
 
-- Si el filtro no llega, el caso malicioso se muestra con el escenario B de
-  la etapa 1: el Guard bloquea antes de la firma, y ya está grabado en
-  `dashboard/demo/ensayo_B.jsonl`.
+- Si el filtro falla en vivo, el caso malicioso se muestra con el escenario
+  B de la etapa 1: el Guard bloquea antes de la firma, y ya está grabado en
+  `dashboard/demo/ensayo_B.jsonl`. El momento "el filtro no lo ve y el Guard
+  igual frena" sale con `notebook_dato_falso` (o C).
 - Si el caso honesto falla en vivo, se muestran las corridas grabadas.
