@@ -50,7 +50,10 @@ from contracts import Evento, Ficha
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-DEFAULT_PROXY_URL = "http://localhost:8010"
+# 127.0.0.1 y no localhost: en Windows localhost prueba primero ::1, donde el
+# proxy no escucha, y cada intento fallido suma ~2 s (el panel daba "proxy
+# desconectado"). El proxy acepta Host 127.0.0.1:8010.
+DEFAULT_PROXY_URL = "http://127.0.0.1:8010"
 DEFAULT_PORT = 8020
 GUARD_KID = "guard-key-1"  # CLAUDE.md → Decisiones, punto 6
 # Token de la API de control del proxy (N4): lo escribe el proxy al arrancar.
@@ -572,7 +575,8 @@ def _cliente_proxy(cfg: Config, timeout: httpx.Timeout | None = None):
     # En Windows, conectar a un puerto cerrado tarda ~2 s en fallar: cortamos
     # antes para que el panel muestre "proxy desconectado" enseguida.
     timeout = timeout or httpx.Timeout(3.0, connect=1.0)
-    return httpx.AsyncClient(transport=cfg.proxy_transport, timeout=timeout)
+    # trust_env=False: un HTTP_PROXY del entorno no se mete entre el panel y el proxy.
+    return httpx.AsyncClient(transport=cfg.proxy_transport, timeout=timeout, trust_env=False)
 
 
 def leer_token(cfg: Config) -> str | None:

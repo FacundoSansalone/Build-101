@@ -25,7 +25,7 @@ const ORDEN_VISTAS = Object.keys(VISTAS);
 
 const estado = {
   vista: "momento",
-  config: { proxy_url: "http://localhost:8010" },
+  config: { proxy_url: "http://127.0.0.1:8010" },
   fuente: "vivo",
   replays: null, // null = todavía cargando
   replaySel: null,

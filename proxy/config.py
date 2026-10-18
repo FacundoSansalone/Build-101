@@ -35,9 +35,11 @@ def _ruta(valor: str) -> Path:
 
 @dataclass(frozen=True)
 class Config:
-    merchant_upstream_url: str = "http://localhost:8001/a2a/merchant_agent"
+    # Servicios locales por IPv4: en Windows `localhost` prueba primero ::1
+    # (donde no escuchan) y cada intento fallido suma ~2 s.
+    merchant_upstream_url: str = "http://127.0.0.1:8001/a2a/merchant_agent"
     proxy_public_url: str = "http://localhost:8010/a2a/merchant_agent"
-    catalogo_url: str = "http://localhost:8011"
+    catalogo_url: str = "http://127.0.0.1:8011"
     guard_activo: bool = True
     events_jsonl: Path | None = REPO_ROOT / ".logs" / "guard_events.jsonl"
     guard_key_path: Path = REPO_ROOT / ".temp-db" / "guard_signing_key.pem"
