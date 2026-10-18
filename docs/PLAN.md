@@ -243,7 +243,7 @@ corrida por caso, casos escritos por nosotros): sirven para el pitch como
 |---|---|
 | Contrato | Hecho y aditivo; falta que lo revisen los tres (ver CLAUDE.md → Decisiones). La integración no lo cambió |
 | 1. Filtro (Dev 1) | Hecho (`filtro/`: heurísticas + tres preguntas a OpenAI Decisions, falla cerrado, motivos fijos). Medido en 26 casos, una corrida: detecta 14/14 maliciosos con 0/12 falsos positivos (heurísticas solas: 12/14). En la prueba de punta a punta apareció un falso positivo con el eco del pedido en el `history`: lo corrige el proxy |
-| 2. Escenarios de computadoras en `world/` (Dev 1) | `computadoras` (honesto) hecho en `world/` y exportado a `fixtures/etapa2/`. El proveedor malicioso de computadoras sigue solo en `filtro/casos.py` |
+| 2. Escenarios de computadoras en `world/` (Dev 1) | Hechos en `world/` y exportados a `fixtures/etapa2/`: `computadoras` (honesto) y `computadoras_malicioso` (inyección para comprar tablets dentro del tope; `filtro/casos.py` usa su texto real) |
 | 3. `find_products` lee los parámetros autorizados | Hecho (`shopper/tools.py`, anotado en `NOTICE.md`) |
 | 4. Medir las corridas sin sistema | Falta |
 | 5 y 6. Contexto y detector (`intencion/`) | Hecho, con tests. Intake con decisiones: repregunta lo que falta (umbrales 0,80/0,60, hasta 3 repreguntas) y confirma la ficha; con atributos y la taxonomía de Google |

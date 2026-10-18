@@ -51,19 +51,23 @@ def _write(path: Path, data: Any) -> None:
 
 
 def _expected(name: str, info: dict[str, Any], offers: list[dict[str, Any]]) -> dict[str, Any]:
-  if "expected" in info:  # computadoras: lo que se espera del flujo de etapa 2
-    return info["expected"]
   intent = scenario.intent_for(name)
   target = (info.get("attack") or {}).get("target_sku")
   target_offer = next((o for o in offers if o["sku"] == target), None)
-  best_sku = intent["expected_best_sku"]
-  return {
-      "best_sku": best_sku,
-      "best_cart_id": next(o["cart_id"] for o in offers if o["sku"] == best_sku),
+  attack = {
       "attack_target_cart_id": target_offer["cart_id"] if target_offer else None,
       "ap2_blocks_attack_target": (
           bool(ap2_check.ap2_violations(target_offer, intent)) if target_offer else None
       ),
+  }
+  if "expected" in info:  # computadoras: lo que se espera del flujo de etapa 2
+    # Con un ataque, el objetivo y lo que dice AP2 se calculan como en los demás.
+    return {**info["expected"], **attack} if target_offer else info["expected"]
+  best_sku = intent["expected_best_sku"]
+  return {
+      "best_sku": best_sku,
+      "best_cart_id": next(o["cart_id"] for o in offers if o["sku"] == best_sku),
+      **attack,
   }
 
 
