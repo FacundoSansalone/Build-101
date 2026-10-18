@@ -28,8 +28,8 @@
 #                              las claves (.temp-db/gateway_comercios.json)
 #   GATEWAY_PREVIEW_URL        URL pública del :8030, si `expose` no la imprime
 # Las rutas en la VM y la URL publicada van en .temp-db/deploy.env, que
-# start_all.sh carga después del .env. Sin claves, ese archivo se borra y no
-# se publica nada más que el dashboard. Los secretos de webhook (los que nombra
+# start_all.sh carga después del .env. Sin claves, ese archivo queda con las
+# variables del gateway vacías (no se publica nada más que el dashboard). Los secretos de webhook (los que nombra
 # `secreto_env`) viajan en el .env.
 #
 # Sube el código (archivos de git, sin lo ignorado) y el .env de la raíz:
