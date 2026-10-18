@@ -309,11 +309,35 @@ def test_sockets_de_abre_uno_o_dos_oyentes():
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 
 
+def _bash() -> str | None:
+    """Un bash que funcione. En Windows, `bash` puede ser el de WSL sin
+    distribución instalada (System32): se prueba también el de Git."""
+    import shutil
+    import subprocess
+
+    candidatos = [shutil.which("bash")]
+    git = shutil.which("git")
+    if git:  # ...\Git\cmd\git.exe -> ...\Git\bin\bash.exe
+        candidatos.append(str(Path(git).resolve().parents[1] / "bin" / "bash.exe"))
+    for bash in candidatos:
+        if not bash or not Path(bash).exists():
+            continue
+        try:
+            if subprocess.run([bash, "-c", "exit 0"], capture_output=True, timeout=20).returncode == 0:
+                return bash
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
 @pytest.mark.parametrize("script", ["start_all.sh", "tenki.sh"])
 def test_los_scripts_de_deploy_son_bash_valido(script):
     import subprocess
 
-    subprocess.run(["bash", "-n", str(DEPLOY / script)], check=True)
+    bash = _bash()
+    if bash is None:
+        pytest.skip("no hay un bash que funcione en esta máquina")
+    subprocess.run([bash, "-n", str(DEPLOY / script)], check=True)
 
 
 def test_start_all_no_da_el_gateway_por_activo_solo_por_el_archivo():

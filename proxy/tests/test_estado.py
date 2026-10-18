@@ -248,6 +248,31 @@ async def test_guardar_entrega():
 # -- tareas en segundo plano -------------------------------------------------------------------
 
 
+async def test_esperar_termina_con_una_tarea_terminada_sin_discard(monkeypatch):
+    """Regresión: con la tarea ya terminada y su `discard` agendado pero sin
+    correr, `gather` (3.12) resuelve sin ceder al loop y `esperar()` daba
+    vueltas para siempre (colgaba los tests del gateway en Windows)."""
+    fondo = TareasEnFondo()
+    llamadas = 0
+    gather_real = asyncio.gather
+
+    def gather_contado(*args, **kwargs):
+        nonlocal llamadas
+        llamadas += 1
+        assert llamadas < 100, "esperar() no le cede el loop al done callback"
+        return gather_real(*args, **kwargs)
+
+    async def nada() -> None:
+        return None
+
+    fondo.programar(nada(), "compra")
+    await asyncio.sleep(0)  # la tarea corre y termina; su discard queda en cola
+    assert fondo.pendientes == 1
+    monkeypatch.setattr(asyncio, "gather", gather_contado)
+    await fondo.esperar()
+    assert fondo.pendientes == 0
+
+
 async def test_tareas_en_fondo_corren_y_avisan_fallas():
     avisos: list[str] = []
     fondo = TareasEnFondo(al_fallar=avisos.append)

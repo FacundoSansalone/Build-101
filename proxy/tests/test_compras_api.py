@@ -147,7 +147,17 @@ async def test_una_compra_de_api_viva_no_sale_de_memoria_por_el_tope():
     assert registro.get(b.id) is b and registro.get(c.id) is c
 
 
-async def test_una_compra_de_api_esperando_no_sale_aunque_pase_el_ttl():
+def _reloj_que_avanza(monkeypatch) -> None:
+    """Cada lectura del reloj avanza 1 ms: en Windows dos `datetime.now()`
+    seguidos pueden dar el mismo instante (una compra recién creada tendría
+    edad 0 y `0 > ttl_s=0` es falso)."""
+    base = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    lecturas = iter(range(1, 10**6))
+    monkeypatch.setattr("proxy.compras._ahora", lambda: base + timedelta(milliseconds=next(lecturas)))
+
+
+async def test_una_compra_de_api_esperando_no_sale_aunque_pase_el_ttl(monkeypatch):
+    _reloj_que_avanza(monkeypatch)
     registro = RegistroCompras(maximo=1, ttl_s=0)
     a = crear(registro, preguntar_porque=True)
     a.nueva_espera("¿para qué?")
@@ -332,7 +342,8 @@ async def test_fila_con_fecha_sin_zona_se_toma_como_utc():
 # -- veredictos y foto -------------------------------------------------------------
 
 
-async def test_registrar_veredicto_recorta_y_toca():
+async def test_registrar_veredicto_recorta_y_toca(monkeypatch):
+    _reloj_que_avanza(monkeypatch)
     compra = crear(RegistroCompras())
     compra.actualizada = compra.creada - timedelta(hours=1)
     for i in range(MAX_VEREDICTOS_POR_COMPRA + 5):

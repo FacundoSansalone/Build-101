@@ -149,6 +149,10 @@ class Persistencia:
         """Espera las escrituras en vuelo (tests y cierre)."""
         while self._tareas:
             await asyncio.gather(*list(self._tareas), return_exceptions=True)
+            # Ceder una vuelta al loop: si todas ya terminaron, gather (3.12)
+            # resuelve sin pasar por el loop y el `discard` del done callback
+            # no llega a correr (el while no terminaba nunca).
+            await asyncio.sleep(0)
 
     async def cerrar(self) -> None:
         try:

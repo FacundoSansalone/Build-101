@@ -467,6 +467,10 @@ class Despachador:
         """Espera hasta vaciar la cola y las copias al almacén (tests)."""
         while self._tareas or self._guardados:
             await asyncio.gather(*list(self._tareas), *list(self._guardados), return_exceptions=True)
+            # Ceder una vuelta al loop: si todas ya terminaron, gather (3.12)
+            # resuelve sin pasar por el loop y el `discard` del done callback
+            # no llega a correr (el while no terminaba nunca).
+            await asyncio.sleep(0)
 
     async def cerrar(self, timeout_s: float = 5.0) -> None:
         """Cancela lo pendiente (queda `descartada`/`cerrado`) y cierra el cliente."""
