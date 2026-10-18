@@ -28,10 +28,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import time
+import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import date
 from typing import Any, Literal
 
 import httpx
@@ -44,16 +47,26 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from contracts import (
+    GUARD_PARAMETROS_KEY,
     GUARD_VEREDICTO_KEY,
     STATUS_LLEGAN_A_FIRMA,
     CheckoutVisto,
     Evento,
     Ficha,
+    Filtro,
     OfertasVistas,
+    ResultadoFiltro,
     Veredicto,
 )
 from proxy import a2a
 from proxy.aprobaciones import Aprobacion, RegistroAprobaciones, SinEscalar
+from proxy.compras import (
+    LARGO_MAXIMO_RESPUESTA,
+    Compra,
+    CompraDesconocida,
+    EstadoInvalido,
+    RegistroCompras,
+)
 from proxy.config import Config
 from proxy.evaluador import (
     EvaluadorCargado,
@@ -64,7 +77,12 @@ from proxy.evaluador import (
     validar_evaluador,
 )
 from proxy.eventos import CAPACIDAD, BusDeEventos
-from proxy.fuentes import cargar_catalogo, cargar_intent, violaciones_ap2
+from proxy.fuentes import (
+    cargar_catalogo,
+    cargar_intent,
+    intent_del_escenario,
+    violaciones_ap2,
+)
 from proxy.persistencia import Persistencia
 from proxy.seguridad import ControlLocal, escribir_token, generar_token
 
@@ -89,7 +107,12 @@ _DEL_COMERCIO_AL_CLIENTE = {"x-a2a-extensions"}
 
 # Únicas rutas de la Agent Card que se piden al comercio.
 RUTAS_CARD = (".well-known/agent-card.json", ".well-known/agent.json")
-RUTAS_POST_CONTROL = ("/guard/state", "/guard/aprobaciones")
+RUTAS_POST_CONTROL = (
+    "/guard/state",
+    "/guard/aprobaciones",
+    "/guard/compras/contexto",
+    "/guard/compras/decision",
+)
 
 _MAX_CONTEXTOS = 500
 _MAX_ID = 200  # largo máximo de contexto_id / cart_id en la API de aprobaciones
@@ -102,6 +125,48 @@ _SUFIJO_RETENIDO = (
     "Guard y, si se aprueba, reintentá create_checkout."
 )
 _SUFIJO_BLOQUEADO = "No se presenta para firma."
+
+# Etapa 2 (docs/FLUJO.md). Textos fijos: nada del comercio ni del LLM.
+_PREGUNTA_POR_DEFECTO = (
+    "¿Para qué necesitás esto? ¿Hay algo que pueda variar, como la cantidad, "
+    "las fechas o la marca?"
+)
+_MOTIVO_FILTRO = (
+    "El filtro de seguridad detectó contenido peligroso en la respuesta del "
+    "proveedor: la conversación se bloquea y no se reenvía."
+)
+_MOTIVO_FILTRO_FALLO = (
+    "El filtro de seguridad no pudo revisar la respuesta del proveedor: "
+    "no se reenvía."
+)
+_TEXTO_PAUSA = (
+    "Pre-Sign Guard: en pausa. Hay una alternativa esperando la decisión del "
+    "usuario y no respondió: sin su autorización no se avanza ni se compra."
+)
+_TEXTO_PARAMETROS = (
+    "Pre-Sign Guard: el usuario autorizó nuevos parámetros para esta compra "
+    "({requisitos}). La oferta {cart_id} los cumple: seguí la compra con esos "
+    "parámetros."
+)
+_MOTIVO_FILTRO_ILEGIBLE = (
+    "La respuesta del proveedor no se pudo leer y el filtro de seguridad no "
+    "puede revisarla: no se reenvía."
+)
+_MOTIVO_YA_BLOQUEADA = (
+    "Esta conversación ya se bloqueó por seguridad: no se reenvía nada más "
+    "del proveedor."
+)
+_MOTIVO_CONTEXTO_AJENO = (
+    "La respuesta del proveedor usa el contexto de otra compra: no se reenvía."
+)
+# El agente del cliente espera hasta 600 s por llamada (DEFAULT_TIMEOUT del
+# sample) y las dos esperas caen en la misma: presupuesto con margen.
+_PRESUPUESTO_LLAMADA_S = 570.0
+_MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
+_TIMEOUT_LLM_S = 45.0
+_TIMEOUT_FILTRO_S = 30.0
+
+AccionEtapa2 = Literal["pasar", "con_parametros", "vencida", "bloqueada", "contexto_ajeno"]
 
 Accion = Literal["pasar", "retener", "bloquear"]
 
@@ -192,6 +257,8 @@ class Llamada:
     pedido: a2a.Pedido
     guard_activo: bool  # una sola lectura del interruptor por pedido
     busqueda_emitida: bool = False
+    compra: Compra | None = None  # etapa 2: solo find_products con el Guard prendido
+    inicio: float = field(default_factory=time.monotonic)  # presupuesto de las esperas
 
 
 @dataclass
@@ -217,6 +284,8 @@ class ProxyGuard:
         ping_segundos: float = 15.0,
         api_token: str | None = None,
         persistencia: Persistencia | None = None,
+        agente: Any = None,
+        filtro: Filtro | None = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -240,6 +309,12 @@ class ProxyGuard:
         self._ofertas: OrderedDict[str, OfertasGuardadas] = OrderedDict()
         self._decisiones: OrderedDict[str, Decision] = OrderedDict()
         self._ficha: Ficha | None = None
+        # Etapa 2: agente de intención (intencion.Agente) y filtro de seguridad
+        # (contracts.Filtro). Los arma `python -m proxy` desde el entorno; sin
+        # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
+        self.agente = agente
+        self.filtro = filtro
+        self.compras = RegistroCompras()
         if evaluador.nombre == "stub":
             logger.warning(
                 "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
@@ -293,7 +368,19 @@ class ProxyGuard:
             "guard_activo": self.guard_activo,
             "merchant_url": self.config.merchant_upstream_url,
             "evaluador": self.evaluador.nombre,
+            "intencion": getattr(self.agente, "nombre", "agente") if self.agente else None,
+            "filtro": self.filtro is not None,
         }
+
+    def ficha_de(self, contexto_id: str | None) -> Ficha:
+        """Los parámetros autorizados de esa compra (etapa 2) o, si no hay
+        compra con parámetros, la ficha de la demo (scenarios.json)."""
+        compra = self.compras.de_contexto(contexto_id)
+        if compra is not None:
+            ficha = compra.resolver_ficha(self._ficha_confirmada(self._escenario(contexto_id)))
+            if ficha is not None:
+                return ficha
+        return self.ficha()
 
     # -- Agent Card ----------------------------------------------------------
 
@@ -336,6 +423,9 @@ class ProxyGuard:
             "→ comercio: %s %s contexto=%s", pedido.metodo_rpc, pedido.tipo, pedido.contexto_id
         )
         self._eventos_del_pedido(llamada)
+        if pedido.tipo == "find_products" and llamada.guard_activo and self.agente is not None:
+            # Etapa 2, paso 1: antes de negociar, el porqué (retiene el pedido).
+            await self._etapa_contexto(llamada)
 
         upstream = self.client.build_request(
             "POST",
@@ -448,6 +538,17 @@ class ProxyGuard:
         result = body.get("result")
         n_checkouts = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
 
+        if activo and self.filtro is not None:
+            # Etapa 2, paso 2: la seguridad va primero, antes de toda otra etapa
+            # (también sobre un error del comercio o un result que no es objeto).
+            objetivo = result if isinstance(result, dict) else body
+            corte = await self._filtrar(objetivo, llamada)
+            if corte is not None:
+                return self._cortar(
+                    llamada, result if isinstance(result, dict) else {}, corte[0],
+                    etapa="seguridad", senales=corte[1],
+                ), 200
+
         if "error" in body and "result" not in body:
             self._emitir_busqueda(llamada, None)
             self._emitir_error_comercio(body["error"], llamada)
@@ -473,6 +574,14 @@ class ProxyGuard:
                 respuesta = a2a.Respuesta()
                 respuesta.ingerir(result)
                 self._registrar_ofertas(respuesta, llamada)
+                if llamada.compra is not None:
+                    # Etapa 2, pasos 3 a 6: ¿hay una oportunidad? (puede retener)
+                    accion, nuevo = await self._etapa_oportunidad(llamada, respuesta, result)
+                    if accion in ("vencida", "bloqueada", "contexto_ajeno"):
+                        return self._cortar_etapa2(accion, llamada, result), 200
+                    if accion == "con_parametros" and nuevo is not None:
+                        self._emitir_reenviado(llamada, contexto)
+                        return a2a.dumps({**body, "result": nuevo}), status
             self._emitir_reenviado(llamada, contexto)
             return salida, status
 
@@ -505,6 +614,10 @@ class ProxyGuard:
         `guard.veredicto` (no se puede sacar de algo ilegible): ahí 502.
         """
         self._emitir_busqueda(llamada, None)
+        if llamada.guard_activo and self.filtro is not None:
+            # Etapa 2: lo que no se puede leer no se puede filtrar.
+            self._error(llamada, f"Respuesta ilegible del comercio: {detalle}")
+            return self._cortar(llamada, {}, _MOTIVO_FILTRO_ILEGIBLE, etapa="seguridad"), 200
         if llamada.guard_activo and (
             self._es_de_checkout(llamada) or a2a.menciona_checkout(contenido)
         ):
@@ -555,6 +668,18 @@ class ProxyGuard:
         self._emitir_busqueda(llamada, est.contexto_id)
         if llamada.pedido.tipo == "find_products" and not est.ofertas_registradas:
             self._registrar_ofertas(est.ofertas, llamada)
+        compra = llamada.compra
+        if compra is not None and compra.estado == "negociando":
+            # Etapa 2: en un stream no se retiene la respuesta (ya salió evento
+            # por evento): no hay oportunidad, sigue el pedido original. El
+            # Guard igual evalúa el checkout con los parámetros de la compra.
+            contexto = llamada.pedido.contexto_id or est.ofertas.contexto_id or est.contexto_id
+            if contexto:
+                self.compras.atar(compra, contexto)
+            compra.resolver_ficha(
+                self._ficha_confirmada(est.ofertas.escenario or llamada.pedido.escenario)
+            )
+            compra.estado = "sin_oportunidad"
         if not est.resuelto and not est.cortado:
             metodo = "create_checkout" if est.checkouts else None
             self._emitir_reenviado(llamada, est.contexto_id, metodo=metodo)
@@ -574,6 +699,10 @@ class ProxyGuard:
         if error is not None or not isinstance(body, dict):
             detalle = error or "el evento no es un objeto JSON"
             datos = evento.data.encode("utf-8")
+            if activo and self.filtro is not None:
+                # Etapa 2: lo que no se puede leer no se puede filtrar.
+                self._error(llamada, f"Evento SSE ilegible del comercio: {detalle}")
+                return self._sse_cortar_etapa2(llamada, est, _MOTIVO_FILTRO_ILEGIBLE)
             if activo and (
                 self._es_de_checkout(llamada)
                 or est.pendiente is not None
@@ -589,6 +718,11 @@ class ProxyGuard:
 
         result = body.get("result")
         n = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
+        if activo and self.filtro is not None:
+            # Etapa 2, paso 2: cada evento del proveedor pasa por el filtro.
+            corte = await self._filtrar(result if isinstance(result, dict) else body, llamada)
+            if corte is not None:
+                return self._sse_cortar_etapa2(llamada, est, corte[0], corte[1])
         if not isinstance(result, dict):
             if "error" in body:
                 self._emitir_error_comercio(body["error"], llamada)
@@ -764,6 +898,405 @@ class ProxyGuard:
             escenario=escenario,
         )
 
+    # -- etapa 2: contexto, filtro y oportunidad (docs/FLUJO.md) --------------
+
+    def _restante(self, llamada: Llamada) -> float:
+        """Lo que queda del presupuesto de la llamada: el agente del cliente
+        espera hasta 600 s y las dos esperas caen en la misma llamada."""
+        return max(0.0, _PRESUPUESTO_LLAMADA_S - (time.monotonic() - llamada.inicio))
+
+    async def _llm(self, funcion: Any, *args: Any) -> Any:
+        """Una llamada al agente de intención, en un hilo y con tope de tiempo."""
+        return await asyncio.wait_for(asyncio.to_thread(funcion, *args), _TIMEOUT_LLM_S)
+
+    def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
+        """La ficha confirmada de la demo para ese escenario (si hay)."""
+        intent = intent_del_escenario(escenario)
+        if intent is None:
+            return None
+        try:
+            return Ficha.desde_intent(intent)
+        except (ValueError, ValidationError):
+            logger.exception("La ficha del escenario %s no es válida", escenario)
+            return None
+
+    async def _categorias(self) -> list[str]:
+        """Categorías del catálogo público: el agente solo puede elegir una de
+        estas (así el Guard compara contra un valor que el catálogo usa)."""
+        catalogo, _, _ = await cargar_catalogo(self.client, self.config.catalogo_url)
+        return sorted(
+            {p["category"] for p in catalogo.values() if isinstance(p.get("category"), str)}
+        )
+
+    async def _etapa_contexto(self, llamada: Llamada) -> None:
+        """Paso 1: antes de negociar, nuestro agente pregunta el porqué.
+
+        Retiene el find_products hasta que el usuario contesta, omite o vence
+        el plazo. Otra búsqueda de la misma compra no vuelve a preguntar: si
+        el porqué está pendiente, espera lo mismo. Si el agente falla, la
+        compra sigue con el pedido literal: la seguridad no depende de esto.
+        """
+        pedido = llamada.pedido
+        existente = self.compras.de_contexto(pedido.contexto_id)
+        if existente is not None:
+            llamada.compra = existente
+            if not existente.contexto_listo.is_set():
+                try:
+                    await asyncio.wait_for(
+                        existente.contexto_listo.wait(), self._restante(llamada)
+                    )
+                except asyncio.TimeoutError:
+                    pass
+            return
+        texto = pedido.catalog_search or ""
+        hoy = date.today()
+        try:
+            categorias = await self._categorias()
+            pregunta = await self._llm(self.agente.preguntar, texto, hoy, categorias)
+            pregunta_texto = pregunta.pregunta
+            ficha_llm = pregunta.ficha(texto) if pregunta.requisitos else None
+        except Exception as e:  # noqa: BLE001 - sin agente, el pedido sigue literal
+            logger.exception("El agente de intención no pudo armar la pregunta")
+            self._error(
+                llamada, f"El agente de intención no pudo armar la pregunta ({type(e).__name__})"
+            )
+            pregunta_texto, ficha_llm = _PREGUNTA_POR_DEFECTO, None
+        compra = self.compras.crear(texto, pregunta_texto, ficha_llm, pedido.contexto_id)
+        llamada.compra = compra
+        vence = compra.fijar_plazo(
+            min(self.config.espera_contexto_s, self._restante(llamada) - _MARGEN_S)
+        )
+        self._emitir(
+            "pedido_detectado",
+            {
+                "compra_id": compra.id,
+                "pedido": texto,
+                "pregunta": pregunta_texto,
+                "requisitos": [r.model_dump(mode="json") for r in compra.requisitos],
+                "vence": vence.isoformat(),
+            },
+            guard_activo=True,
+            contexto_id=pedido.contexto_id,
+            escenario=pedido.escenario,
+        )
+        respuesta, vencido, contexto = None, False, None
+        try:
+            respuesta, vencido = await compra.esperar_respuesta()
+            if respuesta:
+                try:
+                    contexto = await self._llm(
+                        self.agente.armar_contexto, texto, pregunta_texto, respuesta, hoy
+                    )
+                except Exception as e:  # noqa: BLE001 - sin contexto, sin oportunidades
+                    logger.exception("El agente de intención no pudo armar el contexto")
+                    self._error(
+                        llamada,
+                        f"El agente de intención no pudo armar el contexto ({type(e).__name__})",
+                    )
+        finally:
+            # También si se cancela la llamada: ninguna compra queda colgada.
+            if compra.estado == "esperando_contexto":
+                compra.estado = "negociando"
+            compra.contexto = contexto
+            compra.contexto_listo.set()
+        self._emitir(
+            "contexto_registrado",
+            {
+                "compra_id": compra.id,
+                "omitido": respuesta is None and not vencido,
+                "vencido": vencido,
+                "contexto": contexto.model_dump(mode="json") if contexto else None,
+            },
+            guard_activo=True,
+            contexto_id=pedido.contexto_id,
+            escenario=pedido.escenario,
+        )
+
+    async def _filtrar(
+        self, objetivo: dict[str, Any], llamada: Llamada
+    ) -> tuple[str, list[str]] | None:
+        """Paso 2: el filtro sobre un mensaje del proveedor, antes que nada.
+
+        None = pasa. Si no, (motivo fijo del proxy, señales del filtro). Si
+        el filtro falla o tarda de más, tampoco pasa (fail-closed). Corre en
+        un hilo: un filtro lento no frena al resto del proxy.
+        """
+        try:
+            salida = await asyncio.wait_for(
+                asyncio.to_thread(self.filtro, copy.deepcopy(objetivo)), _TIMEOUT_FILTRO_S
+            )
+            veredicto = (
+                salida
+                if isinstance(salida, ResultadoFiltro)
+                else ResultadoFiltro.model_validate(salida)
+            )
+            corte = None if veredicto.pasa else (_MOTIVO_FILTRO, list(veredicto.senales))
+        except Exception as e:  # noqa: BLE001 - fail-closed
+            logger.exception("El filtro de seguridad falló")
+            self._error(llamada, f"El filtro de seguridad falló ({type(e).__name__})")
+            corte = (_MOTIVO_FILTRO_FALLO, [])
+        if corte is not None:
+            contexto = objetivo.get("contextId")
+            compra = llamada.compra or self.compras.de_contexto(
+                contexto if isinstance(contexto, str) else llamada.pedido.contexto_id
+            )
+            if compra is not None:
+                compra.estado = "bloqueada"
+                compra.resuelta.set()
+        return corte
+
+    async def _etapa_oportunidad(
+        self, llamada: Llamada, respuesta: a2a.Respuesta, result: dict[str, Any]
+    ) -> tuple[AccionEtapa2, dict[str, Any] | None]:
+        """Pasos 3 a 6: si ninguna oferta cumple los parámetros autorizados
+        pero una cubre la necesidad, retiene la respuesta y consulta al usuario.
+
+        - acepta: la respuesta pasa intacta + `guard.parametros_autorizados`
+          (y la compra queda con esos parámetros para el Guard);
+        - rechaza: pasa intacta y siguen los parámetros originales;
+        - vence: no se entrega nada (el silencio no es autorización).
+
+        Otra búsqueda de la misma compra recibe el mismo resultado.
+        """
+        compra = llamada.compra
+        assert compra is not None
+        # El contexto del pedido manda; el del comercio solo si el pedido no traía.
+        contexto_id = llamada.pedido.contexto_id or respuesta.contexto_id
+        if contexto_id and not self.compras.atar(compra, contexto_id):
+            return "contexto_ajeno", None
+        escenario = respuesta.escenario or llamada.pedido.escenario
+        compra.resolver_ficha(self._ficha_confirmada(escenario))
+
+        if compra.estado == "esperando_decision":
+            try:
+                await asyncio.wait_for(compra.resuelta.wait(), self._restante(llamada))
+            except asyncio.TimeoutError:
+                return "vencida", None
+        if compra.estado == "aceptada" and compra.oportunidad and compra.requisitos_autorizados:
+            artefacto = self._artefacto_parametros(
+                compra.oportunidad.cart_id, compra.oportunidad.id, compra.requisitos_autorizados
+            )
+            return "con_parametros", a2a.tarea_con_artefacto(result, artefacto)
+        if compra.estado in ("vencida", "bloqueada"):
+            return compra.estado, None
+        if compra.estado != "negociando":
+            return "pasar", None  # sin_oportunidad o rechazada: sigue el pedido original
+        if compra.contexto is None or compra.ficha is None or self.agente is None:
+            compra.estado = "sin_oportunidad"
+            return "pasar", None
+
+        try:
+            from guard.extractor import extraer
+            from guard.verificador import verificar_todas
+
+            catalogo, comercio_id, _ = await cargar_catalogo(
+                self.client, self.config.catalogo_url
+            )
+            vistas = OfertasVistas(
+                carts=copy.deepcopy(respuesta.carts),
+                offer_details=copy.deepcopy(respuesta.offer_details or []),
+                comercio_id=comercio_id,
+            )
+            ofertas = verificar_todas(extraer(vistas).ofertas, catalogo)
+            oportunidad = await self._llm(
+                self.agente.detectar_oportunidad, compra.contexto, compra.ficha, ofertas
+            )
+        except Exception as e:  # noqa: BLE001 - sin análisis, sigue el pedido original
+            logger.exception("El agente de intención no pudo analizar las ofertas")
+            self._error(
+                llamada,
+                f"El agente de intención no pudo analizar las ofertas ({type(e).__name__})",
+                contexto_id,
+            )
+            oportunidad = None
+        if oportunidad is None:
+            compra.estado = "sin_oportunidad"
+            return "pasar", None
+
+        compra.oportunidad = oportunidad
+        compra.estado = "esperando_decision"
+        vence = compra.fijar_plazo(
+            min(self.config.espera_decision_s, self._restante(llamada) - _MARGEN_S)
+        )
+        self._emitir(
+            "oportunidad",
+            {
+                "compra_id": compra.id,
+                "oportunidad": oportunidad.model_dump(mode="json"),
+                "vence": vence.isoformat(),
+            },
+            guard_activo=True,
+            contexto_id=contexto_id,
+            escenario=escenario,
+        )
+        decision = None
+        try:
+            decision = await compra.esperar_decision()
+        finally:
+            # También si se cancela la llamada: sin decisión, vencida.
+            if decision == "aceptar":
+                compra.requisitos_autorizados = list(oportunidad.requisitos_propuestos)
+                compra.ficha = Ficha(
+                    pedido_original=compra.pedido,
+                    requisitos=compra.requisitos_autorizados,
+                    confirmada=True,
+                )
+                compra.estado = compra.decision = "aceptada"
+            elif decision == "rechazar":
+                compra.estado = compra.decision = "rechazada"
+            else:
+                compra.estado = compra.decision = "vencida"
+            compra.resuelta.set()
+        logger.warning("Oportunidad %s: %s", oportunidad.id, compra.decision)
+        self._emitir(
+            "oportunidad_decidida",
+            {
+                "compra_id": compra.id,
+                "oportunidad_id": oportunidad.id,
+                "decision": compra.decision,
+                "requisitos_autorizados": [
+                    r.model_dump(mode="json") for r in compra.requisitos_autorizados
+                ]
+                if compra.requisitos_autorizados is not None
+                else None,
+            },
+            guard_activo=True,
+            contexto_id=contexto_id,
+            escenario=escenario,
+        )
+        if compra.decision == "aceptada":
+            artefacto = self._artefacto_parametros(
+                oportunidad.cart_id, oportunidad.id, compra.requisitos_autorizados or []
+            )
+            return "con_parametros", a2a.tarea_con_artefacto(result, artefacto)
+        if compra.decision == "rechazada":
+            return "pasar", None
+        return "vencida", None
+
+    def _cortar_etapa2(
+        self, accion: AccionEtapa2, llamada: Llamada, result: dict[str, Any]
+    ) -> bytes:
+        """La respuesta cortada para cada acción de la etapa 2 que no pasa."""
+        if accion == "vencida":
+            return self._cortar(
+                llamada, result,
+                "El usuario no respondió la consulta: la alternativa no se autorizó.",
+                etapa="intencion", texto=_TEXTO_PAUSA,
+            )
+        if accion == "bloqueada":
+            return self._cortar(llamada, result, _MOTIVO_YA_BLOQUEADA, etapa="seguridad")
+        return self._cortar(llamada, result, _MOTIVO_CONTEXTO_AJENO, etapa="seguridad")
+
+    def _artefacto_parametros(
+        self, cart_id: str, oportunidad_id: str, requisitos: list[Any]
+    ) -> dict[str, Any]:
+        """`guard.parametros_autorizados` para el agente del cliente. El texto
+        es una plantilla fija con los valores de los requisitos (que salen de
+        los datos tipados de la oferta, no de texto libre del comercio)."""
+        from guard.chequeos import formatear, nombre_campo
+
+        seguro = a2a.cart_id_seguro(cart_id)
+        texto = _TEXTO_PARAMETROS.format(
+            requisitos="; ".join(
+                f"{nombre_campo(r.campo)}: {formatear(r.valor)}" for r in requisitos
+            ),
+            cart_id=seguro or "elegida",
+        )
+        datos = {
+            "cart_id": seguro,
+            "oportunidad_id": oportunidad_id,
+            "requisitos": [r.model_dump(mode="json") for r in requisitos],
+            "texto": texto,
+        }
+        return {
+            "artifactId": f"guard-parametros-{uuid.uuid4().hex}",
+            "name": GUARD_PARAMETROS_KEY,
+            "parts": [{"kind": "data", "data": {GUARD_PARAMETROS_KEY: datos}}],
+        }
+
+    def _emitir_corte(
+        self,
+        llamada: Llamada,
+        contexto_id: str | None,
+        motivo: str,
+        etapa: str,
+        senales: list[str] | None = None,
+    ) -> Decision:
+        """Evento `bloqueado` de un corte de la etapa 2 y su `Decision`."""
+        pedido = llamada.pedido
+        datos: dict[str, Any] = {
+            "cart_id": pedido.cart_id,
+            "motivo": motivo,
+            "status": "bloqueado",
+            "requiere_aprobacion": False,
+            "etapa": etapa,
+        }
+        if llamada.compra is not None:
+            datos["compra_id"] = llamada.compra.id
+        if senales:
+            datos["senales"] = [str(s)[:200] for s in senales[:20]]
+        logger.warning("✗ corte en %s: %s", etapa, motivo)
+        self._emitir(
+            "bloqueado",
+            datos,
+            guard_activo=llamada.guard_activo,
+            contexto_id=contexto_id,
+            escenario=pedido.escenario or self._escenario(contexto_id),
+        )
+        return Decision(
+            accion="bloquear",
+            status="bloqueado",
+            motivo=motivo,
+            cart_id=pedido.cart_id,
+            contexto_id=contexto_id,
+        )
+
+    def _cortar(
+        self,
+        llamada: Llamada,
+        result: dict[str, Any],
+        motivo: str,
+        *,
+        etapa: str,
+        texto: str | None = None,
+        senales: list[str] | None = None,
+    ) -> bytes:
+        """Una tarea `failed` sin nada del proveedor, solo con el veredicto
+        `bloqueado` del proxy. El motivo y el texto son fijos del proxy."""
+        task_id = result.get("id") if isinstance(result.get("id"), str) else None
+        contexto_id = (
+            result.get("contextId") if isinstance(result.get("contextId"), str) else None
+        ) or llamada.pedido.contexto_id
+        decision = self._emitir_corte(llamada, contexto_id, motivo, etapa, senales)
+        tarea = a2a.tarea_sintetica_bloqueada(
+            task_id, contexto_id, texto or decision.texto, decision.artefacto()
+        )
+        return a2a.dumps(a2a.respuesta_jsonrpc(llamada.pedido.rpc_id, tarea))
+
+    def _sse_cortar_etapa2(
+        self,
+        llamada: Llamada,
+        est: EstadoStream,
+        motivo: str,
+        senales: list[str] | None = None,
+    ) -> list[bytes]:
+        """Corte del filtro en un stream: lo que sigue del proveedor no pasa."""
+        contexto = est.contexto_id or llamada.pedido.contexto_id
+        decision = self._emitir_corte(llamada, contexto, motivo, "seguridad", senales)
+        est.cortado = True
+        est.resuelto = True
+        est.pendiente = None
+        est.ofertas_registradas = True  # sin ofertas: un checkout después falla cerrado
+        if not est.task_vista and est.task_id is None:
+            return [self._bloque(
+                llamada,
+                a2a.tarea_sintetica_bloqueada(None, contexto, decision.texto, decision.artefacto()),
+            )]
+        return [
+            self._bloque(llamada, a2a.evento_artefacto(est.task_id, contexto, decision.artefacto())),
+            self._bloque(llamada, a2a.evento_fallido(est.task_id, contexto, decision.texto)),
+        ]
+
     # -- checkout ------------------------------------------------------------
 
     async def _decidir_tarea(
@@ -910,7 +1443,7 @@ class ProxyGuard:
         )
         try:
             resultado = self.evaluador.evaluar(
-                self.ficha(),
+                self.ficha_de(contexto_id),  # parámetros autorizados de la compra
                 OfertasVistas(
                     carts=copy.deepcopy(guardadas.carts),
                     offer_details=copy.deepcopy(guardadas.offer_details),
@@ -1172,6 +1705,66 @@ class ProxyGuard:
             )
         return JSONResponse(aprobacion.a_json(), status_code=201 if creada else 200)
 
+    # -- etapa 2: compras (lo que contesta y decide el usuario) --------------
+
+    async def get_compras(self, request: Request) -> Response:
+        return JSONResponse({"compras": self.compras.listar()})
+
+    async def post_contexto(self, request: Request) -> Response:
+        """La respuesta del usuario al porqué: `{compra_id, respuesta}` o
+        `{compra_id, omitir: true}`."""
+        body, error = a2a.parsear_json(await request.body())
+        valido = error is None and isinstance(body, dict) and _compra_id_valido(body)
+        if valido and set(body) == {"compra_id", "respuesta"}:
+            respuesta = body["respuesta"]
+            valido = isinstance(respuesta, str) and 0 < len(respuesta.strip()) <= LARGO_MAXIMO_RESPUESTA
+        elif valido:
+            valido = set(body) == {"compra_id", "omitir"} and body["omitir"] is True
+        if not valido:
+            return JSONResponse(
+                {
+                    "error": "se_espera",
+                    "formato": [
+                        {"compra_id": "str", "respuesta": f"str (1 a {LARGO_MAXIMO_RESPUESTA})"},
+                        {"compra_id": "str", "omitir": True},
+                    ],
+                },
+                status_code=400,
+            )
+        texto = body["respuesta"].strip() if "respuesta" in body else None
+        return self._resultado_compra(lambda: self.compras.responder(body["compra_id"], texto))
+
+    async def post_decision(self, request: Request) -> Response:
+        """La decisión sobre la oportunidad: `{compra_id, decision}`."""
+        body, error = a2a.parsear_json(await request.body())
+        valido = (
+            error is None
+            and isinstance(body, dict)
+            and set(body) == {"compra_id", "decision"}
+            and _compra_id_valido(body)
+            and body["decision"] in ("aceptar", "rechazar")
+        )
+        if not valido:
+            return JSONResponse(
+                {
+                    "error": "se_espera",
+                    "formato": {"compra_id": "str", "decision": "aceptar | rechazar"},
+                },
+                status_code=400,
+            )
+        return self._resultado_compra(
+            lambda: self.compras.decidir(body["compra_id"], body["decision"])
+        )
+
+    def _resultado_compra(self, accion: Any) -> Response:
+        try:
+            compra = accion()
+        except CompraDesconocida:
+            return JSONResponse({"error": "compra_desconocida"}, status_code=404)
+        except EstadoInvalido as e:
+            return JSONResponse({"error": "estado", "estado": e.estado}, status_code=409)
+        return JSONResponse(compra.a_json())
+
     async def historial(self, request: Request) -> Response:
         try:
             limit = int(request.query_params.get("limit", CAPACIDAD))
@@ -1231,6 +1824,11 @@ class ProxyGuard:
         return JSONResponse(datos)
 
 
+def _compra_id_valido(body: dict[str, Any]) -> bool:
+    compra_id = body.get("compra_id")
+    return isinstance(compra_id, str) and 0 < len(compra_id) <= _MAX_ID
+
+
 def create_app(
     config: Config | None = None,
     *,
@@ -1238,11 +1836,15 @@ def create_app(
     evaluador: EvaluadorCargado | None = None,
     ping_segundos: float = 15.0,
     persistencia: Persistencia | None = None,
+    agente: Any = None,
+    filtro: Filtro | None = None,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
-    `persistencia` (Supabase) la arma `python -m proxy` desde el entorno; acá
-    no se lee el entorno, así los tests nunca escriben en la base real.
+    `persistencia` (Supabase), `agente` (intencion.Agente, con Gemini) y
+    `filtro` (contracts.Filtro, de Dev 1) los arma `python -m proxy` desde el
+    entorno; acá no se lee el entorno, así los tests nunca escriben en la base
+    real ni llaman a un LLM.
     """
     config = config or Config.desde_entorno()
     # Fail-closed antes de abrir nada: sin Guard real (o stub sin permiso) no
@@ -1254,7 +1856,10 @@ def create_app(
         timeout=httpx.Timeout(600.0, connect=5.0),  # create_checkout usa un LLM
         trust_env=False,
     )
-    proxy = ProxyGuard(config, client, evaluador, ping_segundos, persistencia=persistencia)
+    proxy = ProxyGuard(
+        config, client, evaluador, ping_segundos,
+        persistencia=persistencia, agente=agente, filtro=filtro,
+    )
     if config.api_token_path is not None:
         # Para el servidor del dashboard (lo lee y lo agrega en su reenvío).
         escribir_token(config.api_token_path, proxy.api_token)
@@ -1282,6 +1887,9 @@ def create_app(
             Route("/guard/state", proxy.post_state, methods=["POST"]),
             Route("/guard/aprobaciones", proxy.get_aprobaciones, methods=["GET"]),
             Route("/guard/aprobaciones", proxy.post_aprobacion, methods=["POST"]),
+            Route("/guard/compras", proxy.get_compras, methods=["GET"]),
+            Route("/guard/compras/contexto", proxy.post_contexto, methods=["POST"]),
+            Route("/guard/compras/decision", proxy.post_decision, methods=["POST"]),
             Route("/guard/events", proxy.eventos_sse, methods=["GET"]),
             Route("/guard/events/history", proxy.historial, methods=["GET"]),
             Route("/guard/public-key", proxy.public_key, methods=["GET"]),

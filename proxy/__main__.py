@@ -2,14 +2,66 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
+import os
+from typing import Any
 
 import uvicorn
 
 from proxy.app import create_app
-from proxy.config import Config, verificar_host_local
+from proxy.config import Config, _bool, verificar_host_local
 from proxy.evaluador import EvaluadorNoDisponible
 from proxy.persistencia import Persistencia
+
+logger = logging.getLogger("proxy")
+
+
+def cargar_agente(env: dict[str, str] | None = None) -> Any:
+    """Agente de intención (etapa 2) con Gemini, o None.
+
+    Sin GOOGLE_API_KEY ni GEMINI_API_KEY, o con INTENCION_ACTIVA=0, no hay
+    pregunta ni oportunidades: el proxy sigue como en la etapa 1. El modelo
+    se cambia con INTENCION_MODELO.
+    """
+    env = dict(os.environ) if env is None else env
+    if not _bool(env.get("INTENCION_ACTIVA", "1"), "INTENCION_ACTIVA"):
+        return None
+    clave = env.get("GOOGLE_API_KEY") or env.get("GEMINI_API_KEY")
+    if not clave:
+        logger.warning(
+            "Sin GOOGLE_API_KEY ni GEMINI_API_KEY: la capa de intención (pregunta "
+            "y oportunidades) queda apagada."
+        )
+        return None
+    from google import genai
+
+    from intencion import MODELO_POR_DEFECTO, AgenteGemini
+
+    return AgenteGemini(
+        cliente=genai.Client(api_key=clave),
+        modelo=env.get("INTENCION_MODELO") or MODELO_POR_DEFECTO,
+    )
+
+
+def cargar_filtro(env: dict[str, str] | None = None) -> Any:
+    """Filtro de seguridad de Dev 1 (`GUARD_FILTRO=paquete.modulo:funcion`).
+
+    Sin la variable no hay filtro. Si se pidió y no se puede cargar, el proxy
+    no arranca: un filtro pedido que falta no se saltea en silencio.
+    """
+    env = dict(os.environ) if env is None else env
+    ruta = (env.get("GUARD_FILTRO") or "").strip()
+    if not ruta:
+        return None
+    modulo, _, nombre = ruta.partition(":")
+    try:
+        filtro = getattr(importlib.import_module(modulo), nombre or "filtrar")
+    except (ImportError, AttributeError) as e:
+        raise SystemExit(f"GUARD_FILTRO={ruta!r} no se pudo cargar: {e}") from e
+    if not callable(filtro):
+        raise SystemExit(f"GUARD_FILTRO={ruta!r} no es una función")
+    return filtro
 
 
 def main() -> None:
@@ -21,14 +73,17 @@ def main() -> None:
     verificar_host_local(config)  # loopback salvo PROXY_ALLOW_REMOTE=1
     # Supabase es opcional: sin SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY, nada.
     persistencia = Persistencia.desde_entorno()
+    agente = cargar_agente()
+    filtro = cargar_filtro()
     try:
-        app = create_app(config, persistencia=persistencia)
+        app = create_app(config, persistencia=persistencia, agente=agente, filtro=filtro)
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
     proxy = app.state.proxy
-    logging.getLogger("proxy").info(
+    logger.info(
         "Proxy del Guard en http://%s:%d%s → comercio %s | catálogo %s | "
-        "Guard %s | evaluador: %s | eventos: %s | Supabase: %s",
+        "Guard %s | evaluador: %s | eventos: %s | Supabase: %s | intención: %s | "
+        "filtro: %s",
         config.host,
         config.port,
         config.rpc_path,
@@ -38,6 +93,8 @@ def main() -> None:
         proxy.evaluador.nombre,
         config.events_jsonl,
         "sí" if persistencia else "no",
+        getattr(agente, "modelo", None) or "apagada",
+        "sí" if filtro else "no",
     )
     uvicorn.run(
         app,

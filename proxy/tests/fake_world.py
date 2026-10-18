@@ -56,7 +56,10 @@ PAYMENT_MANDATE_KEY = "ap2.mandates.PaymentMandateSdJwt"
 
 
 def cargar_fixture(nombre: str) -> dict[str, Any]:
-    return json.loads((FIXTURES / f"scenario_{nombre}.json").read_text("utf-8"))
+    ruta = FIXTURES / f"scenario_{nombre}.json"
+    if not ruta.exists():  # etapa 2: fixtures escritos a mano (fixtures/etapa2/)
+        ruta = FIXTURES / "etapa2" / f"{nombre}.json"
+    return json.loads(ruta.read_text("utf-8"))
 
 
 def _b64url(data: bytes) -> str:
