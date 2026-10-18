@@ -1,0 +1,133 @@
+# Google_Product_Taxonomy_Version: 2021-09-21
+# Subconjunto de la taxonomía de productos de Google para la demo de Pre-Sign Guard.
+# Fuente: https://www.google.com/basepages/producttype/taxonomy-with-ids.en-US.txt
+# Regenerar: python -m taxonomia subconjunto --ids 187,278,223
+1 - Animals & Pet Supplies
+166 - Apparel & Accessories
+1604 - Apparel & Accessories > Clothing
+167 - Apparel & Accessories > Clothing Accessories
+184 - Apparel & Accessories > Costumes & Accessories
+6552 - Apparel & Accessories > Handbag & Wallet Accessories
+6551 - Apparel & Accessories > Handbags, Wallets & Cases
+188 - Apparel & Accessories > Jewelry
+1933 - Apparel & Accessories > Shoe Accessories
+187 - Apparel & Accessories > Shoes
+8 - Arts & Entertainment
+537 - Baby & Toddler
+111 - Business & Industrial
+141 - Cameras & Optics
+222 - Electronics
+3356 - Electronics > Arcade Equipment
+223 - Electronics > Audio
+1420 - Electronics > Audio > Audio Accessories
+503008 - Electronics > Audio > Audio Accessories > Audio & Video Receiver Accessories
+505797 - Electronics > Audio > Audio Accessories > Headphone & Headset Accessories
+503004 - Electronics > Audio > Audio Accessories > Headphone & Headset Accessories > Headphone Cushions & Tips
+5395 - Electronics > Audio > Audio Accessories > Karaoke System Accessories
+5396 - Electronics > Audio > Audio Accessories > Karaoke System Accessories > Karaoke Chips
+232 - Electronics > Audio > Audio Accessories > MP3 Player Accessories
+7566 - Electronics > Audio > Audio Accessories > MP3 Player Accessories > MP3 Player & Mobile Phone Accessory Sets
+3055 - Electronics > Audio > Audio Accessories > MP3 Player Accessories > MP3 Player Cases
+3306 - Electronics > Audio > Audio Accessories > Microphone Accessories
+3912 - Electronics > Audio > Audio Accessories > Microphone Stands
+239 - Electronics > Audio > Audio Accessories > Satellite Radio Accessories
+7163 - Electronics > Audio > Audio Accessories > Speaker Accessories
+500112 - Electronics > Audio > Audio Accessories > Speaker Accessories > Speaker Bags, Covers & Cases
+500120 - Electronics > Audio > Audio Accessories > Speaker Accessories > Speaker Components & Kits
+8047 - Electronics > Audio > Audio Accessories > Speaker Accessories > Speaker Stand Bags
+8049 - Electronics > Audio > Audio Accessories > Speaker Accessories > Speaker Stands & Mounts
+500119 - Electronics > Audio > Audio Accessories > Speaker Accessories > Tactile Transducers
+2372 - Electronics > Audio > Audio Accessories > Turntable Accessories
+2165 - Electronics > Audio > Audio Components
+241 - Electronics > Audio > Audio Components > Audio & Video Receivers
+224 - Electronics > Audio > Audio Components > Audio Amplifiers
+4493 - Electronics > Audio > Audio Components > Audio Amplifiers > Headphone Amplifiers
+5381 - Electronics > Audio > Audio Components > Audio Amplifiers > Power Amplifiers
+236 - Electronics > Audio > Audio Components > Audio Mixers
+5129 - Electronics > Audio > Audio Components > Audio Transmitters
+5130 - Electronics > Audio > Audio Components > Audio Transmitters > Bluetooth Transmitters
+4035 - Electronics > Audio > Audio Components > Audio Transmitters > FM Transmitters
+6545 - Electronics > Audio > Audio Components > Channel Strips
+6546 - Electronics > Audio > Audio Components > Direct Boxes
+505771 - Electronics > Audio > Audio Components > Headphones & Headsets
+543626 - Electronics > Audio > Audio Components > Headphones & Headsets > Headphones
+543627 - Electronics > Audio > Audio Components > Headphones & Headsets > Headsets
+234 - Electronics > Audio > Audio Components > Microphones
+246 - Electronics > Audio > Audio Components > Signal Processors
+5435 - Electronics > Audio > Audio Components > Signal Processors > Crossovers
+247 - Electronics > Audio > Audio Components > Signal Processors > Effects Processors
+248 - Electronics > Audio > Audio Components > Signal Processors > Equalizers
+5597 - Electronics > Audio > Audio Components > Signal Processors > Loudspeaker Management Systems
+3945 - Electronics > Audio > Audio Components > Signal Processors > Microphone Preamps
+5596 - Electronics > Audio > Audio Components > Signal Processors > Noise Gates & Compressors
+5369 - Electronics > Audio > Audio Components > Signal Processors > Phono Preamps
+249 - Electronics > Audio > Audio Components > Speakers
+505298 - Electronics > Audio > Audio Components > Studio Recording Bundles
+242 - Electronics > Audio > Audio Players & Recorders
+225 - Electronics > Audio > Audio Players & Recorders > Boomboxes
+226 - Electronics > Audio > Audio Players & Recorders > CD Players & Recorders
+243 - Electronics > Audio > Audio Players & Recorders > Cassette Players & Recorders
+252 - Electronics > Audio > Audio Players & Recorders > Home Theater Systems
+4652 - Electronics > Audio > Audio Players & Recorders > Jukeboxes
+230 - Electronics > Audio > Audio Players & Recorders > Karaoke Systems
+233 - Electronics > Audio > Audio Players & Recorders > MP3 Players
+235 - Electronics > Audio > Audio Players & Recorders > MiniDisc Players & Recorders
+5434 - Electronics > Audio > Audio Players & Recorders > Multitrack Recorders
+6886 - Electronics > Audio > Audio Players & Recorders > Radios
+8271 - Electronics > Audio > Audio Players & Recorders > Reel-to-Reel Tape Players & Recorders
+251 - Electronics > Audio > Audio Players & Recorders > Stereo Systems
+256 - Electronics > Audio > Audio Players & Recorders > Turntables & Record Players
+244 - Electronics > Audio > Audio Players & Recorders > Voice Recorders
+8159 - Electronics > Audio > Bullhorns
+4921 - Electronics > Audio > DJ & Specialty Audio
+4922 - Electronics > Audio > DJ & Specialty Audio > DJ CD Players
+4923 - Electronics > Audio > DJ & Specialty Audio > DJ Systems
+2154 - Electronics > Audio > Public Address Systems
+3727 - Electronics > Audio > Stage Equipment
+3242 - Electronics > Audio > Stage Equipment > Wireless Transmitters
+3702 - Electronics > Circuit Boards & Components
+262 - Electronics > Communications
+1801 - Electronics > Components
+278 - Electronics > Computers
+5254 - Electronics > Computers > Barebone Computers
+331 - Electronics > Computers > Computer Servers
+325 - Electronics > Computers > Desktop Computers
+298 - Electronics > Computers > Handheld Devices
+5256 - Electronics > Computers > Handheld Devices > Data Collectors
+3539 - Electronics > Computers > Handheld Devices > E-Book Readers
+3769 - Electronics > Computers > Handheld Devices > PDAs
+5255 - Electronics > Computers > Interactive Kiosks
+328 - Electronics > Computers > Laptops
+500002 - Electronics > Computers > Smart Glasses
+4745 - Electronics > Computers > Tablet Computers
+8539 - Electronics > Computers > Thin & Zero Clients
+543668 - Electronics > Computers > Thin & Zero Clients > Thin Client Computers
+543669 - Electronics > Computers > Thin & Zero Clients > Zero Client Computers
+502995 - Electronics > Computers > Touch Table Computers
+2082 - Electronics > Electronics Accessories
+3895 - Electronics > GPS Accessories
+339 - Electronics > GPS Navigation Systems
+6544 - Electronics > GPS Tracking Devices
+340 - Electronics > Marine Electronics
+342 - Electronics > Networking
+345 - Electronics > Print, Copy, Scan & Fax
+912 - Electronics > Radar Detectors
+500091 - Electronics > Speed Radars
+4488 - Electronics > Toll Collection Devices
+386 - Electronics > Video
+1270 - Electronics > Video Game Console Accessories
+1294 - Electronics > Video Game Consoles
+412 - Food, Beverages & Tobacco
+436 - Furniture
+632 - Hardware
+469 - Health & Beauty
+536 - Home & Garden
+5181 - Luggage & Bags
+772 - Mature
+783 - Media
+922 - Office Supplies
+5605 - Religious & Ceremonial
+2092 - Software
+988 - Sporting Goods
+1239 - Toys & Games
+888 - Vehicles & Parts
