@@ -110,12 +110,14 @@ test("con el Guard apagado los mensajes van directo agente ↔ comercio", () => 
   assert.ok(r.flujos.every((f) => f.de !== "guard" && f.a !== "guard"));
 });
 
-test("el pago termina en AP2", () => {
+test("el pago va por el comercio a AP2 y el recibo vuelve por el mismo camino", () => {
   const r = recorrer([
     ev("reenviado", { metodo: "otro", mandatos: { a: "x" } }),
     msg("pago", { cart_id: "cart_1" }),
   ], true);
-  assert.deepEqual(r.flujos.map((f) => `${f.de}>${f.a}`), ["agente>guard", "guard>comercio", "comercio>ap2", "ap2>agente"]);
+  assert.deepEqual(r.flujos.map((f) => `${f.de}>${f.a}`), [
+    "agente>guard", "guard>comercio", "comercio>ap2", "ap2>comercio", "comercio>guard", "guard>agente",
+  ]);
   assert.equal(r.estado.nodos.ap2, "ok");
   const sin = recorrer([ev("reenviado", { metodo: "otro", mandatos: { a: "x" } }, false)], false);
   assert.deepEqual(sin.flujos.map((f) => `${f.de}>${f.a}`), ["agente>comercio", "comercio>ap2"]);
@@ -136,7 +138,7 @@ test("cada flujo usa una arista dibujada (en un sentido o en el otro)", () => {
       assert.ok(typeof nodo.etiqueta === "string" && nodo.etiqueta.length > 0);
     }
     for (const [de, a] of [["usuario", "agente"], ["agente", "guard"], ["guard", "comercio"], ["agente", "comercio"],
-      ["guard", "usuario"], ["guard", "fuentes"], ["comercio", "ap2"], ["ap2", "agente"]]) {
+      ["guard", "usuario"], ["guard", "fuentes"], ["comercio", "ap2"]]) {
       const ida = arista(de, a);
       const vuelta = arista(a, de);
       assert.ok(g.aristas[ida.clave], `${orientacion} ${de}-${a}`);
@@ -144,5 +146,12 @@ test("cada flujo usa una arista dibujada (en un sentido o en el otro)", () => {
       assert.notEqual(ida.invertida, vuelta.invertida);
     }
     assert.ok(g.apagado.dx !== 0 || g.apagado.dy !== 0, "el Guard apagado se corre de la línea");
+    // Corrido, no tapa el atajo agente ↔ comercio.
+    const gd = g.nodos.guard;
+    const corrido = { x: gd.x + g.apagado.dx, y: gd.y + g.apagado.dy };
+    const ag = g.nodos.agente;
+    const co = g.nodos.comercio;
+    if (orientacion === "horizontal") assert.ok(corrido.y - gd.h / 2 > Math.max(ag.y, co.y), "queda debajo de la línea");
+    else assert.ok(corrido.x + gd.w / 2 < Math.min(ag.x, co.x), "queda al costado de la línea");
   }
 });

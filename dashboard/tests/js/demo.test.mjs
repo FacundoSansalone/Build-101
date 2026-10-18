@@ -125,13 +125,13 @@ test("el contraste lado a lado, en una línea por lado", () => {
   const con = { escenario: "notebook_dato_falso", guardActivo: true, clave: "frenada", producto: "Zento Slim 14",
     precio: 899, moneda: "USD", hallazgo: { atributo: "Memoria RAM", real: "8 GB", pedido: "16 GB" } };
   assert.deepEqual(resumenComparacion(sin, con), {
-    sin: "Se compró la Zento Slim 14 de 8 GB de memoria RAM (pediste 16 GB)",
+    sin: "Se compró Zento Slim 14, con 8 GB de memoria RAM (pediste 16 GB)",
     con: "Frenada antes de la firma: no se pagó nada",
   });
-  assert.deepEqual(resumenComparacion(sin, null), { sin: "Se compró la Zento Slim 14 por USD 899", con: null });
+  assert.deepEqual(resumenComparacion(sin, null), { sin: "Se compró Zento Slim 14 por USD 899", con: null });
   const cortada = { ...con, clave: "cortada", hallazgo: null };
   assert.equal(resumenComparacion(null, cortada).con, "El filtro cortó la conversación: no se compró nada");
-  assert.equal(resumenComparacion({ ...sin, clave: "frenada" }, null).sin, "No se compró nada");
+  assert.equal(resumenComparacion({ ...sin, clave: "frenada" }, null).sin, "Frenada antes de la firma: no se pagó nada");
 });
 
 test("guardarResultado guarda la última corrida por escenario y lado", () => {
