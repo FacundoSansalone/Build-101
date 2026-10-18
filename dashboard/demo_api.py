@@ -432,6 +432,9 @@ class Conversacion:
         self.ocupado = False
         self.fin: str | None = None
         self.enviados: Counter = Counter()
+        # Si el usuario ya le escribió al agente en esta compra: solo el
+        # primer mensaje se registra en el proxy como su pedido.
+        self.pedido_enviado = False
 
     def nueva(self) -> None:
         self._generacion += 1
@@ -459,6 +462,7 @@ class Conversacion:
     def iniciar(self, texto: str) -> None:
         """Le manda el texto al agente en segundo plano (puede tardar minutos)."""
         self.ocupado = True
+        self.pedido_enviado = True
         self.registrar("usuario", texto=texto, destino="agente")
         self._tarea = asyncio.create_task(self._correr(texto, self._generacion))
 
@@ -741,6 +745,7 @@ RUTAS_PROXY = {
     "omitir": "/guard/compras/contexto",
     "decision": "/guard/compras/decision",
 }
+RUTA_PEDIDO_USUARIO = "/guard/compras/pedido"
 
 
 async def api_demo_mensaje(request: Request) -> Response:
@@ -772,5 +777,13 @@ async def api_demo_mensaje(request: Request) -> Response:
 
     if conversacion.ocupado:
         return _error(409, "agente_ocupado", destino="agente")
+    if not conversacion.pedido_enviado:
+        # El primer mensaje de la compra: el proxy lo guarda para el intake,
+        # que así lee las palabras del usuario y no solo la paráfrasis del
+        # agente (proxy/pedido_usuario.py). Antes que el agente, que busca
+        # enseguida. Si el proxy no está o no lo acepta, todo sigue igual.
+        await _reenviar_json(cfg, "POST", RUTA_PEDIDO_USUARIO, cuerpo={"texto": texto})
+        if conversacion.ocupado:  # otro mensaje llegó mientras tanto
+            return _error(409, "agente_ocupado", destino="agente")
     conversacion.iniciar(texto)
     return JSONResponse({"destino": "agente"}, status_code=202)

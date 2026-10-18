@@ -111,10 +111,18 @@ defecto si hay `OPENAI_API_KEY` o `TYPESAFE_API_KEY`
 (`INTENCION_PROVEEDOR=decisiones|gemini`, ver
 [proxy/README.md](../proxy/README.md#etapa-2-contexto-filtro-y-oportunidad)).
 
-**Necesarios:** producto (categoría del catálogo, o "fuera del catálogo"),
-cantidad, tope de precio y moneda, plazo. Además, los atributos que el
-usuario mencionó (marca, talle, memoria, color, inalámbrico…), con si los
-exige o los prefiere.
+**Necesarios:** producto (categoría del catálogo, o "fuera del catálogo
+público"), cantidad, tope de precio y moneda, plazo. Además, los atributos
+que el usuario mencionó (marca, talle, memoria, color, inalámbrico…), con si
+los exige o los prefiere. Un producto fuera del catálogo no es un error: la
+confirmación dice que no figura en el catálogo público y que lo que declare
+el comercio se verifica con otras fuentes antes de la firma (lo obligatorio
+que no se pueda verificar, el Guard lo escala).
+
+**El pedido:** la búsqueda del agente del cliente o, en `/demo`, las
+palabras del usuario más esa búsqueda (`"<usuario> / <búsqueda>"`, ver
+`proxy/pedido_usuario.py`). El intake no distingue: es lo que dijo el
+usuario, con los mismos umbrales y la misma confirmación.
 
 **Seleccionar, no generar.** El código encuentra los candidatos en las
 palabras del usuario (montos, cantidades, fechas resueltas contra hoy,

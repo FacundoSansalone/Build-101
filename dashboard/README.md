@@ -58,6 +58,23 @@ queda como "Detalle técnico" (`/`).
   Si no, va al agente de compras por la API de `adk web` (`ADK_URL`): una
   sesión por compra (`POST /apps/shopping_agent/users/demo/sessions`) y
   `POST /run_sse`, en segundo plano (202). Con el agente trabajando, 409.
+- **El pedido con tus palabras.** El primer mensaje de cada compra que va al
+  agente se registra antes en el proxy (`POST /guard/compras/pedido
+  {"texto"}`, con el token): el intake de la próxima compra lee lo que
+  escribiste además de la paráfrasis que el agente le pasa al comercio, y no
+  repregunta lo que ya dijiste ("para el lunes", "hasta 20000"). Vence a los
+  180 s y se usa una vez; si el proxy no está o no lo acepta, el mensaje va
+  igual al agente. Detalle y garantías en
+  [proxy/README.md](../proxy/README.md#etapa-2-contexto-filtro-y-oportunidad).
+- **Lo que pregunta y entiende nuestro agente.** Las preguntas del intake se
+  ven enteras. Al pedir confirmar la ficha, la línea trae **la ficha**
+  (`ficha_parcial` del `pedido_detectado`): parámetro, valor y si lo dijiste,
+  lo dedujo (confirmalo), está a confirmar o falta, y qué pasa si no
+  confirmás. "Nuestro agente entendió" sale del contexto estructurado (el
+  cronograma y lo que dijiste flexible: "necesitás 10 el lun 19/10 y 10 el
+  jue 22/10; aceptás recibir en partes"), una vez por compra; sin eso, tu
+  respuesta de ese turno. Nunca `contexto.necesidad` (texto de un modelo o
+  el eco de la primera respuesta).
 - **Modo demo** (`DEMO_AUTO=1` por defecto; botón "Respuestas automáticas"):
   contesta solos billetera y permiso (Google Wallet, "sí"), la tarjeta
   terminada en 4444 (de la lista que devolvió `get_payment_methods`), la
@@ -119,8 +136,10 @@ Lógica sin DOM (la vista solo la pinta; testeada con `node --test`):
   `resultadoCorrida(items, {escenario, guardActivo})`,
   `resumenComparacion(sin, con)`, `guardarResultado(mapa, resultado)`.
 - `lib/relato.js`: `armarRelato(items, {filtro})` → `[{id, ts, hora, texto,
-  tono, actor}]` (tono: `neutro|tenue|ok|aviso|crit|usuario|agente`; actor:
-  `usuario|agente|guard|comercio|sistema|ap2`), `resumirAgente`,
+  tono, actor, ficha?, nota?}]` (tono: `neutro|tenue|ok|aviso|crit|usuario|agente`; actor:
+  `usuario|agente|guard|comercio|sistema|ap2`; `ficha` solo al pedir
+  confirmarla), `filasFicha(ficha_parcial)` → `[{nombre, valor, marca, tono,
+  preferido}]`, `textoEntendido(contexto)`, `resumirAgente`,
   `limpiarTexto`, `humanizarAtributo`, `formatearMedida`.
 - `lib/diagrama.js`: `geometria("horizontal"|"vertical")` (nodos, paths de
   las aristas, cuánto se corre el Guard apagado), `estadoInicial`,

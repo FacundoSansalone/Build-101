@@ -121,12 +121,19 @@ class FakeProxy:
         self.compras = compras or []
         self.caido = caido
         self.posts: list[httpx.Request] = []
+        self.pedidos: list[httpx.Request] = []  # POST /guard/compras/pedido
+        self.orden: list[str] | None = None  # si se fija, el camino de cada pedido
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        if self.orden is not None:
+            self.orden.append(f"proxy {request.url.path}")
         if self.caido:
             raise httpx.ConnectError("proxy caído", request=request)
         if request.method == "GET" and request.url.path == "/guard/compras":
             return httpx.Response(200, json={"compras": self.compras})
+        if request.method == "POST" and request.url.path == "/guard/compras/pedido":
+            self.pedidos.append(request)
+            return httpx.Response(200, json={"vence": _iso(_ahora() + timedelta(minutes=3))})
         if request.method == "POST" and request.url.path in (
             "/guard/compras/contexto", "/guard/compras/decision"
         ):
@@ -820,3 +827,64 @@ def test_el_relato_conoce_las_flexibilidades_fijas_del_intake():
     relato = (Path(demo.__file__).parent / "static" / "lib" / "relato.js").read_text(encoding="utf-8")
     for _, descripcion in FLEXIBILIDADES.values():
         assert json.dumps(descripcion, ensure_ascii=False) in relato, descripcion
+
+
+# ---------------------------------------------------------------------------
+# El pedido con las palabras del usuario (proxy/pedido_usuario.py)
+# ---------------------------------------------------------------------------
+
+
+def test_el_primer_mensaje_de_la_compra_se_registra_en_el_proxy_antes_que_el_agente(tmp_path):
+    """El agente de compras le pasa al comercio una paráfrasis: el intake del
+    proxy lee además lo que escribió el usuario (una vez por compra)."""
+    _escribir_token(tmp_path)
+    adk, proxy = FakeADK(), FakeProxy()
+    orden: list[str] = []
+    proxy.orden = orden
+    adk_handler = adk.handler
+    adk.handler = lambda request: (orden.append(f"adk {request.url.path}"), adk_handler(request))[1]
+    with TestClient(_app(tmp_path, adk=adk, proxy=proxy), base_url=BASE) as c:
+        pedido = "Comprame 20 computadoras para el lunes, hasta 20000 USD."
+        assert _post(c, "/api/demo/mensaje", {"texto": f"  {pedido} "}).status_code == 202
+        _esperar(c)
+        _post(c, "/api/demo/mensaje", {"texto": "Sí, la primera."})  # sigue la misma compra
+        _esperar(c)
+        _post(c, "/api/demo/nueva", {})
+        _post(c, "/api/demo/mensaje", {"texto": "Ahora unos auriculares."})
+        _esperar(c)
+    assert [json.loads(r.content) for r in proxy.pedidos] == [{"texto": pedido}, {"texto": "Ahora unos auriculares."}]
+    for r in proxy.pedidos:  # con el token del proxy, como los otros POST de /guard/*
+        assert r.headers["x-guard-token"] == TOKEN and "origin" not in r.headers
+    assert orden.index("proxy /guard/compras/pedido") < orden.index("adk /run_sse")
+    assert adk.mensajes == [pedido, "Sí, la primera.", "Ahora unos auriculares."]
+
+
+def test_sin_proxy_o_sin_token_el_mensaje_va_igual_al_agente(tmp_path):
+    for proxy, token in ((FakeProxy(caido=True), True), (FakeProxy(), False)):
+        if token:
+            _escribir_token(tmp_path)
+        else:
+            (tmp_path / ".temp-db" / "guard_api_token").unlink(missing_ok=True)
+        adk = FakeADK()
+        with TestClient(_app(tmp_path, adk=adk, proxy=proxy), base_url=BASE) as c:
+            r = _post(c, "/api/demo/mensaje", {"texto": "una notebook"})
+            assert r.status_code == 202 and r.json() == {"destino": "agente"}
+            _esperar(c)
+        assert adk.mensajes == ["una notebook"]
+        assert proxy.pedidos == []
+
+
+def test_la_respuesta_a_nuestro_agente_no_se_registra_como_pedido(tmp_path):
+    _escribir_token(tmp_path)
+    proxy = FakeProxy([_compra("esperando_contexto")])
+    with TestClient(_app(tmp_path, proxy=proxy), base_url=BASE) as c:
+        assert _post(c, "/api/demo/mensaje", {"texto": "Entran 10 el lunes y 10 el jueves."}).status_code == 200
+    assert proxy.pedidos == [] and len(proxy.posts) == 1
+
+
+def test_la_ruta_y_el_tope_del_pedido_son_los_del_proxy():
+    from proxy.app import RUTAS_POST_CONTROL
+    from proxy.pedido_usuario import LARGO_MAXIMO
+
+    assert demo.RUTA_PEDIDO_USUARIO in RUTAS_POST_CONTROL  # con token, Host local y JSON
+    assert demo.MAX_TEXTO <= LARGO_MAXIMO  # todo lo que acepta el input entra

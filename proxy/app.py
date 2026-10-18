@@ -112,6 +112,8 @@ from proxy.fuentes import (
     intent_del_escenario,
     violaciones_ap2,
 )
+from proxy.pedido_usuario import LARGO_MAXIMO as LARGO_MAXIMO_PEDIDO
+from proxy.pedido_usuario import PedidoDelUsuario, pedido_para_intake
 from proxy.persistencia import Persistencia
 from proxy.seguridad import HEADER_TOKEN, ControlLocal, escribir_token, generar_token
 from proxy.tipos_gateway import (
@@ -154,6 +156,7 @@ RUTAS_POST_CONTROL = (
     "/guard/aprobaciones",
     "/guard/compras/contexto",
     "/guard/compras/decision",
+    "/guard/compras/pedido",
 )
 
 _MAX_CONTEXTOS = 500
@@ -506,6 +509,9 @@ class ProxyGuard:
         # compras cuya ficha confirmó el usuario (la API resuelve la espera).
         self._intakes: OrderedDict[str, EstadoIntake] = OrderedDict()
         self._confirmaciones: set[str] = set()
+        # Lo que escribió el usuario en /demo, para el intake de la próxima
+        # compra (proxy.pedido_usuario; solo por la API de control).
+        self.pedido_usuario = PedidoDelUsuario()
         # Gateway de producción (diseño del gateway). Sin configuración nueva:
         # sin integradores (sin oyente público), un solo comercio (el de
         # siempre), almacén en memoria y sin webhooks: todo como antes.
@@ -1661,7 +1667,9 @@ class ProxyGuard:
                 except asyncio.TimeoutError:
                     pass
             return
-        texto = pedido.catalog_search or ""
+        # Una compra nueva: si el usuario registró su pedido en /demo, el
+        # intake lee sus palabras además de la búsqueda del agente (una vez).
+        texto = pedido_para_intake(pedido.catalog_search or "", self.pedido_usuario.tomar())
         hoy = date.today()
         categorias: list[str] | None = None
         resultado: Any = None  # intencion.intake.ResultadoIntake del último turno
@@ -2870,6 +2878,25 @@ class ProxyGuard:
         texto = body["respuesta"].strip() if "respuesta" in body else None
         return self._resultado_compra(lambda: self.compras.responder(body["compra_id"], texto))
 
+    async def post_pedido_usuario(self, request: Request) -> Response:
+        """Lo que escribió el usuario en /demo al empezar una compra:
+        `{texto}` (1 a 1000 caracteres). Lo usa el intake de la próxima
+        compra nueva, una vez y antes de que venza (`proxy.pedido_usuario`).
+        No devuelve el texto."""
+        body, error = a2a.parsear_json(await request.body())
+        valido = error is None and isinstance(body, dict) and set(body) == {"texto"}
+        try:
+            vence = self.pedido_usuario.registrar(body["texto"]) if valido else None
+        except ValueError:
+            vence = None
+        if vence is None:
+            return JSONResponse(
+                {"error": "se_espera", "formato": {"texto": f"str (1 a {LARGO_MAXIMO_PEDIDO})"}},
+                status_code=400,
+            )
+        logger.info("Pedido del usuario registrado para la próxima compra")
+        return JSONResponse({"vence": vence.isoformat()})
+
     async def post_decision(self, request: Request) -> Response:
         """La decisión sobre la oportunidad: `{compra_id, decision}`."""
         body, error = a2a.parsear_json(await request.body())
@@ -3129,6 +3156,7 @@ def create_app(
             Route("/guard/compras", proxy.get_compras, methods=["GET"]),
             Route("/guard/compras/contexto", proxy.post_contexto, methods=["POST"]),
             Route("/guard/compras/decision", proxy.post_decision, methods=["POST"]),
+            Route("/guard/compras/pedido", proxy.post_pedido_usuario, methods=["POST"]),
             Route("/guard/events", proxy.eventos_sse, methods=["GET"]),
             Route("/guard/events/history", proxy.historial, methods=["GET"]),
             Route("/guard/public-key", proxy.public_key, methods=["GET"]),
