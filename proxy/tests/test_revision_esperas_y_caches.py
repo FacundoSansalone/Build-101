@@ -406,3 +406,71 @@ async def test_los_veredictos_de_cards_tienen_tope(armar_proxy, monkeypatch):
     _card_con(monkeypatch, "una")  # la más vieja salió: se filtra de nuevo
     assert (await _get_card(app)).status_code == 200
     assert len(vistos) == 4
+
+
+# ---------------------------------------------------------------------------
+# 6. Un solo chequeo de anidamiento (`a2a.anidado_de_mas`) para la API y el proxy
+# ---------------------------------------------------------------------------
+
+
+def _listas(niveles: int) -> Any:
+    valor: Any = "hoja"  # un escalar no es un nivel
+    for _ in range(niveles):
+        valor = [valor]
+    return valor
+
+
+def _objetos(niveles: int) -> Any:
+    valor: Any = 1
+    for _ in range(niveles):
+        valor = {"k": valor}
+    return valor
+
+
+def _mixto(niveles: int) -> Any:
+    valor: Any = None
+    for i in range(niveles):
+        valor = [valor, 2] if i % 2 else {"a": valor, "b": "x"}
+    return valor
+
+
+@pytest.mark.parametrize("armar", [_listas, _objetos, _mixto])
+def test_anidado_de_mas_cuenta_los_niveles_como_la_api(armar):
+    """El primer nivel es el cuerpo; justo en el límite pasa y uno más no.
+    Así contaba también el duplicado de `api_v1` (comparado antes de sacarlo)."""
+    from proxy import api_v1
+
+    maximo = api_v1.MAX_PROFUNDIDAD_JSON
+    assert not a2a.anidado_de_mas(armar(maximo), maximo)
+    assert a2a.anidado_de_mas(armar(maximo + 1), maximo)
+    assert not a2a.anidado_de_mas("escalar", 0) and a2a.anidado_de_mas([], 0)
+
+
+def test_la_api_no_tiene_su_propia_copia_del_chequeo():
+    from proxy import api_v1
+
+    assert not hasattr(api_v1, "_anidado_de_mas")
+
+
+async def test_la_api_corta_con_el_chequeo_del_proxy(monkeypatch):
+    """`leer_json` usa `a2a.anidado_de_mas` (si cambia el criterio, cambia
+    para los dos)."""
+    from proxy import api_v1
+
+    vistos: list[int] = []
+    original = a2a.anidado_de_mas
+
+    def espia(obj: Any, maximo: int) -> bool:
+        vistos.append(maximo)
+        return original(obj, maximo)
+
+    monkeypatch.setattr(a2a, "anidado_de_mas", espia)
+
+    class Pedido:
+        headers = {"content-type": "application/json"}
+
+        async def stream(self):
+            yield b'{"contenido": [[[1]]]}'
+
+    assert await api_v1.leer_json(Pedido(), 1000) == {"contenido": [[[1]]]}
+    assert vistos == [api_v1.MAX_PROFUNDIDAD_JSON]

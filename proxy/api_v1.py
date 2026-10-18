@@ -218,7 +218,7 @@ async def leer_json(request: Request, max_bytes: int) -> Any:
     datos, motivo = a2a.parsear_json(crudo)
     if motivo is not None:
         raise ErrorApi(400, "json_invalido", "El cuerpo no es JSON válido.")
-    if _anidado_de_mas(datos, MAX_PROFUNDIDAD_JSON):
+    if a2a.anidado_de_mas(datos, MAX_PROFUNDIDAD_JSON):
         raise ErrorApi(
             400, "json_invalido",
             f"El cuerpo tiene más de {MAX_PROFUNDIDAD_JSON} niveles de anidamiento.",
@@ -230,24 +230,6 @@ def _bytes_json(datos: Any) -> int:
     """Lo que pesa `datos` en JSON compacto (UTF-8). Viene de `leer_json`:
     siempre se puede volver a escribir (estricto y con la profundidad acotada)."""
     return len(json.dumps(datos, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
-
-
-def _anidado_de_mas(datos: Any, maximo: int) -> bool:
-    """¿Hay objetos o listas a más de `maximo` niveles? Iterativo: no depende
-    del límite de recursión (que es justo lo que se quiere evitar)."""
-    pila: list[tuple[Any, int]] = [(datos, 1)]
-    while pila:
-        actual, nivel = pila.pop()
-        if isinstance(actual, dict):
-            hijos: Any = actual.values()
-        elif isinstance(actual, list):
-            hijos = actual
-        else:
-            continue
-        if nivel > maximo:
-            return True
-        pila.extend((hijo, nivel + 1) for hijo in hijos)
-    return False
 
 
 # -- ficha -------------------------------------------------------------------
