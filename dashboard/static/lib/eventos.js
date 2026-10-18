@@ -1,7 +1,7 @@
 // Eventos del proxy (contrato `Evento`) → compras agrupadas por contexto_id.
 // Sin DOM: se testea con node --test.
 
-import { CAMPOS, PARAMETROS, TEXTO_FINAL, formatearValor } from "./agente.js";
+import { CAMPOS, PARAMETROS, TEXTO_FINAL, formatearValor, nombreOferta } from "./agente.js";
 
 const TS_INVALIDO = Number.POSITIVE_INFINITY;
 
@@ -403,7 +403,8 @@ function resumenOportunidad(d) {
   const o = d.oportunidad || {};
   const cambios = (Array.isArray(o.cambios) ? o.cambios : []).map((c) =>
     `${CAMPOS[c?.campo] ?? c?.campo}: ${formatearValor(c?.campo, c?.pedido)} → ${formatearValor(c?.campo, c?.ofrecido)}`);
-  return [o.titulo, ...cambios].filter(Boolean).join(" · ");
+  const nombre = nombreOferta(o).texto;
+  return [nombre === "—" ? null : nombre, ...cambios].filter(Boolean).join(" · ");
 }
 
 /** Título y resumen de una línea para la línea de tiempo. */

@@ -46,7 +46,7 @@ from contracts import (
 from guard.atributos import formatear_atributo
 from guard.chequeos import cumple, formatear, nombre_campo, observado_de
 from guard.normalizar import cubre_entregas, entregas_validas
-from guard.textos import sin_control
+from guard.textos import acotar, sin_control
 
 MODELO_POR_DEFECTO = "gemini-3.1-flash-lite-preview"
 
@@ -633,6 +633,21 @@ def valor_ofrecido(requisito: Requisito, oferta: Oferta) -> Any:
     return valor
 
 
+def titulo_publico(oferta: Oferta) -> str:
+    """El título de la oferta según una fuente pública (catálogo, página
+    pública o fabricante), o "" si ninguna lo tiene.
+
+    Es lo que ve el usuario en la consulta (`Oportunidad.titulo`): nunca el
+    título que declara el vendedor (texto libre que puede traer cualquier
+    cosa). Sin título público, el dashboard muestra el SKU.
+    """
+    evidencia = oferta.evidencia.get("titulo")
+    if evidencia is None or evidencia.origen_usado == "declarado":
+        return ""
+    publico = evidencia.publico
+    return acotar(publico).strip() if isinstance(publico, str) else ""
+
+
 def _propuesto(requisito: Requisito, ofrecido: Any) -> Requisito:
     """El requisito con el valor de la oferta (obligatorio): un atributo
     mantiene su nombre y toma la unidad de lo ofrecido."""
@@ -798,7 +813,7 @@ def detectar_oportunidad(
         id=f"opo-{uuid.uuid4().hex[:12]}",
         cart_id=elegida.cart_id,
         sku=elegida.sku,
-        titulo=elegida.titulo,
+        titulo=titulo_publico(elegida),  # nunca el que declara el vendedor
         precio=None if math.isnan(elegida.precio) else elegida.precio,
         moneda=elegida.moneda,
         cambios=cambios,

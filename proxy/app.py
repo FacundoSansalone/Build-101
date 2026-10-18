@@ -204,6 +204,15 @@ def _ficha_verificable(
     )
 
 
+def _con_titulo_publico(oportunidad: Any, ofertas: list[Any]) -> Any:
+    """La oportunidad con el título público de su oferta, o sin título."""
+    from intencion.agente import titulo_publico
+
+    elegida = next((o for o in ofertas if o.cart_id == oportunidad.cart_id), None)
+    titulo = titulo_publico(elegida) if elegida is not None else ""
+    return oportunidad.model_copy(update={"titulo": titulo})
+
+
 def _nueva_espera(compra: Compra, pregunta: str) -> None:
     """Otro turno del intake: la compra vuelve a esperar una respuesta.
 
@@ -1404,6 +1413,10 @@ class ProxyGuard:
         if oportunidad is None:
             compra.estado = "sin_oportunidad"
             return "pasar", None
+        # El usuario ve el título público (catálogo o fabricante) o ninguno
+        # (el dashboard muestra el SKU), nunca el que declara el vendedor:
+        # lo asegura el proxy, cualquiera sea el agente.
+        oportunidad = _con_titulo_publico(oportunidad, ofertas)
 
         compra.oportunidad = oportunidad
         compra.estado = "esperando_decision"

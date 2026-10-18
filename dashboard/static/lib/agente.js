@@ -444,6 +444,19 @@ export function describirRequisito(q) {
 }
 
 /**
+ * Cómo nombrar la oferta de una oportunidad: {texto, nota}. `Oportunidad.titulo`
+ * es el título público (catálogo o fabricante) o vacío: el proxy nunca manda el
+ * que declara el vendedor. Sin título público, el SKU, y se dice por qué.
+ */
+export function nombreOferta(o) {
+  const titulo = typeof o?.titulo === "string" ? o.titulo.trim() : "";
+  if (titulo) return { texto: titulo, nota: "título público (catálogo o fabricante)" };
+  const sku = typeof o?.sku === "string" ? o.sku.trim() : "";
+  if (sku) return { texto: sku, nota: "SKU: no hay título público y el que declara el vendedor no se muestra" };
+  return { texto: "—", nota: null };
+}
+
+/**
  * ¿Dos listas de requisitos piden lo mismo? (campo, atributo, operador, valor,
  * unidad y obligatorio; el origen no cambia lo que se verifica).
  */
