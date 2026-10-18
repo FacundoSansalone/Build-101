@@ -64,6 +64,38 @@ def cargar_filtro(env: dict[str, str] | None = None) -> Any:
     return filtro
 
 
+def exigir_filtro(agente: Any, filtro: Any, env: dict[str, str] | None = None) -> bool:
+    """Con la capa de intención activa, el filtro de seguridad es obligatorio.
+
+    Nuestro agente mira lo que ofrece el proveedor para buscar oportunidades:
+    sin filtro, esas respuestas le llegan sin revisar. Si hay agente y no hay
+    filtro (`GUARD_FILTRO`), el proxy no arranca, salvo
+    `PROXY_PERMITIR_SIN_FILTRO=1` explícito (tests y demo), que se avisa en el
+    log. Devuelve True si arranca sin filtro con ese permiso.
+    """
+    if agente is None or filtro is not None:
+        return False
+    env = dict(os.environ) if env is None else env
+    try:
+        permitido = _bool(
+            env.get("PROXY_PERMITIR_SIN_FILTRO", "0"), "PROXY_PERMITIR_SIN_FILTRO"
+        )
+    except ValueError as e:
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
+    if not permitido:
+        raise SystemExit(
+            "El proxy del Guard no arranca: la capa de intención está activa y no hay "
+            "filtro de seguridad (GUARD_FILTRO=paquete.modulo:funcion). Configurá el "
+            "filtro, apagá la intención con INTENCION_ACTIVA=0 o, solo para tests o "
+            "la demo, PROXY_PERMITIR_SIN_FILTRO=1."
+        )
+    logger.warning(
+        "SIN FILTRO DE SEGURIDAD (PROXY_PERMITIR_SIN_FILTRO=1): las respuestas del "
+        "proveedor le llegan sin revisar al agente de intención. Solo para tests o la demo."
+    )
+    return True
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -79,6 +111,9 @@ def main() -> None:
         app = create_app(config, persistencia=persistencia, agente=agente, filtro=filtro)
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
+    # Con la intención activa, sin filtro no arranca (después del evaluador:
+    # si falta el Guard real, ese es el primer error que se ve).
+    sin_filtro = exigir_filtro(agente, filtro)
     proxy = app.state.proxy
     logger.info(
         "Proxy del Guard en http://%s:%d%s → comercio %s | catálogo %s | "
@@ -94,7 +129,7 @@ def main() -> None:
         config.events_jsonl,
         "sí" if persistencia else "no",
         getattr(agente, "modelo", None) or "apagada",
-        "sí" if filtro else "no",
+        "sí" if filtro else ("NO (PROXY_PERMITIR_SIN_FILTRO=1)" if sin_filtro else "no"),
     )
     uvicorn.run(
         app,

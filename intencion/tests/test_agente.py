@@ -209,7 +209,9 @@ def test_propone_la_oferta_que_cubre_la_necesidad(datos):
     oportunidad = detectar_oportunidad(_contexto(), _ficha(datos), _ofertas(datos), cliente)
     assert oportunidad is not None
     assert oportunidad.cart_id == "cart_2"
-    assert oportunidad.por_que == por_que
+    # La explicación es una plantilla con los datos, no el texto del modelo.
+    assert oportunidad.por_que != por_que
+    assert "10 el lunes 2026-10-19 y 10 el miércoles 2026-10-21" in oportunidad.por_que
     # Los cambios salen de los datos de la oferta, no del texto del modelo.
     assert [c.campo for c in oportunidad.cambios] == ["entregas"]
     assert oportunidad.cambios[0].ofrecido == [
