@@ -245,6 +245,10 @@ _MINIMO_REPREGUNTA_S = 30.0
 # La taxonomía (unas 3 llamadas cortas) solo si queda al menos esto.
 _MINIMO_TAXONOMIA_S = 10.0
 _TIMEOUT_LLM_S = 45.0
+# Otra búsqueda de la misma compra espera a la que está preguntando lo que le
+# queda a su espera más esto (el LLM de después y la respuesta), no el
+# presupuesto entero de la llamada.
+_MARGEN_ESPERA_SECUNDARIA_S = _TIMEOUT_LLM_S + _MARGEN_S
 _TIMEOUT_FILTRO_S = 30.0
 _TIMEOUT_FABRICANTE_S = 15.0  # todas las consultas de una compra (Icecat: 3 s cada una)
 # Hilos propios: el filtro en uno y el LLM y el fabricante en otro. `wait_for`
@@ -1099,11 +1103,8 @@ class ProxyGuard:
         compra = llamada.compra
         assert compra is not None
         if compra.estado != "creada":
-            if not compra.contexto_listo.is_set():
-                try:
-                    await asyncio.wait_for(compra.contexto_listo.wait(), self._restante(llamada))
-                except asyncio.TimeoutError:
-                    pass
+            # Si vence, sigue literal, como siempre (el Guard igual verifica).
+            await self._esperar_a_la_otra(llamada, compra, compra.contexto_listo)
             return
         # Antes de cualquier await: otra búsqueda de la misma compra ya no
         # entra acá (espera `contexto_listo`).
@@ -1683,6 +1684,29 @@ class ProxyGuard:
         espera hasta 600 s y las dos esperas caen en la misma llamada."""
         return max(0.0, _PRESUPUESTO_LLAMADA_S - (time.monotonic() - llamada.inicio))
 
+    async def _esperar_a_la_otra(
+        self, llamada: Llamada, compra: Compra, evento: asyncio.Event
+    ) -> bool:
+        """Otra búsqueda de la misma compra espera a la que está preguntando
+        (`evento`: `contexto_listo` o `resuelta`). True si terminó.
+
+        Cada tramo dura lo que le queda a la espera de la compra
+        (`compra.restante()`) más un margen para el LLM, nunca más que la
+        llamada. Si vence y la compra abrió otra espera mientras tanto (otro
+        plazo), vuelve a calcular; si no avanzó, False y quien llama cierra
+        del lado seguro (antes esperaba el presupuesto entero, 570 s)."""
+        while not evento.is_set():
+            tramo = min(self._restante(llamada), compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
+            if tramo <= 0:
+                return False
+            plazo = compra.vence
+            try:
+                await asyncio.wait_for(evento.wait(), tramo)
+            except asyncio.TimeoutError:
+                if compra.vence == plazo:
+                    return False
+        return True
+
     async def _llm(self, funcion: Any, *args: Any) -> Any:
         """Una llamada al agente de intención, en un hilo (el pool del LLM) y
         con tope de tiempo."""
@@ -2031,10 +2055,9 @@ class ProxyGuard:
         compra.resolver_ficha(self._ficha_confirmada(escenario))
 
         if compra.estado == "esperando_decision":
-            try:
-                await asyncio.wait_for(compra.resuelta.wait(), self._restante(llamada))
-            except asyncio.TimeoutError:
-                return "vencida", None
+            listo = await self._esperar_a_la_otra(llamada, compra, compra.resuelta)
+            if not listo or compra.estado == "esperando_decision":
+                return "vencida", None  # sin decisión: el silencio no autoriza
         if compra.estado == "aceptada" and compra.oportunidad and compra.requisitos_autorizados:
             artefacto = self._artefacto_parametros(
                 compra.oportunidad.cart_id, compra.oportunidad.id, compra.requisitos_autorizados
@@ -2088,6 +2111,10 @@ class ProxyGuard:
         oportunidad = _con_titulo_publico(oportunidad, ofertas)
 
         compra.oportunidad = oportunidad
+        # Las otras búsquedas esperan esta decisión (`resuelta`). Puede venir
+        # puesta: `Compra.desde_fila` la deja así al hidratar después de un
+        # reinicio, y otra búsqueda pasaba sin la decisión del usuario.
+        compra.resuelta.clear()
         compra.estado = "esperando_decision"
         vence = compra.fijar_plazo(
             min(self.config.espera_decision_s, self._restante(llamada) - _MARGEN_S)

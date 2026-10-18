@@ -656,3 +656,101 @@ async def test_el_lifespan_cierra_los_hilos_propios(armar_proxy):
     for ejecutor in (proxy.ejecutor_filtro, proxy.ejecutor_llm):
         with pytest.raises(RuntimeError):
             ejecutor.submit(lambda: None)  # ya cerrado
+
+
+# ---------------------------------------------------------------------------
+# Esperas de otra búsqueda de la misma compra
+# ---------------------------------------------------------------------------
+
+
+def _llamada_de(compra):
+    from proxy.app import Llamada
+
+    return Llamada(pedido=a2a.Pedido(), guard_activo=True, compra=compra)
+
+
+@pytest.mark.anyio
+async def test_otra_busqueda_no_espera_el_presupuesto_entero_si_la_primera_se_colgo(
+    armar_proxy, monkeypatch
+):
+    """La consulta vence en 0,05 s y nadie marca `resuelta` (la primera se
+    colgó): la otra búsqueda espera lo que queda más el margen, no 570 s, y
+    cierra del lado seguro (vencida: el silencio no autoriza)."""
+    import proxy.app as app_mod
+
+    monkeypatch.setattr(app_mod, "_MARGEN_ESPERA_SECUNDARIA_S", 0.05)
+    proxy = armar_proxy().state.proxy
+    compra = proxy.compras.crear("20 computadoras", "¿para qué?", None, None)
+    compra.estado = "esperando_decision"
+    compra.fijar_plazo(0.05)
+    accion, _ = await asyncio.wait_for(
+        proxy._etapa_oportunidad(_llamada_de(compra), a2a.Respuesta(), {}), 2
+    )
+    assert accion == "vencida"
+
+
+@pytest.mark.anyio
+async def test_otra_busqueda_sigue_esperando_si_la_primera_avanza(armar_proxy, monkeypatch):
+    """Si mientras espera la compra abre otra espera (otro plazo), el tope se
+    vuelve a calcular: no se corta a la primera que avanza."""
+    import proxy.app as app_mod
+
+    monkeypatch.setattr(app_mod, "_MARGEN_ESPERA_SECUNDARIA_S", 0.05)
+    proxy = armar_proxy().state.proxy
+    compra = proxy.compras.crear("20 computadoras", "¿para qué?", None, None)
+    compra.estado = "esperando_decision"  # sin plazo todavía (vence = None)
+
+    async def la_primera():
+        await asyncio.sleep(0.03)
+        compra.fijar_plazo(0.5)  # le preguntó al usuario
+        await asyncio.sleep(0.2)
+        compra.estado = compra.decision = "rechazada"  # contestó
+        compra.resuelta.set()
+
+    primera = asyncio.create_task(la_primera())
+    accion, _ = await asyncio.wait_for(
+        proxy._etapa_oportunidad(_llamada_de(compra), a2a.Respuesta(), {}), 2
+    )
+    await primera
+    assert accion == "pasar"  # rechazada: sigue el pedido original
+
+
+@pytest.mark.anyio
+async def test_una_busqueda_paralela_no_se_saltea_la_pausa_con_resuelta_puesta(config):
+    """Después de un reinicio `Compra.desde_fila` deja `resuelta` puesta. Si la
+    primera búsqueda queda retenida en `esperando_decision`, la segunda
+    volvía enseguida y pasaba la respuesta sin la decisión del usuario."""
+    from contracts import Ficha
+    from proxy.tests.test_etapa2 import DATOS, RESPUESTA_USUARIO, AgenteFalso
+
+    config_gw = replace(
+        config, gateway_public_url=GATEWAY_PUBLIC_URL, espera_contexto_s=5.0, espera_decision_s=5.0
+    )
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], agente=AgenteFalso())
+    ficha = Ficha.desde_intent(DATOS["intent"])
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (
+            await crear_compra(
+                c, pedido="20 computadoras",
+                ficha={"requisitos": [r.model_dump(mode="json") for r in ficha.requisitos]},
+                intencion={"porque": RESPUESTA_USUARIO},
+            )
+        )["compra_id"]
+        compra = mundo.proxy.compras.get(compra_id)
+        compra.resuelta.set()  # como la deja `desde_fila`
+        primera = asyncio.create_task(buscar(c, compra_id, escenario="computadoras"))
+        for _ in range(300):
+            if compra.estado == "esperando_decision":
+                break
+            await asyncio.sleep(0.01)
+        assert compra.estado == "esperando_decision"
+        contexto = compra.contexto_id
+        segunda = asyncio.create_task(
+            buscar(c, compra_id, escenario="computadoras", contexto=contexto)
+        )
+        await asyncio.sleep(0.3)
+        assert not segunda.done()  # espera la decisión, como la primera
+        mundo.proxy.compras.decidir(compra_id, "rechazar")
+        respuestas = await asyncio.gather(primera, segunda)
+    assert [r.status_code for r in respuestas] == [200, 200]
+    assert compra.estado == "rechazada"

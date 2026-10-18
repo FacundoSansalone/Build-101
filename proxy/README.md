@@ -330,7 +330,12 @@ Reglas que no dependen de la demo:
   el Guard igual verifica el checkout.
 - **Búsquedas repetidas.** Otra búsqueda de la misma compra espera el mismo
   porqué y la misma decisión. Después de vencida o bloqueada, tampoco recibe
-  nada; después de aceptada, vuelve a llevar los parámetros.
+  nada; después de aceptada, vuelve a llevar los parámetros. Espera lo que
+  le queda a la espera de la compra más 65 s (el LLM de después), y vuelve a
+  calcular si la compra abrió otra espera; si la otra no avanzó, cierra del
+  lado seguro (el porqué: sigue literal; la decisión: vencida). Una compra
+  que entra en `esperando_decision` limpia `resuelta` (al hidratarla después
+  de un reinicio venía puesta y otra búsqueda pasaba sin la decisión).
 - **Contexto.** Una respuesta del comercio que usa el `contextId` de otra
   compra se corta.
 - **Fallas del agente.** Si el agente de intención falla, la compra sigue con
