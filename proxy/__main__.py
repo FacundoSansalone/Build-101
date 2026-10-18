@@ -1,4 +1,10 @@
-"""`python -m proxy`: levanta el proxy del Guard (default en :8010)."""
+"""`python -m proxy`: levanta el proxy del Guard (default en :8010).
+
+Con claves de API activas (`GATEWAY_CLAVES_ARCHIVO`), el mismo proceso abre
+además el oyente público del gateway (default `127.0.0.1:8030`): una sola
+app y un solo servidor sobre dos sockets, así comparten el estado de las
+compras, las ofertas y las aprobaciones (diseño del gateway, §1.1).
+"""
 
 from __future__ import annotations
 
@@ -10,9 +16,14 @@ from typing import Any
 import uvicorn
 
 from proxy.app import create_app
-from proxy.config import Config, _bool, verificar_host_local
+from proxy.claves import RegistroIntegradores
+from proxy.comercios import RegistroComercios, comercio_por_defecto
+from proxy.config import Config, _bool, verificar_gateway, verificar_host_local
+from proxy.estado import estado_desde_entorno
 from proxy.evaluador import EvaluadorNoDisponible
 from proxy.persistencia import Persistencia
+from proxy.tipos_gateway import ConfigInvalida
+from proxy.webhooks import DestinoNoPermitido, validar_url_estatica
 
 logger = logging.getLogger("proxy")
 
@@ -154,6 +165,104 @@ def exigir_filtro(agente: Any, filtro: Any, env: dict[str, str] | None = None) -
     return True
 
 
+def exigir_filtro_gateway(filtro: Any, env: dict[str, str] | None = None) -> bool:
+    """Con el gateway activo el filtro es obligatorio, haya o no agente de
+    intención: el tráfico de los integradores es de comercios que el operador
+    no controla y sus respuestas llegan al agente del integrador. Respeta
+    `PROXY_PERMITIR_SIN_FILTRO=1` (tests y demo), como `exigir_filtro`.
+    Devuelve True si arranca sin filtro con ese permiso."""
+    if filtro is not None:
+        return False
+    env = dict(os.environ) if env is None else env
+    try:
+        permitido = _bool(
+            env.get("PROXY_PERMITIR_SIN_FILTRO", "0"), "PROXY_PERMITIR_SIN_FILTRO"
+        )
+    except ValueError as e:
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
+    if not permitido:
+        raise SystemExit(
+            "El proxy del Guard no arranca: el gateway (GATEWAY_CLAVES_ARCHIVO) está activo "
+            "y no hay filtro de seguridad (GUARD_FILTRO=paquete.modulo:funcion). Configurá "
+            "el filtro o, solo para tests o la demo, PROXY_PERMITIR_SIN_FILTRO=1."
+        )
+    logger.warning(
+        "GATEWAY SIN FILTRO DE SEGURIDAD (PROXY_PERMITIR_SIN_FILTRO=1): las respuestas de "
+        "los comercios no se revisan. Solo para tests o la demo."
+    )
+    return True
+
+
+def cargar_gateway(
+    config: Config, env: dict[str, str] | None = None
+) -> tuple[RegistroIntegradores, RegistroComercios, Any]:
+    """Integradores, comercios y almacén del gateway, validados al arrancar.
+
+    Cualquier configuración inválida no arranca (`SystemExit`): una
+    configuración a medias podría dejar pasar a quien no corresponde o
+    mandar tráfico a un comercio que el operador no aprobó.
+    """
+    env = dict(os.environ) if env is None else env
+    try:
+        integradores = (
+            RegistroIntegradores.desde_archivo(config.claves_archivo, env)
+            if config.claves_archivo is not None
+            else RegistroIntegradores.vacio()
+        )
+        if config.comercios_archivo is not None:
+            comercios = RegistroComercios.desde_archivo(config.comercios_archivo)
+            logger.warning(
+                "Comercios desde %s: MERCHANT_UPSTREAM_URL y CATALOGO_URL se ignoran.",
+                config.comercios_archivo,
+            )
+        else:
+            comercios = RegistroComercios.solo(
+                comercio_por_defecto(
+                    id=config.comercio_por_defecto_id,
+                    a2a_url=config.merchant_upstream_url,
+                    catalogo_url=config.catalogo_url,
+                    respaldo_fixture=config.catalogo_respaldo_fixture,
+                )
+            )
+    except ConfigInvalida as e:
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
+    faltan = comercios.ids_inexistentes(integradores.todos())
+    if faltan:
+        raise SystemExit(
+            "El proxy del Guard no arranca: el archivo de claves nombra comercios que no "
+            f"están registrados: {', '.join(faltan)}"
+        )
+    for integrador in integradores.todos():
+        if integrador.webhook is None:
+            continue
+        try:
+            validar_url_estatica(
+                integrador.webhook.url, permitir_inseguro=config.webhooks_inseguros
+            )
+        except DestinoNoPermitido as e:
+            raise SystemExit(
+                f"El proxy del Guard no arranca: el webhook del integrador {integrador.id} "
+                f"no se puede usar ({e})."
+            ) from e
+    try:
+        almacen = estado_desde_entorno(env)
+    except ValueError as e:
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
+    return integradores, comercios, almacen
+
+
+def sockets_de(app: Any, config: Config, gateway: bool) -> list[Any]:
+    """Los sockets del servidor: el local siempre y, con el gateway activo,
+    el público. Se abren acá (no en uvicorn) para que un solo servidor
+    atienda los dos; el middleware los distingue por el puerto local."""
+    sockets = [uvicorn.Config(app, host=config.host, port=config.port).bind_socket()]
+    if gateway:
+        sockets.append(
+            uvicorn.Config(app, host=config.gateway_host, port=config.gateway_port).bind_socket()
+        )
+    return sockets
+
+
 def _nombre_fabricante(fuente: Any) -> str:
     if fuente is None:
         return "ninguna (lo obligatorio que solo declara el comercio escala)"
@@ -166,8 +275,19 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
-    config = Config.desde_entorno()
+    try:
+        config = Config.desde_entorno()
+    except ValueError as e:
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
+    integradores, comercios, almacen = cargar_gateway(config)
+    gateway = integradores.hay_claves()
     verificar_host_local(config)  # loopback salvo PROXY_ALLOW_REMOTE=1
+    verificar_gateway(config, gateway)  # el público, solo con claves
+    if gateway and config.permitir_stub:
+        raise SystemExit(
+            "El proxy del Guard no arranca: con el gateway activo (claves de API) no se "
+            "permite el evaluador stub (PROXY_ALLOW_STUB=1)."
+        )
     # Supabase es opcional: sin SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY, nada.
     persistencia = Persistencia.desde_entorno()
     agente = cargar_agente()
@@ -175,13 +295,17 @@ def main() -> None:
     fabricante = cargar_fabricante()
     try:
         app = create_app(
-            config, persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante
+            config, persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
+            integradores=integradores, comercios=comercios, almacen=almacen,
         )
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
     # Con la intención activa, sin filtro no arranca (después del evaluador:
-    # si falta el Guard real, ese es el primer error que se ve).
+    # si falta el Guard real, ese es el primer error que se ve). Con el
+    # gateway activo, tampoco aunque no haya agente.
     sin_filtro = exigir_filtro(agente, filtro)
+    if gateway:
+        sin_filtro = exigir_filtro_gateway(filtro) or sin_filtro
     proxy = app.state.proxy
     logger.info(
         "Proxy del Guard en http://%s:%d%s → comercio %s | catálogo %s | "
@@ -200,14 +324,36 @@ def main() -> None:
         "sí" if filtro else ("NO (PROXY_PERMITIR_SIN_FILTRO=1)" if sin_filtro else "no"),
         _nombre_fabricante(fabricante),
     )
-    uvicorn.run(
-        app,
-        host=config.host,
-        port=config.port,
-        log_level="info",
-        timeout_keep_alive=120,
-        timeout_graceful_shutdown=3,
+    logger.info(
+        "Gateway: %s | integradores: %d | comercios: %s | almacén: %s",
+        f"sí, en http://{config.gateway_host}:{config.gateway_port} (pública: "
+        f"{config.gateway_public_url})"
+        if gateway
+        else "no (sin claves de API activas)",
+        len(integradores.todos()),
+        ", ".join(c.id for c in comercios.todos()),
+        almacen.nombre,
     )
+    if not gateway:
+        # Sin gateway, el arranque de siempre (un oyente).
+        uvicorn.run(
+            app,
+            host=config.host,
+            port=config.port,
+            log_level="info",
+            timeout_keep_alive=120,
+            timeout_graceful_shutdown=3,
+        )
+        return
+    # Con gateway: un solo servidor sobre los dos sockets (comparten el estado).
+    sockets = sockets_de(app, config, gateway)
+    servidor = uvicorn.Server(
+        uvicorn.Config(app, log_level="info", timeout_keep_alive=120, timeout_graceful_shutdown=3)
+    )
+    try:
+        servidor.run(sockets=sockets)
+    except KeyboardInterrupt:  # como uvicorn.run: Ctrl+C cierra limpio
+        pass
 
 
 if __name__ == "__main__":

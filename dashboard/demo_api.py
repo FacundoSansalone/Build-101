@@ -646,6 +646,11 @@ async def pagina_demo(request: Request) -> Response:
     return FileResponse(STATIC_DIR / "demo.html", headers={"Cache-Control": "no-cache"})
 
 
+async def pagina_demo_clasico(request: Request) -> Response:
+    """La pantalla anterior de /demo, intacta: respaldo para la presentación."""
+    return FileResponse(STATIC_DIR / "demo-clasico.html", headers={"Cache-Control": "no-cache"})
+
+
 async def api_demo_estado(request: Request) -> Response:
     return JSONResponse(_conversacion(request).estado_json())
 

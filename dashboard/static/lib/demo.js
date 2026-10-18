@@ -191,6 +191,24 @@ export function resumenComparacion(sin, con) {
   return { sin: frase(sin, con), con: frase(con, sin) };
 }
 
+function tono(r, otro) {
+  if (!r) return null;
+  if (r.clave === "pagado") {
+    const h = r.hallazgo ?? (otro?.producto && otro.producto === r.producto ? otro.hallazgo : null);
+    return h ? "crit" : "ok";
+  }
+  if (r.clave === "frenada" || r.clave === "cortada") return "freno";
+  return "aviso";
+}
+
+/**
+ * El tono de cada lado: "crit" (se pagó algo que no cumple), "ok" (se pagó
+ * sin hallazgos), "freno" (no se pagó nada), "aviso" (quedó esperándote).
+ */
+export function tonosComparacion(sin, con) {
+  return { sin: tono(sin, con), con: tono(con, sin) };
+}
+
 /** Guarda la última corrida por escenario y lado ({sin, con}). No muta. */
 export function guardarResultado(mapa, resultado) {
   const base = mapa && typeof mapa === "object" ? mapa : {};

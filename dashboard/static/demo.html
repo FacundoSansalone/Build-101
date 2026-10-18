@@ -4,91 +4,131 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Pre-Sign Guard · demo</title>
-  <meta name="description" content="Demo en una pantalla: le pedís algo a tu agente de compras y ves cómo habla con el comercio a través del Pre-Sign Guard.">
+  <title>Pre-Sign Guard</title>
+  <meta name="description" content="Le pedís algo a tu agente de compras y ves cómo habla con el comercio a través del Pre-Sign Guard.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l7.5 3v6.2c0 4.7-3.2 8.1-7.5 9.8-4.3-1.7-7.5-5.1-7.5-9.8V5.5z' fill='%231f5fae'/%3E%3Cpath d='M8.2 12.3l2.6 2.6 5-5.2' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="demo.css">
-  <script type="module" src="demo.js"></script>
+  <link rel="stylesheet" href="/demo.css">
+  <script type="module" src="/demo.js"></script>
 </head>
 <body>
-  <header class="cabecera">
-    <div class="marca">
-      <svg class="marca-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/><path class="marca-tilde" d="M8.8 12.2l2.3 2.3 4.2-4.4"/>
-      </svg>
-      <h1 class="marca-nombre">Pre-Sign Guard</h1>
-    </div>
-
-    <div class="cabecera-acciones">
-      <button type="button" id="intermediario" class="interruptor" role="switch" aria-checked="false" disabled
-              aria-describedby="intermediario-ayuda">
-        <span class="interruptor-pista" aria-hidden="true"><span class="interruptor-perilla"></span></span>
-        <span class="interruptor-texto">Intermediario: …</span>
-      </button>
-      <span id="intermediario-ayuda" class="sr-only">Prende o apaga el intermediario entre tu agente y el comercio. Cambiarlo empieza una compra nueva.</span>
-      <button type="button" id="tema" class="boton-icono" aria-label="Tema: automático" title="Tema: automático">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 000-17z" class="relleno"/></svg>
-      </button>
-      <a class="enlace-discreto" href="/">Detalle técnico</a>
-    </div>
-  </header>
-
-  <main id="principal" class="principal">
-    <section class="selector" aria-labelledby="selector-titulo">
-      <h2 id="selector-titulo" class="rotulo">Comercio que responde</h2>
-      <div id="escenarios" class="escenarios"></div>
-    </section>
-
-    <section class="escena" aria-labelledby="diagrama-titulo">
-      <h2 id="diagrama-titulo" class="sr-only">Cómo se hablan los agentes</h2>
-      <svg id="diagrama" class="diagrama" role="img" aria-labelledby="diagrama-nombre diagrama-desc" focusable="false">
-        <title id="diagrama-nombre">Vos, tu agente de compras, el Pre-Sign Guard y el comercio</title>
-        <desc id="diagrama-desc">Todavía no pasó nada.</desc>
-      </svg>
-    </section>
-
-    <section id="contraste" class="contraste" aria-labelledby="contraste-titulo" hidden>
-      <h2 id="contraste-titulo" class="sr-only">El mismo comercio, con y sin intermediario</h2>
-      <div class="contraste-lado" data-lado="sin">
-        <p class="contraste-rotulo">Sin intermediario</p>
-        <p class="contraste-texto" id="contraste-sin">—</p>
-      </div>
-      <div class="contraste-lado" data-lado="con">
-        <p class="contraste-rotulo">Con intermediario</p>
-        <p class="contraste-texto" id="contraste-con">—</p>
-      </div>
-    </section>
-
-    <section class="relato-seccion" aria-labelledby="relato-titulo">
-      <h2 id="relato-titulo" class="sr-only">Qué está pasando</h2>
-      <p id="relato-vacio" class="relato-vacio">Elegí un comercio y pedile algo a tu agente.</p>
-      <ol id="relato" class="relato" role="log" aria-live="polite" aria-relevant="additions text"></ol>
-    </section>
-  </main>
-
-  <footer class="pie">
-    <form id="formulario" class="formulario" autocomplete="off">
-      <label id="etiqueta" class="etiqueta" for="entrada">Pedile algo a tu agente de compras</label>
-      <div class="entrada-fila">
-        <input id="entrada" class="entrada" type="text" maxlength="1000" enterkeyhint="send"
-               aria-describedby="aviso-entrada" placeholder="¿Qué querés comprar?">
-        <button id="enviar" class="boton-enviar" type="submit" aria-label="Enviar">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h12"/><path d="M12 6l6 6-6 6"/></svg>
+  <div class="app">
+    <aside id="lateral" class="lateral" aria-label="Compras y comercio">
+      <div class="lateral-cab">
+        <div class="marca">
+          <svg class="marca-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/><path class="marca-tilde" d="M8.8 12.2l2.3 2.3 4.2-4.4"/>
+          </svg>
+          <span class="marca-nombre">Pre-Sign Guard</span>
+        </div>
+        <button type="button" id="cerrar-lateral" class="boton-icono solo-movil" aria-label="Cerrar el menú">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
-      <p id="aviso-entrada" class="aviso-entrada" role="status" aria-live="polite"></p>
-    </form>
 
-    <div class="controles">
-      <button type="button" id="ejemplo" class="boton-texto" hidden>Usar el pedido de ejemplo</button>
-      <button type="button" id="nueva" class="boton-texto">Nueva compra</button>
-      <button type="button" id="auto" class="boton-texto" aria-pressed="true"
-              title="Contesta solos la billetera, la dirección, la tarjeta, la confirmación y el código de verificación">Respuestas automáticas: sí</button>
-      <span class="controles-separador" aria-hidden="true"></span>
-      <label class="sr-only" for="grabacion">Grabación para reproducir</label>
-      <select id="grabacion" class="grabacion"><option value="">Grabación…</option></select>
-      <button type="button" id="reproducir" class="boton-texto" disabled>Reproducir</button>
-    </div>
-  </footer>
+      <button type="button" id="nueva" class="boton-nueva">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg>
+        Nueva compra
+      </button>
+
+      <nav class="lateral-cuerpo" aria-label="Comercio e historial">
+        <section class="bloque" aria-labelledby="comercio-titulo">
+          <h2 id="comercio-titulo" class="bloque-titulo">Comercio</h2>
+          <div id="escenarios" class="escenarios"></div>
+        </section>
+
+        <section class="bloque" aria-labelledby="historial-titulo">
+          <h2 id="historial-titulo" class="bloque-titulo">Recientes</h2>
+          <ol id="historial" class="historial"></ol>
+          <p id="historial-vacio" class="historial-vacio">Tus compras van a aparecer acá.</p>
+        </section>
+      </nav>
+
+      <div class="lateral-pie">
+        <button type="button" id="intermediario" class="interruptor" role="switch" aria-checked="false" disabled
+                aria-describedby="intermediario-ayuda">
+          <span class="interruptor-pista" aria-hidden="true"><span class="interruptor-perilla"></span></span>
+          <span class="interruptor-texto">Intermediario: …</span>
+        </button>
+        <span id="intermediario-ayuda" class="sr-only">Prende o apaga el intermediario entre tu agente y el comercio. Cambiarlo empieza una compra nueva.</span>
+        <div class="fila-pie">
+          <button type="button" id="tema" class="boton-icono" aria-label="Tema: automático" title="Tema: automático">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 000-17z" class="relleno"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+    <div id="velo" class="velo" hidden></div>
+
+    <main id="principal" class="centro">
+      <header class="centro-cab">
+        <button type="button" id="abrir-lateral" class="boton-icono solo-movil" aria-label="Abrir el menú" aria-controls="lateral">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <p id="titulo-compra" class="titulo-compra">Nueva compra</p>
+        <span id="estado-intermediario" class="pastilla" data-estado="cargando">…</span>
+      </header>
+
+      <section class="escena" aria-labelledby="diagrama-titulo">
+        <div class="escena-marco">
+          <div class="escena-cab">
+            <h2 id="diagrama-titulo" class="escena-titulo">Recorrido</h2>
+            <p id="escena-estado" class="escena-estado" data-tono="inactivo" aria-hidden="true">Esperando tu pedido</p>
+            <button type="button" id="plegar" class="boton-icono boton-plegar" aria-expanded="true" aria-controls="diagrama"
+                    aria-label="Ocultar el diagrama" title="Ocultar el diagrama">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 15l6-6 6 6"/></svg>
+            </button>
+          </div>
+          <span id="diagrama-nombre" class="sr-only">Vos, tu agente de compras, el Pre-Sign Guard y el comercio</span>
+          <svg id="diagrama" class="diagrama" role="img" aria-labelledby="diagrama-nombre diagrama-desc" focusable="false">
+            <desc id="diagrama-desc">Todavía no pasó nada.</desc>
+          </svg>
+          <div id="contraste" class="contraste" aria-labelledby="contraste-titulo" hidden>
+            <h3 id="contraste-titulo" class="sr-only">El mismo comercio, con y sin intermediario</h3>
+            <div class="contraste-lado" data-lado="sin">
+              <p class="contraste-rotulo"><span class="contraste-marca" aria-hidden="true"></span>Sin intermediario</p>
+              <p class="contraste-texto" id="contraste-sin">—</p>
+            </div>
+            <div class="contraste-lado" data-lado="con">
+              <p class="contraste-rotulo"><span class="contraste-marca" aria-hidden="true"></span>Con intermediario</p>
+              <p class="contraste-texto" id="contraste-con">—</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="conversacion" aria-labelledby="relato-titulo">
+        <h2 id="relato-titulo" class="sr-only">Conversación</h2>
+        <div id="anterior" class="anterior" hidden>
+          <span>Compra anterior · solo lectura</span>
+          <button type="button" id="volver" class="boton-chico">Volver a la compra actual</button>
+        </div>
+        <div id="relato-vacio" class="bienvenida">
+          <svg class="bienvenida-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/><path class="marca-tilde" d="M8.8 12.2l2.3 2.3 4.2-4.4"/>
+          </svg>
+          <p class="bienvenida-titulo">¿Qué querés comprar?</p>
+          <p id="bienvenida-sub" class="bienvenida-sub">Tu agente negocia con el comercio; el Pre-Sign Guard revisa antes de que firmes.</p>
+        </div>
+        <ol id="relato" class="relato" role="log" aria-live="polite" aria-relevant="additions text"></ol>
+      </section>
+
+      <footer class="composer">
+        <form id="formulario" class="formulario" autocomplete="off">
+          <label id="etiqueta" class="sr-only" for="entrada">Pedile algo a tu agente de compras</label>
+          <div class="caja">
+            <input id="entrada" class="entrada" type="text" maxlength="1000" enterkeyhint="send"
+                   aria-describedby="aviso-entrada" placeholder="¿Qué querés comprar?">
+            <button id="enviar" class="boton-enviar" type="submit" aria-label="Enviar">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V6"/><path d="M6 11l6-6 6 6"/></svg>
+            </button>
+          </div>
+          <div class="sugerencias">
+            <button type="button" id="ejemplo" class="sugerencia" hidden>Usar el pedido de ejemplo</button>
+          </div>
+          <p id="aviso-entrada" class="aviso-entrada" role="status" aria-live="polite"></p>
+        </form>
+      </footer>
+    </main>
+  </div>
 </body>
 </html>

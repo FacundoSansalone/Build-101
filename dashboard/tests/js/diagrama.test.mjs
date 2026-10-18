@@ -129,7 +129,7 @@ test("los pasos automáticos viajan tenues; lo oculto no viaja", () => {
 });
 
 test("cada flujo usa una arista dibujada (en un sentido o en el otro)", () => {
-  for (const orientacion of ["horizontal", "vertical"]) {
+  for (const orientacion of ["horizontal", "vertical", "franja"]) {
     const g = geometria(orientacion);
     assert.deepEqual(Object.keys(g.nodos).sort(), [...NODOS].sort());
     for (const id of NODOS) {
@@ -151,7 +151,7 @@ test("cada flujo usa una arista dibujada (en un sentido o en el otro)", () => {
     const corrido = { x: gd.x + g.apagado.dx, y: gd.y + g.apagado.dy };
     const ag = g.nodos.agente;
     const co = g.nodos.comercio;
-    if (orientacion === "horizontal") assert.ok(corrido.y - gd.h / 2 > Math.max(ag.y, co.y), "queda debajo de la línea");
+    if (orientacion !== "vertical") assert.ok(corrido.y - gd.h / 2 > Math.max(ag.y, co.y), "queda debajo de la línea");
     else assert.ok(corrido.x + gd.w / 2 < Math.min(ag.x, co.x), "queda al costado de la línea");
   }
 });
