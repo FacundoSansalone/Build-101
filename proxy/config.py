@@ -150,7 +150,10 @@ class Config:
         events_jsonl = _ruta(jsonl) if jsonl else base.events_jsonl
         privado = (env.get("GUARD_EVENTS_JSONL_PRIVADO") or "").strip()
         events_jsonl_privado = _ruta(privado) if privado else None
-        if events_jsonl is not None and _jsonl_privado(events_jsonl, events_jsonl_privado) == events_jsonl:
+        mismo = events_jsonl is not None and (
+            _jsonl_privado(events_jsonl, events_jsonl_privado) == events_jsonl
+        )
+        if mismo:
             raise ValueError(
                 "GUARD_EVENTS_JSONL_PRIVADO tiene que ser otro archivo que GUARD_EVENTS_JSONL "
                 "(el principal lo sirve el dashboard)"
