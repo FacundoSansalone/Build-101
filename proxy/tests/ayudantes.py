@@ -12,6 +12,7 @@ import httpx
 from contracts import GUARD_VEREDICTO_KEY, Veredicto
 from proxy import guard_stub
 from proxy.evaluador import EvaluadorCargado
+from proxy.seguridad import HEADER_TOKEN
 from proxy.tests.fake_world import (
     HEADERS_A2A,
     cuerpo,
@@ -26,8 +27,10 @@ BASE = "http://localhost:8010"
 
 @asynccontextmanager
 async def cliente_de(app, base_url: str = BASE) -> AsyncIterator[httpx.AsyncClient]:
+    """Cliente con el token de la API de control (como el reenvío del dashboard)."""
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url=base_url, timeout=10
+        transport=httpx.ASGITransport(app=app), base_url=base_url, timeout=10,
+        headers={HEADER_TOKEN: app.state.proxy.api_token},
     ) as c:
         yield c
 

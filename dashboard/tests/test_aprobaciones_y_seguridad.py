@@ -44,6 +44,7 @@ def test_get_aprobaciones_se_reenvia(tmp_path):
 
 
 def test_post_aprobacion_valida_y_reenvia_como_json_sin_origin(tmp_path):
+    _escribir_token(tmp_path)  # lo escribe el proxy al arrancar (N4)
     recibidos: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -67,6 +68,7 @@ def test_post_aprobacion_valida_y_reenvia_como_json_sin_origin(tmp_path):
 
 
 def test_post_aprobacion_propaga_el_409_del_proxy(tmp_path):
+    _escribir_token(tmp_path)  # lo escribe el proxy al arrancar (N4)
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"error": "sin_escalar"})
 
@@ -135,7 +137,8 @@ def test_reenvio_del_panel_pasa_host_origin_y_content_type_del_proxy(tmp_path):
     from proxy import guard_stub
 
     proxy_app = crear_proxy(
-        ConfigProxy(events_jsonl=None, guard_key_path=tmp_path / "k.pem", permitir_stub=True),
+        ConfigProxy(events_jsonl=None, guard_key_path=tmp_path / "k.pem", permitir_stub=True,
+                    api_token_path=tmp_path / ".temp-db" / "guard_api_token"),
         transport=httpx.MockTransport(_no_llamar),
         evaluador=EvaluadorCargado(evaluar=guard_stub.evaluar, nombre="stub"),
     )

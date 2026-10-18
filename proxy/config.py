@@ -41,6 +41,9 @@ class Config:
     guard_activo: bool = True
     events_jsonl: Path | None = REPO_ROOT / ".logs" / "guard_events.jsonl"
     guard_key_path: Path = REPO_ROOT / ".temp-db" / "guard_signing_key.pem"
+    # Token de la API de control (uno por arranque) para el servidor del
+    # dashboard. None: solo en memoria (tests).
+    api_token_path: Path | None = REPO_ROOT / ".temp-db" / "guard_api_token"
     port: int = 8010
     host: str = "127.0.0.1"
     dashboard_origins: tuple[str, ...] = field(
@@ -85,6 +88,9 @@ class Config:
             guard_key_path=_ruta(env["GUARD_KEY_PATH"])
             if env.get("GUARD_KEY_PATH")
             else base.guard_key_path,
+            api_token_path=_ruta(env["GUARD_API_TOKEN_PATH"])
+            if env.get("GUARD_API_TOKEN_PATH")
+            else base.api_token_path,
             port=int(env.get("PROXY_PORT", base.port)),
             host=env.get("PROXY_HOST", base.host),
             max_respuesta_bytes=int(

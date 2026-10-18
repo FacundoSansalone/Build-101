@@ -330,6 +330,9 @@ def test_estado_del_proxy_y_desconectado(tmp_path):
 
 
 def test_post_estado_valida_y_reenvia(tmp_path):
+    token = tmp_path / ".temp-db" / "guard_api_token"  # lo escribe el proxy (N4)
+    token.parent.mkdir(parents=True)
+    token.write_text("t" * 43, encoding="utf-8")
     recibidos = []
 
     def handler(request: httpx.Request) -> httpx.Response:

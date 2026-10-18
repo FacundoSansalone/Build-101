@@ -12,7 +12,8 @@ Desde la raíz del repo:
 
 Escalar con aprobación humana (C/cart_1): el primer intento queda retenido,
 el script hace `POST /guard/aprobaciones` (lo que hace "Aprobar igual" en el
-dashboard) y reintenta como el Shopping Agent:
+dashboard, con el token de `.temp-db/guard_api_token`) y reintenta como el
+Shopping Agent:
 
     ... -m proxy.scripts.smoke_checkout --escenario C --cart cart_1 --aprobar \\
         --esperado completed --merchant-key <pem del comercio>
@@ -31,14 +32,18 @@ import base64
 import hashlib
 import json
 import sys
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
 from contracts import GUARD_VEREDICTO_KEY
+from proxy.config import REPO_ROOT
+from proxy.seguridad import HEADER_TOKEN
 
 PROXY_URL = "http://localhost:8010/a2a/merchant_agent"
+TOKEN_FILE = REPO_ROOT / ".temp-db" / "guard_api_token"
 
 
 def _data_parts(task: Any) -> list[dict[str, Any]]:
@@ -81,6 +86,15 @@ def _firma_valida(jwt: str, pem_path: str) -> bool:
     except Exception:  # noqa: BLE001 - InvalidSignature
         return False
     return True
+
+
+def _leer_token(path: str) -> str | None:
+    """El token que el proxy escribe al arrancar (lo mismo que hace el dashboard)."""
+    try:
+        token = Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return token or None
 
 
 def _base(merchant_url: str) -> str:
@@ -168,10 +182,15 @@ async def correr(args: argparse.Namespace) -> int:
         if not (estado == "failed" and veredictos and veredictos[0]["status"] == "escalar"):
             fallas.append("se pidió --aprobar pero el checkout no quedó retenido por escalar")
             return _fin(fallas)
+        token = _leer_token(args.token_file)
+        if token is None:
+            fallas.append(f"no se pudo leer el token de la API del proxy en {args.token_file}")
+            return _fin(fallas)
         async with httpx.AsyncClient(timeout=10, trust_env=False) as http:
             r = await http.post(
                 f"{base}/guard/aprobaciones",
                 json={"contexto_id": contexto, "cart_id": args.cart},
+                headers={HEADER_TOKEN: token},  # como el reenvío del dashboard (N4)
             )
         print(f"POST /guard/aprobaciones → {r.status_code} {r.json()}")
         if r.status_code not in (200, 201):
@@ -241,6 +260,8 @@ def main() -> None:
                         help="si queda retenido (escalar), aprobar y reintentar")
     parser.add_argument("--merchant-key", default=None,
                         help="PEM del comercio (MERCHANT_SIGNING_KEY_PATH) para verificar la firma")
+    parser.add_argument("--token-file", default=str(TOKEN_FILE),
+                        help="token de la API del proxy para --aprobar (lo escribe el proxy)")
     parser.add_argument("--json", action="store_true", help="imprime la tarea completa")
     sys.exit(asyncio.run(correr(parser.parse_args())))
 

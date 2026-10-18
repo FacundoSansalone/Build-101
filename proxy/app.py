@@ -63,7 +63,7 @@ from proxy.evaluador import (
 )
 from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import cargar_catalogo, cargar_intent, violaciones_ap2
-from proxy.seguridad import ControlLocal
+from proxy.seguridad import ControlLocal, escribir_token, generar_token
 
 logger = logging.getLogger("proxy")
 
@@ -212,6 +212,7 @@ class ProxyGuard:
         client: httpx.AsyncClient,
         evaluador: EvaluadorCargado,
         ping_segundos: float = 15.0,
+        api_token: str | None = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -224,6 +225,8 @@ class ProxyGuard:
             config.events_jsonl, max_suscriptores=config.max_suscriptores_sse
         )
         self.ping_segundos = ping_segundos
+        # Secreto de los POST de /guard/* (N4): uno por arranque.
+        self.api_token = api_token or generar_token()
         self.aprobaciones = RegistroAprobaciones()
         self._ofertas: OrderedDict[str, OfertasGuardadas] = OrderedDict()
         self._decisiones: OrderedDict[str, Decision] = OrderedDict()
@@ -1231,6 +1234,10 @@ def create_app(
         trust_env=False,
     )
     proxy = ProxyGuard(config, client, evaluador, ping_segundos)
+    if config.api_token_path is not None:
+        # Para el servidor del dashboard (lo lee y lo agrega en su reenvío).
+        escribir_token(config.api_token_path, proxy.api_token)
+        logger.info("Token de la API de control en %s", config.api_token_path)
     try:
         # La clave del recibo se crea al arrancar, no en la primera decisión.
         if preparar_clave(config.guard_key_path):
@@ -1262,6 +1269,7 @@ def create_app(
                 hosts=config.hosts_permitidos,
                 origenes=config.dashboard_origins,
                 rutas_post_json=RUTAS_POST_CONTROL,
+                token=proxy.api_token,
             ),
             Middleware(
                 CORSMiddleware,

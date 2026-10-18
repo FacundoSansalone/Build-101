@@ -12,6 +12,7 @@ from proxy import guard_stub
 from proxy.app import create_app
 from proxy.config import Config
 from proxy.evaluador import EvaluadorCargado
+from proxy.seguridad import HEADER_TOKEN
 from proxy.tests.fake_world import (
     CATALOG_HOST,
     CATALOG_URL,
@@ -44,6 +45,7 @@ def config(tmp_path) -> Config:
         events_jsonl=tmp_path / "guard_events.jsonl",
         guard_key_path=tmp_path / "guard_signing_key.pem",
         permitir_stub=True,  # los tests usan el stub explícitamente (N1)
+        api_token_path=tmp_path / "guard_api_token",
     )
 
 
@@ -81,5 +83,7 @@ async def cliente(proxy_app) -> AsyncIterator[httpx.AsyncClient]:
         transport=httpx.ASGITransport(app=proxy_app),
         base_url="http://localhost:8010",
         timeout=10,
+        # Como el reenvío del dashboard: con el token de la API de control (N4).
+        headers={HEADER_TOKEN: proxy_app.state.proxy.api_token},
     ) as client:
         yield client
