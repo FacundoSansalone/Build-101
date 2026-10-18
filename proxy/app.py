@@ -84,6 +84,7 @@ from proxy.fuentes import (
     cargar_catalogo,
     cargar_intent,
     ficha_del_intent,
+    intent_ap2,
     intent_del_escenario,
     violaciones_ap2,
 )
@@ -1653,7 +1654,10 @@ class ProxyGuard:
             "checkout_hash": checkout.get("checkout_hash"),
             "jwt_header": header,
             "jwt_payload": payload,
-            "ap2_violaciones": violaciones_ap2(copy.deepcopy(cart)),
+            # Con el tope de esta compra (su ficha), no el pedido global.
+            "ap2_violaciones": violaciones_ap2(
+                copy.deepcopy(cart), intent_ap2(self.ficha_de(contexto_id))
+            ),
         }
         if checkout.get("cart_id") != cart_id:
             datos["cart_id_checkout"] = checkout.get("cart_id")

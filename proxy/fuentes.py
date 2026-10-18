@@ -136,12 +136,35 @@ def _sin_constantes(nombre: str) -> None:
     raise ValueError(f"constante JSON no estándar en el catálogo: {nombre}")
 
 
-def violaciones_ap2(cart: dict[str, Any]) -> list[str] | None:
-    """Lo que frena el SDK de AP2 para este cart ([] = OK). None si no se pudo."""
+def intent_ap2(ficha: Ficha) -> dict[str, Any] | None:
+    """El mandato de AP2 de una compra (`{"hard": {"max_price", "currency"}}`,
+    lo que lee `demo_world.ap2_check`) con el tope y la moneda obligatorios de
+    su ficha. None si la ficha no los tiene: no hay mandato que chequear."""
+    tope = next(
+        (r.valor for r in ficha.requisitos
+         if r.obligatorio and r.campo == "precio" and r.operador == "maximo"),
+        None,
+    )
+    moneda = next(
+        (r.valor for r in ficha.requisitos
+         if r.obligatorio and r.campo == "moneda" and r.operador == "igual"),
+        None,
+    )
+    if isinstance(tope, bool) or not isinstance(tope, (int, float)) or not isinstance(moneda, str):
+        return None
+    return {"hard": {"max_price": float(tope), "currency": moneda}}
+
+
+def violaciones_ap2(cart: dict[str, Any], intent: dict[str, Any] | None) -> list[str] | None:
+    """Lo que frena el SDK de AP2 para este cart con el tope de su compra
+    ([] = OK). None si no se pudo, o si la compra no tiene tope (`intent`
+    None): nunca se usa el tope de otro pedido."""
+    if intent is None:
+        return None
     try:
         from demo_world.ap2_check import ap2_violations
 
-        return list(ap2_violations(cart))
+        return list(ap2_violations(cart, intent))
     except Exception as e:  # noqa: BLE001 - es solo para mostrar
         logger.warning("No se pudo correr ap2_check para %s: %s", cart.get("cart_id"), e)
         return None
