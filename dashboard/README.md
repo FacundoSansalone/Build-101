@@ -166,7 +166,9 @@ Arriba a la derecha se elige la fuente de eventos:
   que el proxy no necesita CORS. Al conectar (y al reconectar) la página pide
   además `GET /api/proxy/guard/events/history`: aunque el SSE tarde o se corte,
   las compras se arman igual (los eventos no se duplican). El SSE se cierra al
-  recargar o salir de la página. El estado del proxy se consulta cada 4 s, con
+  recargar o salir de la página, y el servidor cierra en ese momento el que
+  abrió con el proxy (`background` de la respuesta: no espera al recolector,
+  así no se acumulan suscriptores en el proxy). El estado del proxy se consulta cada 4 s, con
   un solo pedido en vuelo, y el panel dice **"proxy desconectado"** recién
   después de 3 sondeos fallidos seguidos (uno suelto no cambia nada); reintenta
   solo. Con el evaluador `stub`, cada evento `veredicto` trae `evaluador: "stub"`.
