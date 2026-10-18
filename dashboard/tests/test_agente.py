@@ -115,6 +115,11 @@ CONTEXTOS_INVALIDOS = [
     {"compra_id": "cmp-1", "omitir": False},
     {"compra_id": "cmp-1", "omitir": "true"},
     {"compra_id": "cmp-1", "omitir": 1},
+    # Confirmar la ficha del intake: solo `confirmar: true`, sin nada más.
+    {"compra_id": "cmp-1", "confirmar": False},
+    {"compra_id": "cmp-1", "confirmar": "true"},
+    {"compra_id": "cmp-1", "confirmar": True, "omitir": True},
+    {"compra_id": "cmp-1", "confirmar": True, "respuesta": "sí"},
     {"compra_id": "", "respuesta": "algo"},
     {"compra_id": "x" * 201, "respuesta": "algo"},
     {"compra_id": 7, "respuesta": "algo"},
@@ -147,8 +152,9 @@ def test_contexto_json_invalido_da_400(tmp_path):
         {"compra_id": "cmp-test01", "respuesta": "  " + "x" * 1000 + "\n"},
         {"compra_id": "c" * 200, "respuesta": "y"},
         {"compra_id": "cmp-test01", "omitir": True},
+        {"compra_id": "cmp-test01", "confirmar": True},
     ],
-    ids=["respuesta", "borde_1000", "id_200", "omitir"],
+    ids=["respuesta", "borde_1000", "id_200", "omitir", "confirmar"],
 )
 def test_contexto_valido_se_reenvia_tal_cual_con_token(tmp_path, cuerpo):
     _escribir_token(tmp_path)
