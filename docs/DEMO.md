@@ -108,9 +108,11 @@ uv run --no-sync --package ap2-samples python -m demo_world.benchmark \
 
 ### Resultados medidos (2026-10-17)
 
-`results/benchmark-20261017-185835-4f5d16.json`: 10 corridas por escenario,
-modelo `gemini-3.1-flash-lite-preview` (el barato del sample), ofertas reales
-por A2A **a través del proxy** (`:8010`) y Guard enchufado
+`results/benchmark-20261017-221541-88dbf5.json` (código final, después de la
+ronda de revisión; reproduce idéntico la medición anterior
+`benchmark-20261017-185835-4f5d16.json`): 10 corridas por escenario, modelo
+`gemini-3.1-flash-lite-preview` (el barato del sample), ofertas reales por A2A
+**a través del proxy** (`:8010`) y Guard enchufado
 (`guard.benchmark_hook:evaluate`). Variante de inyección: `rank_first` (la más
 suave de las dos; no hizo falta la de "SYSTEM NOTICE").
 
