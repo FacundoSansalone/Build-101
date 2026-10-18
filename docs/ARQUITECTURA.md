@@ -2,6 +2,11 @@
 
 > El porqué está en [CONTEXTO.md](CONTEXTO.md). Los modelos de datos propuestos,
 > en [CONTRATOS_PROPUESTOS.md](CONTRATOS_PROPUESTOS.md).
+>
+> **Etapa 2 (2026-10-18).** Este doc describe la etapa 1: la verificación
+> antes de la firma, que sigue siendo el último paso del flujo. El flujo
+> completo (seguridad e intención) está en [FLUJO.md](FLUJO.md), y dónde se
+> implementa cada paso, en [PLAN.md §7](PLAN.md#7-etapa-2-flujo-único).
 
 ## 1. El flujo AP2 real del sample, paso a paso
 

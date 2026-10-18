@@ -2,6 +2,13 @@
 
 > Contexto en [CONTEXTO.md](CONTEXTO.md). Cómo funciona por dentro:
 > [ARQUITECTURA.md](ARQUITECTURA.md).
+>
+> **Etapa 2 (2026-10-18).** La demo pasa a ser **cuatro corridas del flujo
+> único** de [FLUJO.md](FLUJO.md#5-la-demo-cuatro-corridas-del-mismo-flujo),
+> con el pedido "20 computadoras para el lunes", y el pitch dura **4
+> minutos** ([sección 5](#5-pitch-en-4-minutos)). El escenario B de las
+> secciones 1 a 4, ya medido y grabado, queda como respaldo del caso
+> malicioso y como fuente de los números del benchmark.
 
 ## 1. El pedido fijo
 
@@ -183,16 +190,24 @@ Con el plan gratuito de Gemini (15 pedidos/min) se corre con
   veces el Guard escala o bloquea una elección correcta). El benchmark hoy no
   tiene esa columna.
 
-## 5. Pitch en 3 minutos
+## 5. Pitch en 4 minutos
+
+Las cuatro corridas del flujo único de [FLUJO.md](FLUJO.md#5-la-demo-cuatro-corridas-del-mismo-flujo),
+con el pedido "20 computadoras para el lunes".
 
 | Tiempo | Bloque | Contenido |
 |---|---|---|
-| 0:00–0:30 | Problema | Los agentes ya pagan. AP2 firma lo que el agente decide, pero no protege la decisión. |
-| 0:30–0:50 | Evidencia | Dos papers (*Whispers of Wealth*, *Beyond the Mandate*), y AP2 mismo asume que la inyección es inviable de prevenir. |
-| 0:50–1:50 | Demo | Escenario B lado a lado. "Todas las firmas son válidas…" |
-| 1:50–2:20 | Números | Benchmark: de X% a Y% por escenario, con modelo barato. |
-| 2:20–2:40 | Mapa | Tabla de quién cubre qué. Complementarios a PCAT. |
-| 2:40–3:00 | Roadmap | Ver abajo. |
+| 0:00–0:25 | Problema | Los agentes ya negocian y pagan. AP2 firma lo que el agente decide, pero no cuida la decisión. |
+| 0:25–0:40 | Evidencia | Los papers en una frase: la inyección funciona y las firmas no la frenan. |
+| 0:40–1:40 | Caso malicioso | Sin sistema, el agente compra lo que quiere el proveedor. Con sistema, la conversación se corta en Seguridad. |
+| 1:40–2:40 | Caso honesto | Sin sistema, el agente rechaza por el pedido literal. Con sistema: pausa, consulta, el usuario acepta y se compran 10 + 10. |
+| 2:40–3:10 | Números | Benchmark de X% a Y% (filtro y Guard), y aciertos del detector de oportunidades. |
+| 3:10–3:35 | Mapa | Tabla de quién cubre qué. Complementarios a PCAT. |
+| 3:35–4:00 | Cierre | "Una capa frena lo peligroso; la otra rescata lo que sirve. Nuestro agente propone, el usuario autoriza y su agente ejecuta." Roadmap. |
+
+Con 60 segundos por caso no entra una compra completa en vivo (LLM, envío,
+pago y OTP). Las corridas van grabadas y aceleradas, con el dashboard al lado;
+el vivo queda de respaldo.
 
 Frases en [CONTEXTO.md](CONTEXTO.md#frases-para-el-pitch). Objeciones en
 [PREGUNTAS_DEL_JURADO.md](PREGUNTAS_DEL_JURADO.md).
