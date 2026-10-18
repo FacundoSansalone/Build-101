@@ -2882,20 +2882,32 @@ class ProxyGuard:
         """Lo que escribió el usuario en /demo al empezar una compra:
         `{texto}` (1 a 1000 caracteres). Lo usa el intake de la próxima
         compra nueva, una vez y antes de que venza (`proxy.pedido_usuario`).
-        No devuelve el texto."""
+        No devuelve el texto. Con el intermediario apagado o sin agente de
+        intención no se guarda: ninguna compra lo usaría y quedaría
+        esperando a otra."""
         body, error = a2a.parsear_json(await request.body())
-        valido = error is None and isinstance(body, dict) and set(body) == {"texto"}
+        texto = body.get("texto") if isinstance(body, dict) else None
+        valido = (
+            error is None and isinstance(body, dict) and set(body) == {"texto"}
+            and isinstance(texto, str) and 0 < len(texto.strip()) <= LARGO_MAXIMO_PEDIDO
+        )
+        if not valido:
+            return JSONResponse(
+                {"error": "se_espera", "formato": {"texto": f"str (1 a {LARGO_MAXIMO_PEDIDO})"}},
+                status_code=400,
+            )
+        if not self.guard_activo or self.agente is None:
+            motivo = "intermediario_apagado" if not self.guard_activo else "sin_agente_de_intencion"
+            return JSONResponse({"registrado": False, "motivo": motivo})
         try:
-            vence = self.pedido_usuario.registrar(body["texto"]) if valido else None
-        except ValueError:
-            vence = None
-        if vence is None:
+            vence = self.pedido_usuario.registrar(texto)
+        except ValueError:  # solo caracteres de control
             return JSONResponse(
                 {"error": "se_espera", "formato": {"texto": f"str (1 a {LARGO_MAXIMO_PEDIDO})"}},
                 status_code=400,
             )
         logger.info("Pedido del usuario registrado para la próxima compra")
-        return JSONResponse({"vence": vence.isoformat()})
+        return JSONResponse({"registrado": True, "vence": vence.isoformat()})
 
     async def post_decision(self, request: Request) -> Response:
         """La decisión sobre la oportunidad: `{compra_id, decision}`."""

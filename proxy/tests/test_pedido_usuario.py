@@ -103,12 +103,25 @@ def test_pedido_para_intake():
 # -- la API de control -----------------------------------------------------------------
 
 
-async def test_registrar_por_la_api_de_control(cliente: httpx.AsyncClient, proxy_app):
-    resp = await cliente.post(RUTA, json={"texto": DEL_USUARIO})
+async def test_registrar_por_la_api_de_control(armar_proxy):
+    app = armar_proxy(agente=AgenteDecisiones(Modelo()))
+    async with cliente_de(app) as c:
+        resp = await c.post(RUTA, json={"texto": DEL_USUARIO})
     assert resp.status_code == 200, resp.text
     datos = resp.json()
-    assert set(datos) == {"vence"}  # no devuelve el texto
-    assert proxy_app.state.proxy.pedido_usuario.pendiente
+    assert set(datos) == {"registrado", "vence"} and datos["registrado"] is True  # sin el texto
+    assert app.state.proxy.pedido_usuario.pendiente
+
+
+async def test_sin_intermediario_o_sin_agente_no_se_guarda(armar_proxy, config):
+    """Ninguna compra lo usaría: no queda esperando a otra que llegue después."""
+    apagado = armar_proxy(config=replace(config, guard_activo=False), agente=AgenteDecisiones(Modelo()))
+    sin_agente = armar_proxy()
+    for app, motivo in ((apagado, "intermediario_apagado"), (sin_agente, "sin_agente_de_intencion")):
+        async with cliente_de(app) as c:
+            resp = await c.post(RUTA, json={"texto": DEL_USUARIO})
+        assert resp.status_code == 200 and resp.json() == {"registrado": False, "motivo": motivo}
+        assert not app.state.proxy.pedido_usuario.pendiente
 
 
 async def test_sin_token_sin_json_o_desde_otro_host_no_se_registra(proxy_app):
@@ -129,13 +142,15 @@ async def test_sin_token_sin_json_o_desde_otro_host_no_se_registra(proxy_app):
 
 @pytest.mark.parametrize("body", [
     {}, {"texto": ""}, {"texto": "   "}, {"texto": 1}, {"texto": "x" * (LARGO_MAXIMO + 1)},
-    {"texto": "ok", "otra": 1}, ["texto"],
+    {"texto": "ok", "otra": 1}, ["texto"], {"texto": "\x00\x01"},
 ])
-async def test_formato_invalido_da_400(cliente: httpx.AsyncClient, proxy_app, body):
-    resp = await cliente.post(RUTA, json=body)
+async def test_formato_invalido_da_400(armar_proxy, body):
+    app = armar_proxy(agente=AgenteDecisiones(Modelo()))
+    async with cliente_de(app) as c:
+        resp = await c.post(RUTA, json=body)
     assert resp.status_code == 400
     assert resp.json()["error"] == "se_espera"
-    assert not proxy_app.state.proxy.pedido_usuario.pendiente
+    assert not app.state.proxy.pedido_usuario.pendiente
 
 
 # -- el intake de la próxima compra ------------------------------------------------------
