@@ -173,6 +173,9 @@ _MAX_CONTEXTOS = 500
 # para que un evento no pierda la marca mientras todavía se puede mostrar.
 _MAX_MARCAS_PRIVADAS = 5000
 _MAX_ID = 200  # largo máximo de contexto_id / cart_id en la API de aprobaciones
+# Contextos sin dueño que recuerda una llamada anónima (`Llamada.contextos_sin_dueno`):
+# un stream trae uno; más allá de esto se vuelve a preguntar (la memoria no crece).
+_MAX_CONTEXTOS_POR_LLAMADA = 16
 
 # Plantillas fijas del texto para el agente: "KaiAI: <status>. <motivo>"
 # (el motivo lo arma guard/ sin texto del comercio). Ningún string del
@@ -454,6 +457,10 @@ class Llamada:
     comercio: Comercio | None = None
     integrador: Integrador | None = None
     oyente: str = "local"
+    # Tráfico anónimo: los `contextId` que el almacén ya dijo que no son de
+    # una compra de integrador en esta llamada (no se pregunta en cada evento
+    # SSE: con Supabase, cada pregunta es un ida y vuelta HTTP).
+    contextos_sin_dueno: set[str] = field(default_factory=set)
 
     @property
     def de_integrador(self) -> bool:
@@ -1017,7 +1024,7 @@ class ProxyGuard:
             # Tráfico anónimo (la demo): nunca en el contexto de una compra de
             # integrador. Lo adoptaría (su ficha, sus ofertas) y podría
             # bloquearla. No se reenvía ni se emite nada.
-            ajeno = await self._contexto_es_de_integrador(pedido.contexto_id)
+            ajeno = await self._contexto_es_de_integrador(pedido.contexto_id, llamada)
             if ajeno is None:
                 return _error_a2a(pedido.rpc_id, "estado_no_disponible")
             if ajeno:
@@ -1715,7 +1722,7 @@ class ProxyGuard:
         if not isinstance(result, dict) or result.get("contextId") is None:
             return True
         if not llamada.de_integrador:
-            return await self._contexto_es_de_integrador(result["contextId"]) is False
+            return await self._contexto_es_de_integrador(result["contextId"], llamada) is False
         compra, comercio = llamada.compra, llamada.comercio
         if compra is None or comercio is None:
             return False
@@ -2956,11 +2963,19 @@ class ProxyGuard:
             return True
         return self._compra_api(None, contexto_id) is not None
 
-    async def _contexto_es_de_integrador(self, contexto_id: Any) -> bool | None:
+    async def _contexto_es_de_integrador(
+        self, contexto_id: Any, llamada: Llamada | None = None
+    ) -> bool | None:
         """¿El contexto es de una compra de integrador? Primero la memoria y,
         si puede haber compras que no están en memoria (claves activas o un
         almacén durable, después de un reinicio), el almacén. None si el
-        almacén falla: quien llama corta (fail-closed)."""
+        almacén falla: quien llama corta (fail-closed).
+
+        Con `llamada`, un "no es" del almacén vale para el resto de esa
+        llamada (`Llamada.contextos_sin_dueno`): el pedido y cada evento del
+        stream traen el mismo `contextId`. La memoria se mira siempre (una
+        atadura de este proceso a mitad del stream se ve igual); un "sí" o
+        una falla no se guardan: cortan."""
         if not isinstance(contexto_id, str) or not contexto_id:
             return False
         if self._contexto_de_integrador(contexto_id):
@@ -2969,11 +2984,17 @@ class ProxyGuard:
             return False  # la demo sola: no hay compras de integrador
         if not es_id(ID_SEGURO_RE, contexto_id):
             return False  # uno así nunca se ata a una compra (`atar_contexto_api`)
+        if llamada is not None and contexto_id in llamada.contextos_sin_dueno:
+            return False
         try:
-            return await self.almacen.compra_de_contexto(contexto_id) is not None
+            dueno = await self.almacen.compra_de_contexto(contexto_id)
         except ErrorAlmacen as e:
             logger.error("No se pudo saber de quién es el contexto %s: %s", contexto_id, e)
             return None
+        if dueno is None and llamada is not None:
+            if len(llamada.contextos_sin_dueno) < _MAX_CONTEXTOS_POR_LLAMADA:
+                llamada.contextos_sin_dueno.add(contexto_id)
+        return dueno is not None
 
     async def post_aprobacion(self, request: Request) -> Response:
         body, error = a2a.parsear_json(await request.body())

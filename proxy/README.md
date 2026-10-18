@@ -548,6 +548,10 @@ es de un integrador:
   cada evento SSE, también un `tasks/get`), se corta; y un corte del filtro
   en ese tráfico no bloquea la compra ajena. Antes, la demo la adoptaba:
   evaluaba con su ficha, pisaba sus ofertas y la podía dejar `bloqueada`.
+  Al almacén se le pregunta una vez por `contextId` y por llamada: el "no es
+  de nadie" vale para el resto de los eventos del mismo stream (la memoria
+  se mira en cada uno). Sin claves y con el almacén en memoria no se le
+  pregunta nada.
 - Los errores antes de reenviar son HTTP + error JSON-RPC (`code: -32001`,
   mensaje fijo `KaiAI: …` y `data.codigo`). `comercio_desconocido`
   (404), `comercio_no_permitido` (403) y `pedido_ilegible` (400) salen con

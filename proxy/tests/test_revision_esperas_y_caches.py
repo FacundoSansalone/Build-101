@@ -16,15 +16,26 @@ import pytest
 import proxy.app as app_mod
 from contracts import Ficha
 from proxy import a2a
+from proxy.estado import EstadoMemoria
+from proxy.tests.ayudantes import RPC, cliente_de, evaluador_espia
+from proxy.tests.fake_world import (
+    HEADERS_A2A,
+    cuerpo,
+    data_parts_de,
+    parsear_sse,
+    pedido_create_checkout,
+    pedido_find_products,
+)
 from proxy.tests.gateway_ayudantes import (
     GATEWAY_PUBLIC_URL,
     armar_gateway,
     buscar,
+    cliente_local,
     cliente_publico,
     crear_compra,
 )
-from proxy.tests.ayudantes import evaluador_espia
 from proxy.tests.test_etapa2 import DATOS, RESPUESTA_USUARIO, AgenteFalso
+from proxy.tipos_gateway import ErrorAlmacen
 
 pytestmark = pytest.mark.anyio
 
@@ -154,3 +165,100 @@ async def test_integrador_con_preguntar_la_segunda_busqueda_espera_el_porque(
     assert [r.status_code for r in respuestas] == [200, 200]
     assert agente.respuestas == [RESPUESTA_USUARIO]
     assert len(mundo.merchant.recibidos) == 2
+
+
+# ---------------------------------------------------------------------------
+# 2. Tráfico anónimo: una consulta al almacén por contexto y por llamada
+# ---------------------------------------------------------------------------
+
+
+class AlmacenEspia(EstadoMemoria):
+    """Cuenta las consultas de dueño de un contexto (con Supabase, cada una
+    es un ida y vuelta HTTP) y puede fallar como un almacén caído."""
+
+    def __init__(self, *, falla: bool = False, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.consultas: list[str] = []
+        self.falla = falla
+
+    async def compra_de_contexto(self, contexto_id: str) -> str | None:
+        self.consultas.append(contexto_id)
+        if self.falla:
+            raise ErrorAlmacen("almacén caído")
+        return await super().compra_de_contexto(contexto_id)
+
+
+async def test_un_stream_anonimo_consulta_el_almacen_una_vez_por_contexto(config):
+    """Con claves activas, cada evento SSE del comercio preguntaba de nuevo
+    de quién es su `contextId`. Ahora la respuesta queda para la llamada."""
+    almacen = AlmacenEspia()
+    mundo = armar_gateway(
+        replace(config, gateway_public_url=GATEWAY_PUBLIC_URL), evaluador_espia()[0],
+        almacen=almacen,
+    )
+    async with cliente_local(mundo.app) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_find_products("B", metodo="message/stream")),
+            headers=HEADERS_A2A,
+        )
+    eventos = parsear_sse(resp.content)
+    assert resp.status_code == 200 and len(eventos) > 3
+    contexto = eventos[0]["result"]["contextId"]
+    assert almacen.consultas == [contexto]
+
+
+async def test_el_contexto_del_pedido_ya_cuenta_para_la_respuesta(config):
+    """El pedido trae el `contextId` y la respuesta el mismo: una consulta."""
+    almacen = AlmacenEspia()
+    mundo = armar_gateway(
+        replace(config, gateway_public_url=GATEWAY_PUBLIC_URL), evaluador_espia()[0],
+        almacen=almacen,
+    )
+    async with cliente_local(mundo.app) as c:
+        busqueda = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+        contexto = busqueda.json()["result"]["contextId"]
+        for metodo in ("message/send", "message/stream"):
+            almacen.consultas.clear()
+            resp = await c.post(
+                RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1", metodo)),
+                headers=HEADERS_A2A,
+            )
+            assert resp.status_code == 200
+            assert almacen.consultas == [contexto], metodo
+
+
+async def test_con_claves_y_el_almacen_caido_el_trafico_anonimo_se_corta(config):
+    """El fail-closed no cambia: con claves activas, si no se puede saber de
+    quién es el contexto, no se reenvía (503 en el pedido)."""
+    almacen = AlmacenEspia(falla=True)
+    mundo = armar_gateway(
+        replace(config, gateway_public_url=GATEWAY_PUBLIC_URL), evaluador_espia()[0],
+        almacen=almacen,
+    )
+    async with cliente_local(mundo.app) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_create_checkout("ctx-cualquiera", "cart_1")),
+            headers=HEADERS_A2A,
+        )
+        assert resp.status_code == 503
+        assert resp.json()["error"]["data"]["codigo"] == "estado_no_disponible"
+        # Sin contextId en el pedido, el de la respuesta: tampoco pasa.
+        resp = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+        task = resp.json()["result"]
+        assert task["status"]["state"] == "failed" and not data_parts_de(task)[1:]
+    assert len(mundo.merchant.recibidos) == 1  # la búsqueda; el checkout no llegó
+
+
+async def test_sin_claves_ni_almacen_durable_no_se_consulta_nada(armar_proxy):
+    """La demo sola (sin claves y con el almacén en memoria): no puede haber
+    compras de integrador y no se pregunta por ningún contexto."""
+    almacen = AlmacenEspia()
+    app = armar_proxy(almacen=almacen)
+    async with cliente_de(app) as c:
+        busqueda = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+        contexto = busqueda.json()["result"]["contextId"]
+        await c.post(
+            RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1", "message/stream")),
+            headers=HEADERS_A2A,
+        )
+    assert almacen.consultas == []
