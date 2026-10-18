@@ -501,6 +501,9 @@ async function enviar(ev) {
     avisar("Nuestro agente espera un sí o un no.", "error");
   } else if (r.status === 409 && r.datos?.error === "agente_ocupado") {
     avisar("Tu agente todavía está trabajando: esperá su respuesta.", "error");
+  } else if (r.status === 409 && r.datos?.error === "compra_reiniciada") {
+    // Empezó otra compra mientras se enviaba: el texto queda en el input.
+    avisar("Empezó otra compra: volvé a enviar tu pedido.", "error");
   } else if (r.status === 409 || r.status === 404) {
     avisar("Esa pregunta ya no está pendiente.", "error");
     refrescarCompras();

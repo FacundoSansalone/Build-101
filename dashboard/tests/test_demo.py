@@ -946,3 +946,52 @@ def test_mientras_se_registra_el_pedido_la_conversacion_queda_ocupada(tmp_path):
         assert _post(c, "/api/demo/mensaje", {"texto": "una notebook"}).status_code == 202
         _esperar(c)
     assert vistos == [True]
+
+
+def test_nueva_compra_mientras_se_registra_el_pedido_no_lo_manda_a_la_nueva(tmp_path):
+    """"Nueva compra" (o el interruptor del Guard) llega mientras el primer
+    mensaje espera el registro del pedido en el proxy. Al volver, ese texto
+    ya es de la compra anterior: no arranca en la nueva ni le toca `ocupado`
+    (acá, otro mensaje de la compra nueva ya la ocupó)."""
+    _escribir_token(tmp_path)
+    proxy, adk = FakeProxy(), FakeADK()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/guard/compras/pedido":
+            app.state.demo.nueva()
+            app.state.demo.ocupado = True  # la compra nueva ya tiene su mensaje en curso
+        return proxy.handler(request)
+
+    app = create_app(Config(
+        repo_root=tmp_path, proxy_url=PROXY, adk_url=ADK, world_temp_dir=tmp_path / "world-temp",
+        proxy_transport=httpx.MockTransport(handler), adk_transport=httpx.MockTransport(adk.handler),
+    ))
+    with TestClient(app, base_url=BASE) as c:
+        r = _post(c, "/api/demo/mensaje", {"texto": "una notebook"})
+        assert r.status_code == 409 and r.json()["error"] == "compra_reiniciada"
+        conversacion = app.state.demo
+        assert conversacion.ocupado is True  # el de la compra nueva, intacto
+        assert conversacion.mensajes == [] and conversacion.pedido_enviado is False
+    assert adk.mensajes == []
+
+
+def test_nueva_compra_mientras_se_rutea_el_mensaje_tampoco_lo_usa(tmp_path):
+    """Lo mismo durante la consulta de compras al proxy (el ruteo): con la
+    `creada` de la compra nueva, el texto iba al agente como primer pedido."""
+    _escribir_token(tmp_path)
+    proxy, adk = FakeProxy(), FakeADK()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/guard/compras":
+            app.state.demo.nueva()
+        return proxy.handler(request)
+
+    app = create_app(Config(
+        repo_root=tmp_path, proxy_url=PROXY, adk_url=ADK, world_temp_dir=tmp_path / "world-temp",
+        proxy_transport=httpx.MockTransport(handler), adk_transport=httpx.MockTransport(adk.handler),
+    ))
+    with TestClient(app, base_url=BASE) as c:
+        r = _post(c, "/api/demo/mensaje", {"texto": "una notebook"})
+        assert r.status_code == 409 and r.json()["error"] == "compra_reiniciada"
+        assert app.state.demo.mensajes == [] and app.state.demo.ocupado is False
+    assert adk.mensajes == [] and proxy.pedidos == []
