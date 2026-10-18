@@ -13,7 +13,8 @@ import { registrarSondeo, unaALaVez } from "./lib/conexion.js";
 import { armarRelato } from "./lib/relato.js";
 import { estadoInicial, geometria, NODOS, paso } from "./lib/diagrama.js";
 import {
-  desenlace, guardarResultado, lineaDeTiempo, modoDelInput, resultadoCorrida, resumenComparacion, tonosComparacion,
+  desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, resultadoCorrida, resumenComparacion,
+  retenerLineas, tonosComparacion,
 } from "./lib/demo.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -419,6 +420,33 @@ function lineasEnVivo(items) {
   return armarRelato(items, { filtro: !estado.replay && estado.proxy.filtro });
 }
 
+// Ritmo en vivo: antes de cada paso del Guard, un momento con lo que hizo
+// ("Revisando la respuesta del comercio…"). Al cargar la página, en una
+// grabación o en el historial, todo se muestra de una.
+const ritmo = { mostradas: new Set(), retenida: null, temporizador: null, ultimas: [] };
+
+function conRitmo(lineas) {
+  ritmo.ultimas = lineas;
+  if (estado.replay || enArranque()) {
+    for (const l of lineas) ritmo.mostradas.add(l.id);
+    return lineas;
+  }
+  const { visibles, retenida } = retenerLineas(lineas, ritmo.mostradas);
+  if (!retenida) return visibles;
+  if (ritmo.retenida !== retenida.id) {
+    clearTimeout(ritmo.temporizador);
+    ritmo.retenida = retenida.id;
+    ritmo.temporizador = setTimeout(soltarRetenida, reducido() ? Math.min(retenida.pausa.ms, 600) : retenida.pausa.ms);
+  }
+  return [...visibles, { id: "pensando", actor: "guard", tono: "pensando", texto: retenida.pausa.texto, hora: "" }];
+}
+
+function soltarRetenida() {
+  for (const id of lineasASoltar(ritmo.ultimas, ritmo.retenida)) ritmo.mostradas.add(id);
+  ritmo.retenida = null;
+  programarRender();
+}
+
 function renderRelato(lineas, finId) {
   const cercaDelFinal = pegado || !esScrollable();
   const ids = new Set(lineas.map((l) => l.id));
@@ -740,7 +768,7 @@ function render() {
   actualizarHistorial(lineas, fin);
   const anterior = estado.viendo ? estado.historial.find((h) => h.id === estado.viendo) : null;
   if (estado.viendo && !anterior) estado.viendo = null;
-  renderRelato(anterior ? anterior.lineas : lineas, anterior ? anterior.finId : fin?.item.id);
+  renderRelato(anterior ? anterior.lineas : conRitmo(lineas), anterior ? anterior.finId : fin?.item.id);
   $("#anterior").hidden = !anterior;
   avanzarDiagrama(items);
   renderInput(relato.children.length > 0);

@@ -278,6 +278,10 @@ svg { flex: none; }
 .linea[data-tono="ok"] .texto { border-color: var(--ok-fill); border-left-width: 3px; background: var(--ok-bg); color: var(--ok); font-weight: 600; }
 .linea[data-tono="aviso"] .texto { border-color: var(--warn-fill); border-left-width: 3px; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
 .linea[data-tono="crit"] .texto { border-color: var(--crit-fill); border-left-width: 3px; background: var(--crit-bg); color: var(--crit); font-weight: 650; }
+/* Mientras el Guard "trabaja": el paso y unos puntos que avanzan. */
+.linea[data-tono="pensando"] .texto { color: var(--muted); font-size: 13.5px; }
+.linea[data-tono="pensando"] .texto::after { content: "…"; display: inline-block; width: 1.4em; animation: puntos 1.2s steps(1) infinite; }
+@keyframes puntos { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 .linea[data-final="true"] .texto { font-size: 15.5px; box-shadow: var(--sombra); }
 
 /* ------------------------------------------------------------------ composer */
@@ -328,4 +332,5 @@ svg { flex: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  .linea[data-tono="pensando"] .texto::after { animation: none !important; }
 }

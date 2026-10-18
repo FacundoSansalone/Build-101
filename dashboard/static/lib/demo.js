@@ -216,3 +216,33 @@ export function guardarResultado(mapa, resultado) {
   const lado = resultado.guardActivo ? "con" : "sin";
   return { ...base, [resultado.escenario]: { ...(base[resultado.escenario] || {}), [lado]: resultado } };
 }
+
+// ---------------------------------------------------------------- ritmo del relato en vivo
+
+/**
+ * Las líneas que se ven ya y la primera que espera su pausa. Una línea del
+ * Guard con `pausa` que todavía no se mostró se retiene, y con ella todas las
+ * que vienen después, para que el orden no cambie. `mostradas` es un Set de
+ * ids; se le suman las que pasan.
+ */
+export function retenerLineas(lineas, mostradas) {
+  const visibles = [];
+  for (const l of lineas) {
+    if (!mostradas.has(l.id) && l.actor === "guard" && l.pausa) return { visibles, retenida: l };
+    mostradas.add(l.id);
+    visibles.push(l);
+  }
+  return { visibles, retenida: null };
+}
+
+/** Al terminar la pausa: la retenida y las del Guard que la siguen con la misma pausa. */
+export function lineasASoltar(lineas, id) {
+  const i = lineas.findIndex((l) => l.id === id);
+  if (i < 0) return [id];
+  const texto = lineas[i].pausa?.texto;
+  const ids = [id];
+  for (let k = i + 1; k < lineas.length && lineas[k].actor === "guard" && lineas[k].pausa?.texto === texto; k++) {
+    ids.push(lineas[k].id);
+  }
+  return ids;
+}

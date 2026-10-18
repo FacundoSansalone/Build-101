@@ -144,11 +144,21 @@ def test_encuentra_las_cantidades(texto, cantidad):
         # Desde el domingo 18, "la semana que viene" es la del lunes 19: hasta el viernes 23.
         ("la semana que viene", "2026-10-23"),
         ("next week", "2026-10-23"),
+        # El domingo, "esta semana" también es la que empieza el lunes 19.
+        ("tope 150 dólares, para esta semana", "2026-10-23"),
+        ("this week", "2026-10-23"),
         ("para el sábado", "2026-10-24"),
     ],
 )
 def test_encuentra_las_fechas(texto, fecha):
     assert fecha in [c.valor for c in extraer([texto], HOY).fechas]
+
+
+def test_esta_semana_es_el_viernes_de_la_semana_en_curso():
+    miercoles = date(2026, 10, 21)
+    assert [c.valor for c in extraer(["esta semana"], miercoles).fechas] == ["2026-10-23"]
+    viernes = date(2026, 10, 23)
+    assert [c.valor for c in extraer(["esta misma semana"], viernes).fechas] == ["2026-10-23"]
 
 
 def test_descarta_fechas_pasadas_y_no_toma_fechas_como_cantidades():
@@ -576,6 +586,16 @@ def test_despues_de_la_primera_respuesta_repregunta_lo_que_falta():
     r = interpretar(resp, cands, CATEGORIAS, respondidos=1)
     assert r.siguiente == "repreguntar"
     assert r.pregunta == "Para hacer la compra me falta saber para cuándo lo necesitás."
+
+
+def test_la_segunda_repregunta_no_repite_la_misma_pregunta_y_da_ejemplos():
+    cands = extraer(["Comprame 20 notebooks hasta 20000 USD"], HOY)
+    r = interpretar(_faltando_plazo(cands), cands, CATEGORIAS, respondidos=2)
+    assert r.siguiente == "repreguntar"
+    assert r.pregunta == (
+        "No te entendí: todavía me falta saber para cuándo lo necesitás. "
+        "Podés escribirlo así: «el viernes», «30/10» o «esta semana»."
+    )
 
 
 def test_completo_pide_confirmar_la_ficha_y_lista_lo_inferido():

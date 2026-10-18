@@ -33,6 +33,34 @@ export function humanizarAtributo(nombre) {
   return texto ? texto[0].toUpperCase() + texto.slice(1) : "—";
 }
 
+// Señales del filtro (`heuristica:x` o `modelo:x`) → qué hacía la respuesta.
+const RAZONES_FILTRO = {
+  instruccion_ia: "le daba órdenes a tu agente",
+  anula_instrucciones: "intentaba saltear tus instrucciones",
+  marcador_rol: "se hacía pasar por el sistema o por vos",
+  manipulacion: "intentaba manipular la elección",
+  exfiltracion: "pedía datos que no necesita",
+  herramientas: "intentaba que tu agente ejecutara acciones",
+  texto_oculto: "escondía texto",
+  homoglifos: "disfrazaba letras",
+};
+
+function enumerar(partes) {
+  return partes.length < 2 ? partes.join("") : `${partes.slice(0, -1).join(", ")} y ${partes.at(-1)}`;
+}
+
+/** El corte del filtro en lenguaje natural, sin códigos internos. */
+export function textoCorteFiltro(senales) {
+  const lista = Array.isArray(senales) ? senales.map(String) : [];
+  const razones = [...new Set(lista.map((s) => RAZONES_FILTRO[s.split(":").at(-1)]).filter(Boolean))].slice(0, 3);
+  const cierre = "Tu agente no la vio y no se compró nada";
+  if (razones.length) return `✕ Cortamos la conversación: la respuesta del comercio ${enumerar(razones)}. ${cierre}`;
+  if (lista.some((s) => s.startsWith("filtro:"))) {
+    return `✕ Cortamos la conversación: no pudimos revisar la respuesta del comercio y, ante la duda, no pasa. ${cierre}`;
+  }
+  return `✕ Cortamos la conversación: la respuesta del comercio parecía un ataque. ${cierre}`;
+}
+
 function nombreCampo(campo) {
   const c = String(campo ?? "");
   if (c.startsWith("atributo:")) return humanizarAtributo(c.slice("atributo:".length));
@@ -138,8 +166,35 @@ function humanizarDetalle(detalle) {
     .replace(/\.$/, "");
 }
 
-const linea = (item, texto, tono, actor, extra = {}) =>
-  ({ id: `${item.id}${extra.sufijo ?? ""}`, ts: item.ts, hora: hora(item.ts), texto: recortar(texto, 320), tono, actor });
+const linea = (item, texto, tono, actor, extra = {}) => ({
+  id: `${item.id}${extra.sufijo ?? ""}`, ts: item.ts, hora: hora(item.ts), texto: recortar(texto, 320), tono, actor,
+  pausa: pausaDe(item),
+});
+
+// Qué hizo el intermediario antes de esta línea. La vista en vivo lo muestra
+// un momento ("Revisando la respuesta del comercio…") antes de la línea: las
+// heurísticas y el comercio de la demo responden en milisegundos.
+const REVISAR = { texto: "Revisando la respuesta del comercio", ms: 1400 };
+const VERIFICAR = { texto: "Verificando la compra antes de la firma", ms: 1600 };
+const ANALIZAR = { texto: "Analizando tu respuesta", ms: 900 };
+const COMPARAR = { texto: "Comparando la oferta con lo que necesitás", ms: 1400 };
+
+function pausaDe(item) {
+  if (item?.origen !== "proxy") return null;
+  const d = item.datos || {};
+  switch (item.tipo) {
+    case "reenviado":
+      if (d.metodo === "find_products") return REVISAR;
+      return d.metodo === "create_checkout" ? VERIFICAR : null;
+    case "bloqueado":
+      if (d.etapa === "seguridad") return REVISAR;
+      return d.etapa === "intencion" ? null : VERIFICAR;
+    case "veredicto": return VERIFICAR;
+    case "pedido_detectado": case "contexto_registrado": return ANALIZAR;
+    case "oportunidad": return COMPARAR;
+    default: return null;
+  }
+}
 
 // ---------------------------------------------------------------- contexto
 
@@ -292,10 +347,7 @@ function lineasDeEventoSolo(item, ctx) {
       return [];
     }
     case "bloqueado": {
-      if (d.etapa === "seguridad") {
-        const senales = Array.isArray(d.senales) && d.senales.length ? ` (${d.senales.slice(0, 3).join(", ")})` : "";
-        return [linea(item, `✕ Nuestro filtro cortó la conversación${senales}: nada del comercio llegó a tu agente`, "crit", "guard")];
-      }
+      if (d.etapa === "seguridad") return [linea(item, textoCorteFiltro(d.senales), "crit", "guard")];
       if (d.etapa === "intencion") return [linea(item, "✕ La consulta venció: no se compra nada", "aviso", "guard")];
       if (d.requiere_aprobacion) {
         return [linea(item, "⚠ Retenida antes de la firma: necesita tu aprobación (en el detalle técnico)", "aviso", "guard")];

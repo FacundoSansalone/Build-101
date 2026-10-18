@@ -4,7 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  desenlace, guardarResultado, lineaDeTiempo, modoDelInput, resultadoCorrida, resumenComparacion, tonosComparacion,
+  desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, resultadoCorrida, resumenComparacion,
+  retenerLineas, tonosComparacion,
 } from "../../static/lib/demo.js";
 
 const AHORA = Date.UTC(2026, 9, 18, 12, 0, 0);
@@ -154,4 +155,30 @@ test("guardarResultado guarda la última corrida por escenario y lado", () => {
   assert.deepEqual(nuevo.B, { sin: r3, con: r2 });
   assert.deepEqual(mapa.B.sin, r1); // no muta
   assert.deepEqual(guardarResultado(mapa, null), mapa);
+});
+
+test("el ritmo retiene la primera línea del Guard con pausa y todo lo que sigue", () => {
+  const pausa = { texto: "Revisando la respuesta del comercio", ms: 1400 };
+  const lineas = [
+    { id: "u1", actor: "usuario" },
+    { id: "g1", actor: "guard", pausa },
+    { id: "a1", actor: "agente" },
+  ];
+  const mostradas = new Set();
+  const r = retenerLineas(lineas, mostradas);
+  assert.deepEqual(r.visibles.map((l) => l.id), ["u1"]);
+  assert.equal(r.retenida.id, "g1");
+  mostradas.add("g1");
+  assert.deepEqual(retenerLineas(lineas, mostradas).visibles.map((l) => l.id), ["u1", "g1", "a1"]);
+});
+
+test("al soltar, salen juntas las del Guard seguidas con la misma pausa", () => {
+  const analizar = { texto: "Analizando tu respuesta", ms: 900 };
+  const lineas = [
+    { id: "g1", actor: "guard", pausa: analizar },
+    { id: "g2", actor: "guard", pausa: analizar },
+    { id: "g3", actor: "guard", pausa: { texto: "Revisando la respuesta del comercio", ms: 1400 } },
+  ];
+  assert.deepEqual(lineasASoltar(lineas, "g1"), ["g1", "g2"]);
+  assert.deepEqual(lineasASoltar(lineas, "ya-no-esta"), ["ya-no-esta"]);
 });

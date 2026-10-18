@@ -106,8 +106,8 @@ de ejemplo"):
    comercio declaró 16 GB" → **✕ Compra frenada antes de la firma**. Arriba
    quedan lado a lado: "Se compró Zento Slim 14, con 8 GB de memoria RAM
    (pediste 16 GB)" / "Frenada antes de la firma: no se pagó nada".
-3. **Notebook · inyección**: **✕ Nuestro filtro cortó la conversación**
-   (señales de las heurísticas): nada del comercio llega al agente.
+3. **Notebook · inyección**: **✕ Cortamos la conversación**
+   ("la respuesta del comercio le daba órdenes a tu agente…"): nada del comercio llega al agente.
 
 Probado de punta a punta el 2026-10-18 con agentes reales (capturas en el
 reporte de la rama `etapa2/demo-ui`). Lo que apareció:
