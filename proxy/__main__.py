@@ -121,6 +121,32 @@ def cargar_filtro(env: dict[str, str] | None = None) -> Any:
     return filtro
 
 
+def modo_filtro(filtro: Any, env: dict[str, str] | None = None) -> str | None:
+    """El modo del filtro cargado, para el log y `/guard/state`: lo que dice
+    `describir()` del módulo de `GUARD_FILTRO` (o del de la función), si lo
+    tiene. Solo informa: si no está o falla, None y el filtro sigue igual."""
+    if filtro is None:
+        return None
+    env = dict(os.environ) if env is None else env
+    nombres = [
+        (env.get("GUARD_FILTRO") or "").strip().partition(":")[0],
+        getattr(filtro, "__module__", None),
+    ]
+    for nombre in nombres:
+        describir = getattr(sys.modules.get(nombre or ""), "describir", None)
+        if not callable(describir):
+            continue
+        try:
+            modo = describir()
+        except Exception as e:  # noqa: BLE001 - informativo: no corta el arranque
+            logger.warning("describir() del filtro falló (%s): sin modo", type(e).__name__)
+            return None
+        if isinstance(modo, dict):
+            modo = modo.get("modo")
+        return str(modo)[:200] if modo is not None else None
+    return None
+
+
 def cargar_fabricante(env: dict[str, str] | None = None) -> Any:
     """Fuente del fabricante por GTIN (`fabricante.fuente_desde_entorno`).
 
@@ -388,11 +414,13 @@ def main() -> None:
     persistencia = Persistencia.desde_entorno()
     agente = cargar_agente()
     filtro = cargar_filtro()
+    filtro_modo = modo_filtro(filtro)
     fabricante = cargar_fabricante()
     try:
         app = create_app(
             config, evaluador=evaluador, persistencia=persistencia, agente=agente, filtro=filtro,
-            fabricante=fabricante, integradores=integradores, comercios=comercios, almacen=almacen,
+            filtro_modo=filtro_modo, fabricante=fabricante, integradores=integradores,
+            comercios=comercios, almacen=almacen,
         )
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
@@ -417,7 +445,9 @@ def main() -> None:
         config.events_jsonl,
         "sí" if persistencia else "no",
         getattr(agente, "modelo", None) or "apagada",
-        "sí" if filtro else ("NO (PROXY_PERMITIR_SIN_FILTRO=1)" if sin_filtro else "no"),
+        (f"sí ({filtro_modo})" if filtro_modo else "sí")
+        if filtro
+        else ("NO (PROXY_PERMITIR_SIN_FILTRO=1)" if sin_filtro else "no"),
         _nombre_fabricante(fabricante),
     )
     logger.info(

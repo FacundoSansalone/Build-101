@@ -367,8 +367,12 @@ Reglas que no dependen de la demo:
 | `POST /guard/compras/contexto` con `{"compra_id", "respuesta"}`, `{"compra_id", "omitir": true}` o `{"compra_id", "confirmar": true}` y `X-Guard-Token` | 200 con la compra; 404 `compra_desconocida`; 409 `{"error": "estado", "estado"}` si no está esperando una respuesta (o, para `confirmar`, si el turno no es el de confirmar la ficha); 400 si el cuerpo no es exactamente eso (respuesta de 1 a 1000 caracteres) |
 | `POST /guard/compras/decision` con `{"compra_id", "decision": "aceptar"\|"rechazar"}` y `X-Guard-Token` | Igual: 200, 404, 409 (si no hay una consulta pendiente) o 400 |
 
-`GET /guard/state` suma `"intencion"` (nombre del agente o `null`) y
-`"filtro"` (bool).
+`GET /guard/state` suma `"intencion"` (nombre del agente o `null`),
+`"filtro"` (bool) y `"filtro_modo"`: lo que dice `describir()` del módulo de
+`GUARD_FILTRO` (por ejemplo, si corre solo con heurísticas), o `null` si no
+hay filtro o el módulo no lo tiene. También sale en la línea de arranque
+(`filtro: sí (<modo>)`). Solo informa: si `describir()` falla, se avisa y el
+filtro sigue igual.
 
 ## Seguridad
 

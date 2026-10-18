@@ -872,3 +872,90 @@ async def test_un_evaluador_sin_ahora_sigue_andando(cliente, merchant, proxy_app
         RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1")), headers=HEADERS_A2A
     )
     assert "No se pudo evaluar" not in veredictos(resp.json()["result"])[0]["motivo"]
+
+
+# ---------------------------------------------------------------------------
+# Modo del filtro visible (`describir()` del módulo del filtro, si existe)
+# ---------------------------------------------------------------------------
+
+
+def _modulo_filtro(monkeypatch, describir: Any = None) -> str:
+    import sys
+    import types
+
+    from contracts import ResultadoFiltro
+
+    modulo = types.ModuleType("filtro_de_prueba")
+    modulo.filtrar = lambda respuesta: ResultadoFiltro(pasa=True)
+    modulo.filtrar.__module__ = modulo.__name__
+    if describir is not None:
+        modulo.describir = describir
+    monkeypatch.setitem(sys.modules, modulo.__name__, modulo)
+    return f"{modulo.__name__}:filtrar"
+
+
+def test_modo_del_filtro_sale_de_describir(monkeypatch):
+    ruta = _modulo_filtro(monkeypatch, lambda: "solo heurísticas (sin red)")
+    env = {"GUARD_FILTRO": ruta}
+    filtro = main_mod.cargar_filtro(env)
+    assert main_mod.modo_filtro(filtro, env) == "solo heurísticas (sin red)"
+
+
+def test_modo_del_filtro_acepta_un_dict_con_modo(monkeypatch):
+    ruta = _modulo_filtro(monkeypatch, lambda: {"modo": "completo", "proveedor": "openai"})
+    env = {"GUARD_FILTRO": ruta}
+    assert main_mod.modo_filtro(main_mod.cargar_filtro(env), env) == "completo"
+
+
+def test_sin_describir_o_sin_filtro_no_hay_modo(monkeypatch):
+    ruta = _modulo_filtro(monkeypatch)
+    env = {"GUARD_FILTRO": ruta}
+    assert main_mod.modo_filtro(main_mod.cargar_filtro(env), env) is None
+    assert main_mod.modo_filtro(None, {}) is None
+
+
+def test_un_describir_que_falla_no_impide_arrancar(monkeypatch, caplog):
+    def roto():
+        raise RuntimeError("sin datos")
+
+    ruta = _modulo_filtro(monkeypatch, roto)
+    env = {"GUARD_FILTRO": ruta}
+    with caplog.at_level(logging.WARNING, logger="proxy"):
+        assert main_mod.modo_filtro(main_mod.cargar_filtro(env), env) is None
+    assert any("describir" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_guard_state_muestra_el_modo_del_filtro(armar_proxy):
+    from contracts import ResultadoFiltro
+
+    app = armar_proxy(filtro=lambda r: ResultadoFiltro(pasa=True), filtro_modo="completo")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost:8010"
+    ) as c:
+        estado = (await c.get("/guard/state")).json()
+    assert estado["filtro"] is True and estado["filtro_modo"] == "completo"
+    sin = armar_proxy().state.proxy.estado(con_token=False)
+    assert sin["filtro"] is False and sin["filtro_modo"] is None
+
+
+def test_main_loguea_el_modo_del_filtro(monkeypatch, tmp_path, caplog):
+    ruta = _modulo_filtro(monkeypatch, lambda: "solo heurísticas")
+    for nombre in ("PROXY_PERMITIR_SIN_FILTRO", "PROXY_ALLOW_STUB", "SUPABASE_URL",
+                   "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY", "GATEWAY_CLAVES_ARCHIVO",
+                   "DEMO_HOY"):
+        monkeypatch.delenv(nombre, raising=False)
+    monkeypatch.setenv("GUARD_FILTRO", ruta)
+    monkeypatch.setenv("INTENCION_ACTIVA", "0")
+    monkeypatch.setenv("FABRICANTE_FUENTE", "ninguna")
+    monkeypatch.setenv("GUARD_EVENTS_JSONL", str(tmp_path / "e.jsonl"))
+    monkeypatch.setenv("GUARD_KEY_PATH", str(tmp_path / "k.pem"))
+    monkeypatch.setenv("GUARD_API_TOKEN_PATH", str(tmp_path / "token"))
+    apps: list[Any] = []
+    monkeypatch.setattr(main_mod, "sockets_de", lambda app, config, gateway: ["local"])
+    monkeypatch.setattr(main_mod, "servir", lambda app, sockets: apps.append(app))
+    monkeypatch.setattr(main_mod.logging, "basicConfig", lambda **kw: None)
+    with caplog.at_level(logging.INFO, logger="proxy"):
+        main_mod.main()
+    assert apps[0].state.proxy.estado(con_token=True)["filtro_modo"] == "solo heurísticas"
+    assert any("filtro: sí (solo heurísticas)" in r.getMessage() for r in caplog.records)

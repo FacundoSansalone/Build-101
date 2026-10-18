@@ -487,6 +487,7 @@ class ProxyGuard:
         comercios: RegistroComercios | None = None,
         almacen: AlmacenEstado | None = None,
         despachador: Despachador | None = None,
+        filtro_modo: str | None = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -518,6 +519,8 @@ class ProxyGuard:
         # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
         self.agente = agente
         self.filtro = filtro
+        # Lo que dice `describir()` del módulo del filtro (solo informa).
+        self.filtro_modo = filtro_modo if filtro is not None else None
         # Los cierra el lifespan de `create_app`. Públicos: `/v1` sin estado
         # (`sin_estado`) también corre el filtro y el fabricante en estos.
         self.ejecutor_filtro = ThreadPoolExecutor(HILOS_FILTRO, thread_name_prefix="kaiai-filtro")
@@ -831,6 +834,7 @@ class ProxyGuard:
             "evaluador": self.evaluador.nombre,
             "intencion": getattr(self.agente, "nombre", "agente") if self.agente else None,
             "filtro": self.filtro is not None,
+            "filtro_modo": self.filtro_modo,
         }
         if self.gateway_configurado:
             # Solo con el gateway configurado: sin configuración nueva, el
@@ -3200,12 +3204,14 @@ def create_app(
     comercios: RegistroComercios | None = None,
     almacen: AlmacenEstado | None = None,
     despachador: Despachador | None = None,
+    filtro_modo: str | None = None,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
     `persistencia` (Supabase), `agente` (intencion.Agente), `filtro`
-    (contracts.Filtro, de Dev 1) y `fabricante` (fabricante.FuenteFabricante)
-    los arma `python -m proxy` desde el entorno; acá no se lee el entorno, así
+    (contracts.Filtro, de Dev 1, y `filtro_modo`, lo que dice su
+    `describir()`) y `fabricante` (fabricante.FuenteFabricante) los arma
+    `python -m proxy` desde el entorno; acá no se lee el entorno, así
     los tests nunca escriben en la base real ni llaman a un LLM.
 
     Gateway de producción (todo opcional; sin esto, la app es la de siempre):
@@ -3237,7 +3243,7 @@ def create_app(
         config, client, evaluador, ping_segundos,
         persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
         integradores=integradores, comercios=comercios, almacen=almacen,
-        despachador=despachador,
+        despachador=despachador, filtro_modo=filtro_modo,
     )
     nucleo = NucleoProxy(proxy)
     # El oyente público solo existe con claves: sin ellas, todo pedido es local.
