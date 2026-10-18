@@ -56,7 +56,11 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # proxy no escucha, y cada intento fallido suma ~2 s (el panel daba "proxy
 # desconectado"). El proxy acepta Host 127.0.0.1:8010.
 DEFAULT_PROXY_URL = "http://127.0.0.1:8010"
+# La API de `adk web` (Shopping Agent): la usa la pantalla /demo.
+DEFAULT_ADK_URL = "http://127.0.0.1:8000"
 DEFAULT_PORT = 8020
+# Donde el comercio lee el escenario activo (`world/run_world.sh` → TEMP_DB_DIR).
+WORLD_TEMP_RELATIVO = Path("world") / "ap2" / ".temp-db"
 GUARD_KID = "guard-key-1"  # CLAUDE.md → Decisiones, punto 6
 # Token de la API de control del proxy (N4): lo escribe el proxy al arrancar.
 TOKEN_RELATIVO = Path(".temp-db") / "guard_api_token"
@@ -96,10 +100,16 @@ class Config:
     port: int = DEFAULT_PORT
     # Archivo con el token del proxy (None: <repo_root>/.temp-db/guard_api_token).
     token_path: Path | None = None
-    # Solo para tests: transporte de httpx hacia el proxy.
+    # /demo: la API de adk web, la carpeta del escenario del comercio
+    # (None: <repo_root>/world/ap2/.temp-db) y el modo demo.
+    adk_url: str = DEFAULT_ADK_URL
+    world_temp_dir: Path | None = None
+    demo_auto: bool = True
+    # Solo para tests: transporte de httpx hacia el proxy y hacia ADK.
     proxy_transport: httpx.AsyncBaseTransport | None = field(
         default=None, compare=False
     )
+    adk_transport: httpx.AsyncBaseTransport | None = field(default=None, compare=False)
 
     @property
     def origenes(self) -> tuple[str, ...]:
@@ -128,6 +138,10 @@ class Config:
         return self.token_path or self.repo_root / TOKEN_RELATIVO
 
     @property
+    def carpeta_world_temp(self) -> Path:
+        return self.world_temp_dir or self.repo_root / WORLD_TEMP_RELATIVO
+
+    @property
     def clave_guard_pem(self) -> Path:
         return self.repo_root / ".temp-db" / "guard_signing_key.pem"
 
@@ -140,10 +154,17 @@ def config_desde_entorno() -> Config:
     token_path = Path(token) if token else REPO_ROOT / TOKEN_RELATIVO
     if not token_path.is_absolute():
         token_path = REPO_ROOT / token_path
+    world_temp = Path(os.environ.get("WORLD_TEMP_DB_DIR") or WORLD_TEMP_RELATIVO)
+    if not world_temp.is_absolute():
+        world_temp = REPO_ROOT / world_temp
+    auto = os.environ.get("DEMO_AUTO", "1").strip().lower() not in {"0", "false", "no"}
     return Config(
         proxy_url=os.environ.get("PROXY_URL", DEFAULT_PROXY_URL).rstrip("/"),
         port=int(os.environ.get("DASHBOARD_PORT", DEFAULT_PORT)),
         token_path=token_path,
+        adk_url=os.environ.get("ADK_URL", DEFAULT_ADK_URL).rstrip("/"),
+        world_temp_dir=world_temp,
+        demo_auto=auto,
     )
 
 
@@ -170,6 +191,11 @@ RUTAS_POST = frozenset({
     "/api/proxy/guard/aprobaciones",
     "/api/proxy/guard/compras/contexto",
     "/api/proxy/guard/compras/decision",
+    # /demo: el input único, el selector de comercio, nueva compra y modo demo.
+    "/api/demo/mensaje",
+    "/api/demo/escenario",
+    "/api/demo/nueva",
+    "/api/demo/auto",
 })
 
 
@@ -860,8 +886,17 @@ class _Estaticos(StaticFiles):
 
 
 def create_app(cfg: Config | None = None) -> Starlette:
+    from dashboard import demo_api  # importa de este módulo: acá, sin ciclo
+
     cfg = cfg or config_desde_entorno()
     rutas = [
+        Route("/demo", demo_api.pagina_demo),
+        Route("/api/demo/estado", demo_api.api_demo_estado),
+        Route("/api/demo/escenarios", demo_api.api_demo_escenarios),
+        Route("/api/demo/escenario", demo_api.api_demo_escenario, methods=["POST"]),
+        Route("/api/demo/mensaje", demo_api.api_demo_mensaje, methods=["POST"]),
+        Route("/api/demo/nueva", demo_api.api_demo_nueva, methods=["POST"]),
+        Route("/api/demo/auto", demo_api.api_demo_auto, methods=["POST"]),
         Route("/api/config", api_config),
         Route("/api/results", api_resultados),
         Route("/api/results/latest", api_resultado_ultimo),
@@ -890,4 +925,5 @@ def create_app(cfg: Config | None = None) -> Starlette:
     ]
     app = Starlette(routes=rutas, middleware=[Middleware(SoloLocal, cfg=cfg)])
     app.state.cfg = cfg
+    app.state.demo = demo_api.Conversacion(cfg)
     return app
