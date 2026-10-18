@@ -19,12 +19,16 @@ _NUMERO = re.compile(r"^-?\d+(\.\d+)?$")
 def numero(valor: Any) -> float | None:
     """Float finito si el valor es un número (o un string numérico); si no, None.
 
-    `bool`, NaN e infinito no son números para el Guard.
+    `bool`, NaN, infinito y los enteros que no entran en un float (JSON
+    admite `10**400`) no son números para el Guard.
     """
     if isinstance(valor, bool):
         return None
     if isinstance(valor, (int, float)):
-        como_float = float(valor)
+        try:
+            como_float = float(valor)
+        except OverflowError:
+            return None
         return como_float if math.isfinite(como_float) else None
     if isinstance(valor, str) and _NUMERO.match(valor.strip()):
         return float(valor.strip())

@@ -44,7 +44,7 @@ def evaluar_con(vistas, ficha, catalogo, ahora):
             extra.pop("vistas", None) or vistas(nombre),
             cart_id,
             catalogo,
-            ahora=ahora,
+            ahora=extra.pop("ahora", ahora),
             checkout=checkout,
             **extra,
         )
@@ -192,7 +192,11 @@ def test_checkout_de_otro_cart_bloquea(checkout, evaluar_con):
 
 
 def _con_total(payload: dict, centavos) -> dict:
+    """Otro total firmado, con los line_items coherentes (el JWT no se contradice)."""
     payload["totals"] = [{"type": "subtotal", "amount": centavos}, {"type": "total", "amount": centavos}]
+    for linea in payload.get("line_items", []):
+        linea["item"]["price"] = centavos
+        linea["totals"] = [{"type": "subtotal", "amount": centavos}, {"type": "total", "amount": centavos}]
     return payload
 
 
