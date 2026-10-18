@@ -22,7 +22,7 @@ export function arista(de, a) {
 const ETIQUETAS = {
   usuario: { etiqueta: "Vos" },
   agente: { etiqueta: "Tu agente", sub: "de compras" },
-  guard: { etiqueta: "Pre-Sign Guard", sub: "el intermediario" },
+  guard: { etiqueta: "KaiAI", sub: "el intermediario" },
   comercio: { etiqueta: "Comercio" },
   fuentes: { etiqueta: "Fabricante · catálogo" },
   ap2: { etiqueta: "AP2 · pago" },
@@ -52,6 +52,31 @@ const LAYOUTS = {
     },
     apagado: { dx: 0, dy: 122 },
   },
+  // Franja: la tarjeta compacta arriba del chat, del ancho de la conversación.
+  // Píldoras en una línea, sin subtítulos. Apagado, el Guard baja y la línea
+  // queda directa.
+  franja: {
+    ancho: 720, alto: 124,
+    nodos: {
+      usuario: { x: 36, y: 66, w: 60, h: 30 },
+      agente: { x: 150, y: 66, w: 108, h: 30 },
+      guard: { x: 360, y: 66, w: 232, h: 56 },
+      comercio: { x: 556, y: 66, w: 100, h: 30 },
+      fuentes: { x: 360, y: 14, w: 152, h: 22 },
+      ap2: { x: 672, y: 66, w: 84, h: 24 },
+    },
+    aristas: {
+      "usuario-agente": "M 66 66 L 96 66",
+      "agente-guard": "M 204 66 L 244 66",
+      "guard-comercio": "M 476 66 L 506 66",
+      "agente-comercio": "M 204 66 L 506 66",
+      "guard-usuario": "M 296 94 C 296 126, 36 126, 36 81",
+      "guard-fuentes": "M 360 38 L 360 25",
+      "comercio-ap2": "M 606 66 L 630 66",
+    },
+    etiquetas: { agente: { sub: null }, guard: { sub: null } },
+    apagado: { dx: 0, dy: 34 },
+  },
   // Teléfono: una columna. Apagado, el Guard se corre a la izquierda.
   vertical: {
     ancho: 400, alto: 620,
@@ -76,11 +101,11 @@ const LAYOUTS = {
   },
 };
 
-/** Posiciones, aristas (paths SVG) y cuánto se corre el Guard apagado. */
+/** Posiciones, aristas (paths SVG), etiquetas y cuánto se corre el Guard apagado. */
 export function geometria(orientacion = "horizontal") {
   const base = LAYOUTS[orientacion] ?? LAYOUTS.horizontal;
   const nodos = {};
-  for (const id of NODOS) nodos[id] = { id, ...base.nodos[id], ...ETIQUETAS[id] };
+  for (const id of NODOS) nodos[id] = { id, ...base.nodos[id], ...ETIQUETAS[id], ...base.etiquetas?.[id] };
   return { orientacion, ancho: base.ancho, alto: base.alto, nodos, aristas: { ...base.aristas }, apagado: { ...base.apagado } };
 }
 

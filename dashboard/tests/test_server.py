@@ -105,7 +105,7 @@ def test_estaticos_index_y_modulos_js(tmp_path):
     r = c.get("/")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
-    assert "Pre-Sign Guard" in r.text
+    assert "KaiAI" in r.text
     js = c.get("/app.js")
     assert js.status_code == 200
     assert "javascript" in js.headers["content-type"]  # módulos ES en Windows

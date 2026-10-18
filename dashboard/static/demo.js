@@ -13,7 +13,8 @@ import { registrarSondeo, unaALaVez } from "./lib/conexion.js";
 import { armarRelato } from "./lib/relato.js";
 import { estadoInicial, geometria, NODOS, paso } from "./lib/diagrama.js";
 import {
-  desenlace, guardarResultado, lineaDeTiempo, modoDelInput, resultadoCorrida, resumenComparacion,
+  desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, resultadoCorrida, resumenComparacion,
+  retenerLineas, tonosComparacion,
 } from "./lib/demo.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -28,6 +29,12 @@ function leerPref(clave, porDefecto = null) {
 }
 function guardarPref(clave, valor) {
   try { localStorage.setItem(`psg.${clave}`, valor); } catch { /* sin storage */ }
+}
+function leerHistorial() {
+  try {
+    const h = JSON.parse(leerPref("demo.historial", "[]"));
+    return Array.isArray(h) ? h : [];
+  } catch { return []; }
 }
 function leerComparacion() {
   try { return JSON.parse(leerPref("demo.comparacion", "{}")) || {}; } catch { return {}; }
@@ -46,6 +53,8 @@ const estado = {
   cambiando: false,
   comparacion: leerComparacion(),
   guardadas: new Set(),
+  historial: leerHistorial(),
+  viendo: null, // id de una compra anterior del historial (solo lectura)
 };
 
 async function pedir(url, { metodo = "GET", cuerpo, timeout = 6000 } = {}) {
@@ -100,18 +109,6 @@ async function cargarEscenarios() {
     estado.escenarios = r.datos;
     construirSelector();
     programarRender();
-  }
-}
-
-async function cargarGrabaciones() {
-  const r = await pedir("/api/replay");
-  const select = $("#grabacion");
-  for (const g of Array.isArray(r.datos) ? r.datos : []) {
-    if (!g?.nombre) continue;
-    const op = document.createElement("option");
-    op.value = g.nombre;
-    op.textContent = g.nombre;
-    select.append(op);
   }
 }
 
@@ -173,7 +170,8 @@ function texto(padre, contenido, attrs) {
 const NOMBRE_ETAPA = { filtro: "filtro", intencion: "intención", verificacion: "verificación" };
 
 function construirDiagrama() {
-  geo = geometria(angosto.matches ? "vertical" : "horizontal");
+  geo = geometria(angosto.matches ? "vertical" : "franja");
+  const pildoras = geo.orientacion === "franja";
   svg.setAttribute("viewBox", `0 0 ${geo.ancho} ${geo.alto}`);
   for (const n of [...svg.children]) if (!["title", "desc"].includes(n.tagName)) n.remove();
   capas.aristas = el("g", { class: "capa-aristas" }, svg);
@@ -186,11 +184,16 @@ function construirDiagrama() {
     const n = geo.nodos[id];
     const secundario = id === "fuentes" || id === "ap2";
     const g = el("g", { class: `nodo nodo-${id}${secundario ? " secundario" : ""}`, "data-id": id }, capas.nodos);
-    el("rect", { x: n.x - n.w / 2, y: n.y - n.h / 2, width: n.w, height: n.h, rx: id === "guard" ? 18 : 12,
-      class: id === "guard" ? "caja" : "" }, g);
+    // En la franja, píldoras; en el teléfono, cajas.
+    const rx = id === "guard" ? (pildoras ? 16 : 18) : (pildoras ? n.h / 2 : 12);
+    el("rect", { x: n.x - n.w / 2, y: n.y - n.h / 2, width: n.w, height: n.h, rx, class: id === "guard" ? "caja" : "" }, g);
     if (id === "guard") {
-      texto(g, n.etiqueta, { x: n.x, y: n.y - 24, class: "etiqueta" });
-      texto(g, n.sub, { x: n.x, y: n.y - 4, class: "sub" });
+      if (n.sub) {
+        texto(g, n.etiqueta, { x: n.x, y: n.y - n.h * 0.24, class: "etiqueta" });
+        texto(g, n.sub, { x: n.x, y: n.y - n.h * 0.02, class: "sub" });
+      } else {
+        texto(g, n.etiqueta, { x: n.x, y: n.y - n.h * 0.17, class: "etiqueta" });
+      }
       construirEtapas(g, n);
     } else if (n.sub) {
       texto(g, n.etiqueta, { x: n.x, y: n.y - 8, class: "etiqueta" });
@@ -215,7 +218,7 @@ function construirEtapas(g, n) {
   const total = items.reduce((s, i) => s + i.ancho, 0) + separacion * (items.length - 1);
   let x = n.x - total / 2 + 4;
   for (const i of items) {
-    i.e.setAttribute("transform", `translate(${x.toFixed(1)} ${(n.y + 24).toFixed(1)})`);
+    i.e.setAttribute("transform", `translate(${x.toFixed(1)} ${(n.y + n.h * 0.26).toFixed(1)})`);
     x += i.ancho + separacion;
   }
 }
@@ -283,10 +286,37 @@ function pintarDiagrama(e) {
     const v = visibles[path.dataset.clave];
     path.dataset.visible = v === undefined ? "true" : String(v);
   }
+  const descripcion = DESCRIPCION[color] ?? DESCRIPCION.inactivo;
   $("#diagrama-desc").textContent = activo
-    ? `Intermediario activado: ${DESCRIPCION[color] ?? DESCRIPCION.inactivo}.`
+    ? `Intermediario activado: ${descripcion}.`
     : "Intermediario apagado: tu agente y el comercio se hablan directo.";
+  // La misma frase, visible en la cabecera de la tarjeta (sigue a la vista
+  // aunque el diagrama esté plegado).
+  const linea = $("#escena-estado");
+  linea.dataset.tono = activo ? color : "inactivo";
+  linea.textContent = activo
+    ? `El intermediario ${descripcion}`
+    : "Intermediario apagado: tu agente le habla directo al comercio";
 }
+
+// Plegar el diagrama: una preferencia de cada navegador. En el teléfono
+// arranca plegado (ocupa media pantalla).
+const marco = $(".escena-marco");
+const plegar = $("#plegar");
+
+function aplicarPliegue(plegada) {
+  marco.dataset.plegada = String(plegada);
+  plegar.setAttribute("aria-expanded", String(!plegada));
+  const rotulo = plegada ? "Mostrar el diagrama" : "Ocultar el diagrama";
+  plegar.setAttribute("aria-label", rotulo);
+  plegar.title = rotulo;
+}
+
+plegar.addEventListener("click", () => {
+  const plegada = marco.dataset.plegada !== "true";
+  guardarPref("demo.diagrama", plegada ? "plegado" : "abierto");
+  aplicarPliegue(plegada);
+});
 
 // Mensajes que viajan por las flechas, de a uno.
 const cola = [];
@@ -309,12 +339,12 @@ function siguienteFlujo() {
 function animarFlujo(f, duracion) {
   return new Promise((listo) => {
     const path = capas.aristas?.querySelector(`.arista[data-clave="${f.clave}"]`);
-    if (!path || document.hidden) { listo(); return; }
+    if (!path || document.hidden || marco.dataset.plegada === "true") { listo(); return; }
     path.classList.add("activa");
     setTimeout(() => path.classList.remove("activa"), duracion + 380);
     if (reducido()) { setTimeout(listo, 180); return; }
     const largo = path.getTotalLength();
-    const punto = el("circle", { r: 5.5, class: "mensaje", "data-tono": f.tono }, capas.mensajes);
+    const punto = el("circle", { r: geo.orientacion === "franja" ? 4.5 : 5.5, class: "mensaje", "data-tono": f.tono }, capas.mensajes);
     const inicio = performance.now();
     const curva = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
     const cuadro = (t) => {
@@ -336,26 +366,43 @@ angosto.addEventListener("change", construirDiagrama);
 
 const relato = $("#relato");
 
+const QUIEN = {
+  usuario: "Vos", agente: "Tu agente de compras", guard: "KaiAI",
+  comercio: "Comercio", ap2: "AP2 · pago", sistema: "Sistema",
+};
+
+/** Lo que dice tu agente, sin el "Tu agente:" de la plantilla (ya lo dice el rótulo). */
+function textoVisible(l) {
+  if (l.tono === "agente") return l.texto.replace(/^Tu agente:\s*/, "");
+  if (l.actor === "usuario") return l.texto.replace(/^Vos:\s*/, "");
+  return l.texto;
+}
+
 function crearLinea(l, animar) {
   const li = document.createElement("li");
   li.className = `linea${animar ? " entra" : ""}`;
   li.dataset.id = l.id;
+  const quien = document.createElement("p");
+  quien.className = "quien";
+  const nombre = document.createElement("span");
   const t = document.createElement("time");
-  t.dateTime = l.ts;
-  const marca = document.createElement("span");
-  marca.className = "marca-actor";
-  marca.setAttribute("aria-hidden", "true");
-  const tx = document.createElement("span");
+  t.dateTime = l.ts ?? "";
+  quien.append(nombre, t);
+  const tx = document.createElement("p");
   tx.className = "texto";
-  li.append(t, marca, tx);
+  li.append(quien, tx);
   actualizarLinea(li, l);
   return li;
 }
 
 function actualizarLinea(li, l) {
-  const [t, , tx] = li.children;
-  if (t.textContent !== l.hora) t.textContent = l.hora;
-  if (tx.textContent !== l.texto) tx.textContent = l.texto;
+  const [quien, tx] = li.children;
+  const [nombre, t] = quien.children;
+  const nombreNuevo = QUIEN[l.actor] ?? "";
+  if (nombre.textContent !== nombreNuevo) nombre.textContent = nombreNuevo;
+  if (t.textContent !== (l.hora ?? "")) t.textContent = l.hora ?? "";
+  const visible = textoVisible(l);
+  if (tx.textContent !== visible) tx.textContent = visible;
   li.dataset.tono = l.tono;
   li.dataset.actor = l.actor;
 }
@@ -368,10 +415,39 @@ relato.addEventListener("scroll", () => {
 }, { passive: true });
 new ResizeObserver(() => { if (pegado && esScrollable()) relato.scrollTop = relato.scrollHeight; }).observe(relato);
 
-function renderRelato(items) {
+function lineasEnVivo(items) {
   // En una grabación no se sabe si el proxy tenía filtro: no se afirma.
-  const lineas = armarRelato(items, { filtro: !estado.replay && estado.proxy.filtro });
-  const fin = desenlace(items);
+  return armarRelato(items, { filtro: !estado.replay && estado.proxy.filtro });
+}
+
+// Ritmo en vivo: antes de cada paso del Guard, un momento con lo que hizo
+// ("Revisando la respuesta del comercio…"). Al cargar la página, en una
+// grabación o en el historial, todo se muestra de una.
+const ritmo = { mostradas: new Set(), retenida: null, temporizador: null, ultimas: [] };
+
+function conRitmo(lineas) {
+  ritmo.ultimas = lineas;
+  if (estado.replay || enArranque()) {
+    for (const l of lineas) ritmo.mostradas.add(l.id);
+    return lineas;
+  }
+  const { visibles, retenida } = retenerLineas(lineas, ritmo.mostradas);
+  if (!retenida) return visibles;
+  if (ritmo.retenida !== retenida.id) {
+    clearTimeout(ritmo.temporizador);
+    ritmo.retenida = retenida.id;
+    ritmo.temporizador = setTimeout(soltarRetenida, reducido() ? Math.min(retenida.pausa.ms, 600) : retenida.pausa.ms);
+  }
+  return [...visibles, { id: "pensando", actor: "guard", tono: "pensando", texto: retenida.pausa.texto, hora: "" }];
+}
+
+function soltarRetenida() {
+  for (const id of lineasASoltar(ritmo.ultimas, ritmo.retenida)) ritmo.mostradas.add(id);
+  ritmo.retenida = null;
+  programarRender();
+}
+
+function renderRelato(lineas, finId) {
   const cercaDelFinal = pegado || !esScrollable();
   const ids = new Set(lineas.map((l) => l.id));
   for (const li of [...relato.children]) if (!ids.has(li.dataset.id)) li.remove();
@@ -389,7 +465,9 @@ function renderRelato(items) {
       li = relato.children[i];
     }
     actualizarLinea(li, l);
-    li.dataset.final = String(Boolean(fin && fin.item.id === l.id));
+    li.dataset.final = String(Boolean(finId && finId === l.id));
+    // Mismo que habla seguido: el rótulo se dice una vez.
+    li.dataset.continua = String(i > 0 && lineas[i - 1].actor === l.actor);
   });
   $("#relato-vacio").hidden = lineas.length > 0;
   if (ultimaNueva && cercaDelFinal) {
@@ -427,13 +505,16 @@ function registrarCorrida(items) {
 
 function renderContraste() {
   const par = estado.comparacion[escenarioActivo()] ?? {};
-  const { sin, con } = resumenComparacion(par.sin ?? null, par.con ?? null);
-  $("#contraste").hidden = !(sin || con) || Boolean(estado.replay);
-  for (const [id, valor] of [["#contraste-sin", sin], ["#contraste-con", con]]) {
-    const p = $(id);
+  const textos = resumenComparacion(par.sin ?? null, par.con ?? null);
+  const tonos = tonosComparacion(par.sin ?? null, par.con ?? null);
+  $("#contraste").hidden = !(textos.sin || textos.con) || Boolean(estado.replay);
+  for (const lado of ["sin", "con"]) {
+    const valor = textos[lado];
+    const p = $(`#contraste-${lado}`);
     const textoNuevo = valor ?? "Todavía no la corriste así";
     if (p.textContent !== textoNuevo) p.textContent = textoNuevo;
     p.dataset.vacio = String(!valor);
+    p.closest(".contraste-lado").dataset.tono = tonos[lado] ?? "";
   }
 }
 
@@ -481,6 +562,7 @@ async function enviar(ev) {
   ev.preventDefault();
   const valor = entrada.value.trim();
   if (!valor) return;
+  estado.viendo = null;
   let m = modoActual();
   if (m.modo === "ocupado") {
     // Puede que nuestro agente acabe de preguntar y el sondeo todavía no llegó.
@@ -543,6 +625,8 @@ function construirSelector() {
       b.className = "opcion";
       b.dataset.escenario = o.id;
       b.textContent = o.etiqueta;
+      if (o.etiqueta === "honesto") b.dataset.honesto = "true";
+      else if (/inyecci|miente|inflado/.test(o.etiqueta)) b.dataset.honesto = "false";
       b.setAttribute("aria-pressed", "false");
       b.setAttribute("aria-label", `${g.categoria}: ${o.etiqueta}`);
       b.addEventListener("click", () => elegirEscenario(o.id));
@@ -554,6 +638,8 @@ function construirSelector() {
 
 async function elegirEscenario(id) {
   if (estado.replay) detenerReplay();
+  estado.viendo = null;
+  cerrarLateral();
   const r = await pedir("/api/demo/escenario", { metodo: "POST", cuerpo: { escenario: id } });
   if (r.ok) {
     estado.escenarios.activo = r.datos.activo;
@@ -585,16 +671,12 @@ interruptor.addEventListener("click", async () => {
 
 $("#nueva").addEventListener("click", async () => {
   if (estado.replay) detenerReplay();
+  estado.viendo = null;
+  cerrarLateral();
   await pedir("/api/demo/nueva", { metodo: "POST", cuerpo: {} });
   avisar("");
   await refrescarEstado();
   entrada.focus();
-});
-
-$("#auto").addEventListener("click", async () => {
-  const r = await pedir("/api/demo/auto", { metodo: "POST", cuerpo: { auto: !estado.demo.auto } });
-  if (r.ok) estado.demo.auto = r.datos.auto;
-  programarRender();
 });
 
 // Tema: el mismo que el panel (psg.tema).
@@ -616,10 +698,6 @@ $("#tema").addEventListener("click", () => {
 });
 
 // ---------------------------------------------------------------- replay (plan B)
-
-const grabacion = $("#grabacion");
-grabacion.addEventListener("change", () => programarRender());
-$("#reproducir").addEventListener("click", () => (estado.replay ? detenerReplay() : reproducir(grabacion.value)));
 
 async function reproducir(nombre) {
   if (!nombre) return;
@@ -680,30 +758,132 @@ function renderControles() {
       : on ? "Intermediario: activado" : "Intermediario: desactivado";
   const nodoTexto = interruptor.querySelector(".interruptor-texto");
   if (nodoTexto.textContent !== textoInterruptor) nodoTexto.textContent = textoInterruptor;
-  const auto = $("#auto");
-  auto.setAttribute("aria-pressed", String(estado.demo.auto));
-  auto.textContent = `Respuestas automáticas: ${estado.demo.auto ? "sí" : "no"}`;
-  const rep = $("#reproducir");
-  rep.disabled = !estado.replay && !grabacion.value;
-  rep.textContent = estado.replay ? "Detener" : "Reproducir";
 }
 
 function render() {
   const items = itemsActuales();
   registrarCorrida(items);
-  renderRelato(items);
+  const lineas = lineasEnVivo(items);
+  const fin = desenlace(items);
+  actualizarHistorial(lineas, fin);
+  const anterior = estado.viendo ? estado.historial.find((h) => h.id === estado.viendo) : null;
+  if (estado.viendo && !anterior) estado.viendo = null;
+  renderRelato(anterior ? anterior.lineas : conRitmo(lineas), anterior ? anterior.finId : fin?.item.id);
+  $("#anterior").hidden = !anterior;
   avanzarDiagrama(items);
   renderInput(relato.children.length > 0);
   renderControles();
   renderContraste();
+  renderHistorial();
+  renderCabecera(anterior);
 }
+
+// ---------------------------------------------------------------- historial (en este navegador)
+
+const MAX_HISTORIAL = 30;
+const MARCA_FIN = { ok: "✓", crit: "✕", aviso: "!" };
+
+function nombreEscenario(id) {
+  for (const g of estado.escenarios.grupos || []) {
+    for (const o of g.opciones || []) if (o.id === id) return `${g.categoria} · ${o.etiqueta}`;
+  }
+  return id ?? "";
+}
+
+/** La compra en curso queda en el historial apenas el usuario escribe algo. */
+function actualizarHistorial(lineas, fin) {
+  if (estado.replay) return;
+  const id = estado.demo.sesion?.creada;
+  const primera = lineas.find((l) => l.actor === "usuario");
+  if (!id || !primera) return;
+  const entrada = {
+    id,
+    titulo: textoVisible(primera).slice(0, 90),
+    escenario: escenarioActivo(),
+    guardActivo: estado.proxy.guardActivo !== false,
+    fin: fin ? { clave: fin.clave, texto: fin.texto, tono: fin.tono } : null,
+    finId: fin?.item.id ?? null,
+    lineas: lineas.slice(-80).map(({ id: lid, ts, hora, texto: t, tono, actor }) => ({ id: lid, ts, hora, texto: t, tono, actor })),
+  };
+  const previa = estado.historial.find((h) => h.id === id);
+  if (previa && previa.lineas.length === entrada.lineas.length && previa.fin?.clave === entrada.fin?.clave
+    && previa.lineas.at(-1)?.texto === entrada.lineas.at(-1)?.texto) return;
+  // La primera vez se guarda el escenario y el lado de esa corrida; no cambian después.
+  if (previa) { entrada.escenario = previa.escenario; entrada.guardActivo = previa.guardActivo; }
+  estado.historial = [entrada, ...estado.historial.filter((h) => h.id !== id)].slice(0, MAX_HISTORIAL);
+  guardarPref("demo.historial", JSON.stringify(estado.historial));
+}
+
+function renderHistorial() {
+  const lista = $("#historial");
+  const actual = estado.viendo ?? estado.demo.sesion?.creada;
+  const firma = JSON.stringify([actual, estado.historial.map((h) => [h.id, h.titulo, h.fin?.clave])]);
+  $("#historial-vacio").hidden = estado.historial.length > 0;
+  if (lista.dataset.firma === firma) return;
+  lista.dataset.firma = firma;
+  lista.replaceChildren(...estado.historial.map((h) => {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "historial-item";
+    b.setAttribute("aria-current", String(h.id === actual));
+    const marca = document.createElement("span");
+    marca.className = "historial-marca";
+    marca.dataset.tono = h.fin?.tono ?? "";
+    marca.textContent = MARCA_FIN[h.fin?.tono] ?? "•";
+    marca.setAttribute("aria-hidden", "true");
+    const titulo = document.createElement("span");
+    titulo.className = "historial-titulo";
+    titulo.textContent = h.titulo;
+    const sub = document.createElement("span");
+    sub.className = "historial-sub";
+    sub.textContent = `${nombreEscenario(h.escenario)} · ${h.guardActivo ? "con" : "sin"} intermediario · ${h.fin?.texto ?? "en curso"}`;
+    b.append(marca, titulo, sub);
+    b.addEventListener("click", () => {
+      estado.viendo = h.id === estado.demo.sesion?.creada ? null : h.id;
+      cerrarLateral();
+      programarRender();
+    });
+    li.append(b);
+    return li;
+  }));
+}
+
+function renderCabecera(anterior) {
+  const actual = estado.historial.find((h) => h.id === estado.demo.sesion?.creada);
+  const titulo = estado.replay ? `Grabación: ${estado.replay.nombre}`
+    : (anterior ?? actual)?.titulo ?? "Nueva compra";
+  const t = $("#titulo-compra");
+  if (t.textContent !== titulo) t.textContent = titulo;
+  const pastilla = $("#estado-intermediario");
+  const valor = estado.proxy.conectado === false ? "sin conexión"
+    : estado.proxy.guardActivo === null ? "…" : estado.proxy.guardActivo ? "Intermediario activado" : "Intermediario desactivado";
+  if (pastilla.textContent !== valor) pastilla.textContent = valor;
+  pastilla.dataset.estado = estado.proxy.guardActivo === true ? "activado" : estado.proxy.guardActivo === false ? "desactivado" : "cargando";
+  const sub = $("#bienvenida-sub");
+  const comercio = nombreEscenario(escenarioActivo());
+  const textoSub = comercio
+    ? `Comercio: ${comercio}. Tu agente negocia; KaiAI revisa antes de que firmes.`
+    : "Tu agente negocia con el comercio; KaiAI revisa antes de que firmes.";
+  if (sub.textContent !== textoSub) sub.textContent = textoSub;
+}
+
+// ---------------------------------------------------------------- menú lateral (teléfono)
+
+function abrirLateral() { document.body.dataset.lateral = "abierto"; $("#velo").hidden = false; }
+function cerrarLateral() { delete document.body.dataset.lateral; $("#velo").hidden = true; }
+$("#abrir-lateral").addEventListener("click", abrirLateral);
+$("#cerrar-lateral").addEventListener("click", cerrarLateral);
+$("#velo").addEventListener("click", cerrarLateral);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") cerrarLateral(); });
+$("#volver").addEventListener("click", () => { estado.viendo = null; programarRender(); });
 
 // ---------------------------------------------------------------- arranque
 
 aplicarTema(TEMAS.includes(leerPref("tema", "auto")) ? leerPref("tema", "auto") : "auto");
+aplicarPliegue((leerPref("demo.diagrama") ?? (angosto.matches ? "plegado" : "abierto")) === "plegado");
 construirDiagrama();
 cargarEscenarios();
-cargarGrabaciones();
 refrescarEstado();
 refrescarCompras();
 refrescarProxy();

@@ -936,6 +936,7 @@ def create_app(cfg: Config | None = None) -> Starlette:
     cfg = cfg or config_desde_entorno()
     rutas = [
         Route("/demo", demo_api.pagina_demo),
+        Route("/demo/clasico", demo_api.pagina_demo_clasico),
         Route("/api/demo/estado", demo_api.api_demo_estado),
         Route("/api/demo/escenarios", demo_api.api_demo_escenarios),
         Route("/api/demo/escenario", demo_api.api_demo_escenario, methods=["POST"]),

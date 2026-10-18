@@ -347,6 +347,16 @@ def test_despues_de_un_bloqueo_del_guard_no_se_contesta_nada():
     assert demo.siguiente_auto(estado, eventos, Counter()) is None
 
 
+def test_el_bloqueo_se_reconoce_tambien_con_el_texto_del_proxy():
+    eventos = _sesion(
+        ev("root_agent", error="RuntimeError: KaiAI: bloqueado. motivo. No se presenta para firma."),
+        ev("root_agent", texto="I have created the checkout. Confirm?"),
+    )
+    assert demo.bloqueo_del_guard(eventos)
+    estado = {"chosen_cart_id": "cart_1", "payment_credential_token": {"value": "t"}}
+    assert demo.siguiente_auto(estado, eventos, Counter()) is None
+
+
 def test_la_eleccion_del_producto_es_del_usuario():
     eventos = _sesion(ev("shopper", texto="Which one would you like?"))
     assert demo.siguiente_auto({}, eventos, Counter()) is None

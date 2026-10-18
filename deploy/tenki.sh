@@ -19,6 +19,19 @@
 #   EXPOSE_ADK=1         publicar también la dev-ui de ADK (:8000); no hace
 #                        falta, /demo la reemplaza
 #
+# Gateway de producción (opcional). Se leen del entorno o, si no están, del
+# .env de la raíz; las rutas son de esta máquina:
+#   GATEWAY_CLAVES_ARCHIVO     si apunta a un archivo, se sube a la VM
+#                              (.temp-db/gateway_claves.json, chmod 600) y se
+#                              publica también el gateway (:8030) por HTTPS
+#   GATEWAY_COMERCIOS_ARCHIVO  registro de comercios; se sube solo junto con
+#                              las claves (.temp-db/gateway_comercios.json)
+#   GATEWAY_PREVIEW_URL        URL pública del :8030, si `expose` no la imprime
+# Las rutas en la VM y la URL publicada van en .temp-db/deploy.env, que
+# start_all.sh carga después del .env. Sin claves, ese archivo se borra y no
+# se publica nada más que el dashboard. Los secretos de webhook (los que nombra
+# `secreto_env`) viajan en el .env.
+#
 # Sube el código (archivos de git, sin lo ignorado) y el .env de la raíz:
 # la VM necesita GOOGLE_API_KEY y las demás claves que use el proxy.
 
@@ -41,6 +54,32 @@ if [ ! -f .env ] || ! grep -Eq '^(GOOGLE_API_KEY=.|GOOGLE_GENAI_USE_VERTEXAI=(tr
   exit 1
 fi
 case "$ESCENARIO" in *[!A-Za-z0-9_-]*) echo "Escenario inválido: $ESCENARIO" >&2; exit 1 ;; esac
+
+de_env() {  # de_env <VARIABLE>: del entorno o, si no, del .env (sin source: no ejecuta nada)
+  local nombre="$1" valor
+  valor="${!nombre:-}"
+  if [ -z "$valor" ]; then
+    valor="$(grep -E "^(export[[:space:]]+)?$nombre=" .env | tail -n1 | cut -d= -f2- || true)"
+    valor="${valor%\"}"; valor="${valor#\"}"; valor="${valor%\'}"; valor="${valor#\'}"
+  fi
+  printf '%s' "$valor"
+}
+
+# El gateway solo se publica si hay archivo de claves: sin claves el proxy no
+# abre el oyente público.
+CLAVES="$(de_env GATEWAY_CLAVES_ARCHIVO)"
+COMERCIOS=""
+if [ -n "$CLAVES" ]; then
+  if [ ! -f "$CLAVES" ]; then
+    echo "GATEWAY_CLAVES_ARCHIVO=$CLAVES no existe." >&2
+    exit 1
+  fi
+  COMERCIOS="$(de_env GATEWAY_COMERCIOS_ARCHIVO)"
+  if [ -n "$COMERCIOS" ] && [ ! -f "$COMERCIOS" ]; then
+    echo "GATEWAY_COMERCIOS_ARCHIVO=$COMERCIOS no existe." >&2
+    exit 1
+  fi
+fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -80,6 +119,24 @@ remoto 'set -e; cd /home/tenki
   pkill -f "deploy/[s]tart_all.sh" || true
   mkdir -p app; base64 -d repo.b64 | tar -xzf - -C app; rm -f repo.b64
   mv guard-demo.env app/.env; chmod 600 app/.env'
+
+# Después de extraer el código: .temp-db/ está ignorado por git, así que el tar
+# no lo pisa, pero el orden deja claro que estos archivos ganan.
+if [ -n "$CLAVES" ]; then
+  echo "-> Subiendo la configuración del gateway..."
+  tenki sandbox write --session "$TENKI_SESSION" --path /home/tenki/gateway_claves.json --data-file "$CLAVES"
+  if [ -n "$COMERCIOS" ]; then
+    tenki sandbox write --session "$TENKI_SESSION" --path /home/tenki/gateway_comercios.json --data-file "$COMERCIOS"
+  fi
+  remoto 'set -e; cd /home/tenki; umask 077
+    mkdir -p app/.temp-db
+    mv gateway_claves.json app/.temp-db/gateway_claves.json
+    chmod 600 app/.temp-db/gateway_claves.json
+    if [ -f gateway_comercios.json ]; then
+      mv gateway_comercios.json app/.temp-db/gateway_comercios.json
+      chmod 600 app/.temp-db/gateway_comercios.json
+    fi'
+fi
 
 # --- 3. Dependencias (idempotente) ------------------------------------------
 echo "-> Instalando dependencias (la primera vez tarda unos minutos)..."
@@ -122,6 +179,38 @@ case "$ORIGEN" in *[!A-Za-z0-9.:/_-]*) echo "URL pública rara: $ORIGEN" >&2; ex
 EXTRA="${DASHBOARD_EXTRA_HOSTS:-}"
 case "$EXTRA" in *[!A-Za-z0-9.:,_-]*) echo "DASHBOARD_EXTRA_HOSTS inválido" >&2; exit 1 ;; esac
 
+# El gateway va por HTTPS (lo termina el túnel de Tenki): las claves de los
+# integradores no viajan en claro.
+GW_ORIGEN=""
+if [ -n "$CLAVES" ]; then
+  echo "-> Publicando el gateway (:8030)..."
+  GW_URL="${GATEWAY_PREVIEW_URL:-$(url_de 8030)}"
+  if [ -z "$GW_URL" ]; then
+    echo "No encontré la URL pública del gateway. Mirala con: tenki sandbox preview-url list --session $TENKI_SESSION" >&2
+    echo "y volvé a correr: GATEWAY_PREVIEW_URL=https://... TENKI_SESSION=$TENKI_SESSION bash deploy/tenki.sh $ESCENARIO" >&2
+    exit 1
+  fi
+  GW_ORIGEN="$(printf '%s' "$GW_URL" | sed -E 's#^(https?://[^/]+).*#\1#')"
+  case "$GW_ORIGEN" in *[!A-Za-z0-9.:/_-]*) echo "URL pública rara: $GW_ORIGEN" >&2; exit 1 ;; esac
+  case "$GW_ORIGEN" in https://?*) ;; *) echo "El gateway tiene que publicarse por https: $GW_ORIGEN" >&2; exit 1 ;; esac
+fi
+
+# Lo que lee start_all.sh después del .env (rutas en la VM, no las locales).
+# Sin gateway, las variables vacías: pisan las rutas de la máquina local que
+# pueda traer el .env subido (el proxy no podría abrirlas y no arrancaría) y
+# un deploy anterior no deja el gateway prendido.
+if [ -n "$CLAVES" ]; then
+  DEPLOY_ENV="printf '%s\\n' 'GATEWAY_CLAVES_ARCHIVO=.temp-db/gateway_claves.json' 'GATEWAY_PORT=8030' 'GATEWAY_PUBLIC_URL=$GW_ORIGEN'"
+  if [ -n "$COMERCIOS" ]; then
+    DEPLOY_ENV="$DEPLOY_ENV 'GATEWAY_COMERCIOS_ARCHIVO=.temp-db/gateway_comercios.json'"
+  else
+    DEPLOY_ENV="$DEPLOY_ENV 'GATEWAY_COMERCIOS_ARCHIVO='"
+  fi
+  DEPLOY_ENV="(umask 077; mkdir -p .temp-db; $DEPLOY_ENV > .temp-db/deploy.env)"
+else
+  DEPLOY_ENV="(umask 077; mkdir -p .temp-db; printf '%s\\n' 'GATEWAY_CLAVES_ARCHIVO=' 'GATEWAY_COMERCIOS_ARCHIVO=' > .temp-db/deploy.env)"
+fi
+
 URL_ADK=""
 if [ "${EXPOSE_ADK:-0}" = "1" ]; then
   URL_ADK="$(url_de 8000)"
@@ -133,10 +222,11 @@ remoto "set -e; cd /home/tenki/app
   export PATH=\"\$HOME/.local/bin:\$PATH\" UV_PYTHON=3.13
   export DASHBOARD_PUBLIC_ORIGINS='$ORIGEN' DASHBOARD_EXTRA_HOSTS='$EXTRA'
   mkdir -p .logs
+  $DEPLOY_ENV
   # El start_all anterior tarda unos segundos en apagar todo: esperar a que
   # termine y a que se liberen los puertos (si no, el nuevo los ve ocupados).
   for i in \$(seq 1 60); do
-    pgrep -f '^bash deploy/[s]tart_all.sh' >/dev/null || ss -tln | grep -qE ':(8000|8001|8002|8003|8010|8011|8020) ' || break
+    pgrep -f '^bash deploy/[s]tart_all.sh' >/dev/null || ss -tln | grep -qE ':(8000|8001|8002|8003|8010|8011|8020|8030) ' || break
     sleep 1
   done
   nohup setsid bash deploy/start_all.sh '$ESCENARIO' > .logs/start_all.log 2>&1 < /dev/null &
@@ -150,6 +240,7 @@ for i in $(seq 1 90); do
     echo "  Comprar:        $ORIGEN/demo"
     echo "  Panel:          $ORIGEN/"
     [ -n "$URL_ADK" ] && echo "  dev-ui de ADK:  ${URL_ADK%/}/dev-ui"
+    [ -n "$GW_ORIGEN" ] && echo "  Gateway:        $GW_ORIGEN/v1/docs"
     echo "  Sesión Tenki:   $TENKI_SESSION"
     echo "  Logs:           tenki sandbox exec --session $TENKI_SESSION -c 'tail -n 50 ~/app/.logs/*.log'"
     echo "  Pausar:         tenki sandbox pause --session $TENKI_SESSION   (al reanudar, volvé a correr este script)"

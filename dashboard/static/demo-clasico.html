@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>KaiAI · demo</title>
+  <meta name="description" content="Demo en una pantalla: le pedís algo a tu agente de compras y ves cómo habla con el comercio a través de KaiAI.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l7.5 3v6.2c0 4.7-3.2 8.1-7.5 9.8-4.3-1.7-7.5-5.1-7.5-9.8V5.5z' fill='%231f5fae'/%3E%3Cpath d='M8.2 12.3l2.6 2.6 5-5.2' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/demo-clasico.css">
+  <script type="module" src="/demo-clasico.js"></script>
+</head>
+<body>
+  <header class="cabecera">
+    <div class="marca">
+      <svg class="marca-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/><path class="marca-tilde" d="M8.8 12.2l2.3 2.3 4.2-4.4"/>
+      </svg>
+      <h1 class="marca-nombre">KaiAI</h1>
+    </div>
+
+    <div class="cabecera-acciones">
+      <button type="button" id="intermediario" class="interruptor" role="switch" aria-checked="false" disabled
+              aria-describedby="intermediario-ayuda">
+        <span class="interruptor-pista" aria-hidden="true"><span class="interruptor-perilla"></span></span>
+        <span class="interruptor-texto">Intermediario: …</span>
+      </button>
+      <span id="intermediario-ayuda" class="sr-only">Prende o apaga el intermediario entre tu agente y el comercio. Cambiarlo empieza una compra nueva.</span>
+      <button type="button" id="tema" class="boton-icono" aria-label="Tema: automático" title="Tema: automático">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 000-17z" class="relleno"/></svg>
+      </button>
+      <a class="enlace-discreto" href="/">Detalle técnico</a>
+    </div>
+  </header>
+
+  <main id="principal" class="principal">
+    <section class="selector" aria-labelledby="selector-titulo">
+      <h2 id="selector-titulo" class="rotulo">Comercio que responde</h2>
+      <div id="escenarios" class="escenarios"></div>
+    </section>
+
+    <section class="escena" aria-labelledby="diagrama-titulo">
+      <h2 id="diagrama-titulo" class="sr-only">Cómo se hablan los agentes</h2>
+      <svg id="diagrama" class="diagrama" role="img" aria-labelledby="diagrama-nombre diagrama-desc" focusable="false">
+        <title id="diagrama-nombre">Vos, tu agente de compras, KaiAI y el comercio</title>
+        <desc id="diagrama-desc">Todavía no pasó nada.</desc>
+      </svg>
+    </section>
+
+    <section id="contraste" class="contraste" aria-labelledby="contraste-titulo" hidden>
+      <h2 id="contraste-titulo" class="sr-only">El mismo comercio, con y sin intermediario</h2>
+      <div class="contraste-lado" data-lado="sin">
+        <p class="contraste-rotulo">Sin intermediario</p>
+        <p class="contraste-texto" id="contraste-sin">—</p>
+      </div>
+      <div class="contraste-lado" data-lado="con">
+        <p class="contraste-rotulo">Con intermediario</p>
+        <p class="contraste-texto" id="contraste-con">—</p>
+      </div>
+    </section>
+
+    <section class="relato-seccion" aria-labelledby="relato-titulo">
+      <h2 id="relato-titulo" class="sr-only">Qué está pasando</h2>
+      <p id="relato-vacio" class="relato-vacio">Elegí un comercio y pedile algo a tu agente.</p>
+      <ol id="relato" class="relato" role="log" aria-live="polite" aria-relevant="additions text"></ol>
+    </section>
+  </main>
+
+  <footer class="pie">
+    <form id="formulario" class="formulario" autocomplete="off">
+      <label id="etiqueta" class="etiqueta" for="entrada">Pedile algo a tu agente de compras</label>
+      <div class="entrada-fila">
+        <input id="entrada" class="entrada" type="text" maxlength="1000" enterkeyhint="send"
+               aria-describedby="aviso-entrada" placeholder="¿Qué querés comprar?">
+        <button id="enviar" class="boton-enviar" type="submit" aria-label="Enviar">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h12"/><path d="M12 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+      <p id="aviso-entrada" class="aviso-entrada" role="status" aria-live="polite"></p>
+    </form>
+
+    <div class="controles">
+      <button type="button" id="ejemplo" class="boton-texto" hidden>Usar el pedido de ejemplo</button>
+      <button type="button" id="nueva" class="boton-texto">Nueva compra</button>
+      <button type="button" id="auto" class="boton-texto" aria-pressed="true"
+              title="Contesta solos la billetera, la dirección, la tarjeta, la confirmación y el código de verificación">Respuestas automáticas: sí</button>
+      <span class="controles-separador" aria-hidden="true"></span>
+      <label class="sr-only" for="grabacion">Grabación para reproducir</label>
+      <select id="grabacion" class="grabacion"><option value="">Grabación…</option></select>
+      <button type="button" id="reproducir" class="boton-texto" disabled>Reproducir</button>
+    </div>
+  </footer>
+</body>
+</html>

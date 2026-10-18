@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { armarRelato, formatearMedida, humanizarAtributo, limpiarTexto } from "../../static/lib/relato.js";
+import { armarRelato, formatearMedida, humanizarAtributo, limpiarTexto, textoCorteFiltro } from "../../static/lib/relato.js";
 import { itemsDeEventos, itemsDeMensajes, lineaDeTiempo } from "../../static/lib/demo.js";
 
 let n = 0;
@@ -88,10 +88,31 @@ test("intermediario apagado: la respuesta llega directo, dicho en una línea", (
     ["Intermediario activado: revisa cada respuesta y verifica antes de la firma"]);
 });
 
-test("el corte del filtro dice las señales y que no llegó nada", () => {
-  const [l] = relato([evento("bloqueado", { etapa: "seguridad", motivo: "x", senales: ["instrucciones al agente"] })]);
-  assert.equal(l.texto, "✕ Nuestro filtro cortó la conversación (instrucciones al agente): nada del comercio llegó a tu agente");
+test("el corte del filtro dice qué hacía la respuesta y que no llegó nada", () => {
+  const [l] = relato([evento("bloqueado", {
+    etapa: "seguridad", motivo: "x",
+    senales: ["heuristica:instruccion_ia", "heuristica:manipulacion", "modelo:manipulacion"],
+  })]);
+  assert.equal(l.texto, "✕ Cortamos la conversación: la respuesta del comercio le daba órdenes a tu agente"
+    + " y intentaba manipular la elección. Tu agente no la vio y no se compró nada");
   assert.equal(l.tono, "crit");
+});
+
+test("las líneas del Guard dicen qué pausa mostrar antes; las del usuario, ninguna", () => {
+  const [corte] = relato([evento("bloqueado", { etapa: "seguridad", senales: [] })]);
+  assert.equal(corte.pausa.texto, "Revisando la respuesta del comercio");
+  const [frenada] = relato([evento("bloqueado", { etapa: "verificacion" })]);
+  assert.equal(frenada.pausa.texto, "Verificando la compra antes de la firma");
+  const [vos] = armarRelato([{ id: "m1", origen: "demo", tipo: "usuario", texto: "hola", ts: "2026-10-18T12:00:00Z" }]);
+  assert.equal(vos.pausa, null);
+});
+
+test("el corte del filtro sin señales conocidas o por falla no muestra códigos", () => {
+  assert.equal(textoCorteFiltro(["filtro:sin_respuesta"]),
+    "✕ Cortamos la conversación: no pudimos revisar la respuesta del comercio y, ante la duda, no pasa."
+    + " Tu agente no la vio y no se compró nada");
+  assert.equal(textoCorteFiltro([]),
+    "✕ Cortamos la conversación: la respuesta del comercio parecía un ataque. Tu agente no la vio y no se compró nada");
 });
 
 test("las preguntas de nuestro agente y lo que entendió", () => {

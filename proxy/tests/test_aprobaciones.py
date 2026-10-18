@@ -44,7 +44,7 @@ async def test_escalar_retiene_el_checkout(armar_proxy, merchant: FakeMerchant):
     assert checkouts(task) == []
     assert merchant.ultimo_checkout["checkout_jwt"].encode() not in resp.content
     texto = texto_estado(task)
-    assert texto.startswith("Pre-Sign Guard: escalar. precio contradicho por el catálogo")
+    assert texto.startswith("KaiAI: escalar. precio contradicho por el catálogo")
     assert "requiere aprobación humana" in texto.lower()
     (v,) = veredictos(task)
     assert v["status"] == "escalar"
@@ -186,3 +186,54 @@ async def test_aprobar_dos_veces_devuelve_la_misma(armar_proxy):
     assert a.status_code == 201 and b.status_code == 200
     assert a.json()["id"] == b.json()["id"]
     assert len(lista["pendientes"]) == 1
+
+
+# -- compras de integrador (revisión adversarial del gateway) --------------------------
+
+
+def test_el_registro_no_deja_aprobar_por_el_panel_un_checkout_de_integrador():
+    """La marca `de_api` no depende de que la compra siga en memoria: el
+    dashboard nunca aprueba un checkout de integrador (lo aprueba su dueño
+    por /v1)."""
+    from proxy.aprobaciones import DeIntegrador, RegistroAprobaciones
+
+    registro = RegistroAprobaciones()
+    registro.registrar_veredicto("ctx-api", "cart_1", "escalar", 12000, "USD", de_api=True)
+    with pytest.raises(DeIntegrador):
+        registro.aprobar("ctx-api", "cart_1")
+    # Un veredicto posterior sin la marca no la borra.
+    registro.registrar_veredicto("ctx-api", "cart_1", "escalar", 12000, "USD")
+    with pytest.raises(DeIntegrador):
+        registro.aprobar("ctx-api", "cart_1")
+    aprobacion, creada = registro.aprobar("ctx-api", "cart_1", via_api=True)
+    assert creada and aprobacion.via_api
+    assert "via_api" not in aprobacion.a_json()  # el JSON de siempre
+
+
+def test_solo_api_ignora_una_aprobacion_que_no_es_del_dueno():
+    from proxy.aprobaciones import RegistroAprobaciones
+
+    registro = RegistroAprobaciones()
+    registro.registrar_veredicto("ctx-1", "cart_1", "escalar", 12000, "USD")
+    registro.aprobar("ctx-1", "cart_1")  # del panel (contexto de la demo)
+    assert registro.disponible("ctx-1", "cart_1", 12000, "USD") is not None
+    assert registro.disponible("ctx-1", "cart_1", 12000, "USD", solo_api=True) is None
+    assert registro.consumir("ctx-1", "cart_1", 12000, "USD", solo_api=True) is None
+    assert registro.consumir("ctx-1", "cart_1", 12000, "USD") is not None
+
+
+def test_usar_una_aprobacion_reclamada_aunque_otro_la_haya_descartado():
+    """Dos checkouts concurrentes: el que perdió el reclamo la descarta de
+    memoria; el que lo ganó igual la usa (si no, se quemaba sin pasar)."""
+    from proxy.aprobaciones import RegistroAprobaciones
+
+    registro = RegistroAprobaciones()
+    registro.registrar_veredicto("ctx-1", "cart_1", "escalar", 12000, "USD", de_api=True)
+    aprobacion, _ = registro.aprobar("ctx-1", "cart_1", via_api=True)
+    assert registro.descartar(aprobacion.id)
+    usada = registro.usar(aprobacion, "task-1")
+    assert usada.estado == "usada" and usada.task_id == "task-1"
+    assert registro.listar()["pendientes"] == []
+    assert [a["id"] for a in registro.listar()["usadas"]] == [aprobacion.id]
+    registro.restaurar_pendiente(aprobacion)  # una usada no vuelve
+    assert registro.pendiente("ctx-1", "cart_1") is None

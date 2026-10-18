@@ -1,6 +1,6 @@
 # dashboard/ (Dev 3)
 
-Panel de la demo del Pre-Sign Guard: el **escenario B lado a lado**, el flujo de
+Panel de la demo de KaiAI: el **escenario B lado a lado**, el flujo de
 cada compra, el veredicto con sus chequeos, el recibo firmado (verificado en el
 navegador), la ficha del pedido, el gráfico del benchmark "de X% a Y%" y, en la
 etapa 2, la conversación con **nuestro agente** (vista Agente).
@@ -44,7 +44,7 @@ SSE y el navegador limita las conexiones por host.
 ## `/demo`: la demo en una pantalla
 
 `http://localhost:8020/demo` reemplaza a la UI de ADK para la demo: arriba el
-diagrama (Vos → tu agente de compras → **Pre-Sign Guard** con sus etapas
+diagrama (Vos → tu agente de compras → **KaiAI** con sus etapas
 filtro · intención · verificación → comercio, más fabricante/catálogo y AP2),
 al medio el relato en lenguaje natural (plantillas en código, nunca un LLM;
 `role="log"` con `aria-live`) y abajo **un solo input**. El panel de siempre

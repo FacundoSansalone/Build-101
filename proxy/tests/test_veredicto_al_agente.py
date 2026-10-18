@@ -94,7 +94,7 @@ async def test_al_agente_va_el_veredicto_reducido(armar_proxy, status, estado):
     for texto in TEXTOS:
         assert texto.encode() not in resp.content, texto
     if estado == "failed":
-        assert texto_estado(task).startswith(f"Pre-Sign Guard: {status}. motivo del guard")
+        assert texto_estado(task).startswith(f"KaiAI: {status}. motivo del guard")
     # El dashboard recibe el veredicto completo.
     (ev,) = [e for e in evs if e["tipo"] == "veredicto"]
     completo = ev["datos"]["veredicto"]

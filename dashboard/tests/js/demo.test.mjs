@@ -4,7 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  desenlace, guardarResultado, lineaDeTiempo, modoDelInput, resultadoCorrida, resumenComparacion,
+  desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, resultadoCorrida, resumenComparacion,
+  retenerLineas, tonosComparacion,
 } from "../../static/lib/demo.js";
 
 const AHORA = Date.UTC(2026, 9, 18, 12, 0, 0);
@@ -134,6 +135,15 @@ test("el contraste lado a lado, en una línea por lado", () => {
   assert.equal(resumenComparacion({ ...sin, clave: "frenada" }, null).sin, "Frenada antes de la firma: no se pagó nada");
 });
 
+test("el tono de cada lado: lo pagado que no cumple es rojo, lo frenado no", () => {
+  const sin = { escenario: "notebook_dato_falso", guardActivo: false, clave: "pagado", producto: "Zento Slim 14", hallazgo: null };
+  const con = { escenario: "notebook_dato_falso", guardActivo: true, clave: "frenada", producto: "Zento Slim 14",
+    hallazgo: { atributo: "Memoria RAM", real: "8 GB", pedido: "16 GB" } };
+  assert.deepEqual(tonosComparacion(sin, con), { sin: "crit", con: "freno" });
+  assert.deepEqual(tonosComparacion(sin, null), { sin: "ok", con: null });
+  assert.deepEqual(tonosComparacion(null, { ...con, clave: "retenida" }), { sin: null, con: "aviso" });
+});
+
 test("guardarResultado guarda la última corrida por escenario y lado", () => {
   const r1 = { escenario: "B", guardActivo: false, clave: "pagado" };
   const r2 = { escenario: "B", guardActivo: true, clave: "frenada" };
@@ -145,4 +155,30 @@ test("guardarResultado guarda la última corrida por escenario y lado", () => {
   assert.deepEqual(nuevo.B, { sin: r3, con: r2 });
   assert.deepEqual(mapa.B.sin, r1); // no muta
   assert.deepEqual(guardarResultado(mapa, null), mapa);
+});
+
+test("el ritmo retiene la primera línea del Guard con pausa y todo lo que sigue", () => {
+  const pausa = { texto: "Revisando la respuesta del comercio", ms: 1400 };
+  const lineas = [
+    { id: "u1", actor: "usuario" },
+    { id: "g1", actor: "guard", pausa },
+    { id: "a1", actor: "agente" },
+  ];
+  const mostradas = new Set();
+  const r = retenerLineas(lineas, mostradas);
+  assert.deepEqual(r.visibles.map((l) => l.id), ["u1"]);
+  assert.equal(r.retenida.id, "g1");
+  mostradas.add("g1");
+  assert.deepEqual(retenerLineas(lineas, mostradas).visibles.map((l) => l.id), ["u1", "g1", "a1"]);
+});
+
+test("al soltar, salen juntas las del Guard seguidas con la misma pausa", () => {
+  const analizar = { texto: "Analizando tu respuesta", ms: 900 };
+  const lineas = [
+    { id: "g1", actor: "guard", pausa: analizar },
+    { id: "g2", actor: "guard", pausa: analizar },
+    { id: "g3", actor: "guard", pausa: { texto: "Revisando la respuesta del comercio", ms: 1400 } },
+  ];
+  assert.deepEqual(lineasASoltar(lineas, "g1"), ["g1", "g2"]);
+  assert.deepEqual(lineasASoltar(lineas, "ya-no-esta"), ["ya-no-esta"]);
 });

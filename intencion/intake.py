@@ -96,6 +96,12 @@ _FALTAN = {
     "es": "Para hacer la compra me falta saber {lista}.",
     "en": "To make the purchase I still need to know {lista}.",
 }
+# Desde la segunda repregunta: la anterior no alcanzó, así que se dan ejemplos
+# de lo que sí se entiende en vez de repetir la misma pregunta.
+_FALTAN_OTRA_VEZ = {
+    "es": "No te entendí: todavía me falta saber {lista}. Podés escribirlo así: {ejemplos}.",
+    "en": "I didn't get that: I still need to know {lista}. You can write it like this: {ejemplos}.",
+}
 _FALTAN_INICIAL = {
     "es": "Además, para hacer la compra me falta saber {lista}.",
     "en": "Also, to make the purchase I need to know {lista}.",
@@ -136,6 +142,24 @@ _PIEZAS = {
         "moneda": "the currency",
         "plazo": "by when you need it",
         "precio+moneda": "your maximum budget and the currency",
+    },
+}
+_EJEMPLOS = {
+    "es": {
+        "categoria": "«una notebook»",
+        "cantidad": "«2 unidades»",
+        "precio": "«hasta 150»",
+        "moneda": "«dólares» o «pesos»",
+        "plazo": "«el viernes», «30/10» o «esta semana»",
+        "precio+moneda": "«hasta 150 dólares»",
+    },
+    "en": {
+        "categoria": "\"a laptop\"",
+        "cantidad": "\"2 units\"",
+        "precio": "\"up to 150\"",
+        "moneda": "\"dollars\" or \"pesos\"",
+        "plazo": "\"by Friday\", \"10/30\" or \"this week\"",
+        "precio+moneda": "\"up to 150 dollars\"",
     },
 }
 _ETIQUETAS = {
@@ -312,6 +336,7 @@ _P_DIA_MES = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MESES_RE
 _P_RELATIVO = re.compile(
     rf"\b(?:en|dentro\s+de|in|within)\s+({_CANT_RE})\s+(dias?|days?|semanas?|weeks?)\b"
 )
+_P_ESTA_SEMANA = re.compile(r"\b(?:esta\s+(?:misma\s+)?semana|this\s+week)\b")
 _P_SEMANA_PROX = re.compile(
     r"\b(?:la\s+semana\s+que\s+viene|la\s+proxima\s+semana|la\s+semana\s+proxima|next\s+week)\b"
 )
@@ -387,6 +412,10 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
         if n is not None and n > 0:
             dias = n * (7 if m.group(2).startswith(("semana", "week")) else 1)
             agregar(m, hoy + timedelta(days=dias))
+    for m in _P_ESTA_SEMANA.finditer(texto):
+        # Hasta el viernes; el sábado o el domingo, "esta semana" es la que empieza.
+        viernes = hoy + timedelta(days=4 - hoy.weekday())
+        agregar(m, viernes if viernes >= hoy else _proximo_dia(hoy, 4))
     for m in _P_SEMANA_PROX.finditer(texto):
         agregar(m, _proximo_dia(hoy, 0) + timedelta(days=4))
     for m in _P_FIN_MES.finditer(texto):
@@ -1124,13 +1153,20 @@ def _resolver_menciones(
     return sorted(salida, key=lambda par: orden[par[0].clave])
 
 
-def _lista_faltan(faltan: Sequence[str], idioma: Idioma) -> str:
-    piezas = _PIEZAS[idioma]
+def _nombres_faltan(faltan: Sequence[str]) -> list[str]:
     nombres = list(faltan)
     if "precio" in nombres and "moneda" in nombres:
         nombres[nombres.index("precio")] = "precio+moneda"
         nombres.remove("moneda")
-    return _unir([piezas[n] for n in nombres], idioma)
+    return nombres
+
+
+def _lista_faltan(faltan: Sequence[str], idioma: Idioma) -> str:
+    return _unir([_PIEZAS[idioma][n] for n in _nombres_faltan(faltan)], idioma)
+
+
+def _ejemplos_faltan(faltan: Sequence[str], idioma: Idioma) -> str:
+    return "; ".join(_EJEMPLOS[idioma][n] for n in _nombres_faltan(faltan))
 
 
 def _item_a_confirmar(p: Parametro, idioma: Idioma) -> str:
@@ -1159,7 +1195,12 @@ def _siguiente(
             pregunta += " " + _FALTAN_INICIAL[idioma].format(lista=lista)
         return "porque", pregunta, False, None
     if faltan and respondidos - 1 < MAX_REPREGUNTAS:
-        return "repreguntar", _FALTAN[idioma].format(lista=lista), False, None
+        if respondidos == 1:
+            return "repreguntar", _FALTAN[idioma].format(lista=lista), False, None
+        pregunta = _FALTAN_OTRA_VEZ[idioma].format(
+            lista=lista, ejemplos=_ejemplos_faltan(faltan, idioma)
+        )
+        return "repreguntar", pregunta, False, None
     partes = [CONFIRMAR[idioma]]
     if dudosos:
         partes.append(_A_CONFIRMAR[idioma].format(

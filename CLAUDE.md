@@ -1,4 +1,4 @@
-# Pre-Sign Guard — contexto para Claude Code
+# KaiAI — contexto para Claude Code
 
 > **Si sos un Claude Code nuevo en este repo, leé primero `docs/onboarding/`
 > según el dev que te use** (`dev1-world.md`, `dev2-guard.md` o
@@ -18,6 +18,7 @@
 | [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) | El cómo: flujo AP2 real, dónde va el Guard, chequeos, veredictos, datos de `world/` |
 | [`docs/CONTRATOS_PROPUESTOS.md`](docs/CONTRATOS_PROPUESTOS.md) | **Borrador** de modelos para `contracts/` y decisiones abiertas del paso 0 |
 | [`docs/DEMO.md`](docs/DEMO.md) | Escenarios, guion, momento clave, benchmark y pitch |
+| [`docs/INTEGRACION.md`](docs/INTEGRACION.md) | Para integradores externos: el gateway de producción, API `/v1`, webhooks, recibos y modo mínimo |
 | [`docs/PLAN.md`](docs/PLAN.md) | División del trabajo, fases, puntos de control, plan B, estado por dev |
 | [`docs/PREGUNTAS_DEL_JURADO.md`](docs/PREGUNTAS_DEL_JURADO.md) | Objeciones esperables y respuestas |
 | [`docs/onboarding/`](docs/onboarding/) | Una guía por dev, con primer prompt sugerido |
@@ -122,7 +123,8 @@ def evaluate(intent: dict, offers_seen: dict, chosen_cart_id: str) -> dict:
 ## Puertos
 
 8000 Shopping Agent (ADK) · 8001 Merchant Agent · 8002 Credentials Provider ·
-8003 Payment Processor · 8010 proxy del Guard (reservado) · 8011 catálogo público.
+8003 Payment Processor · 8010 proxy del Guard (reservado) · 8011 catálogo público ·
+8020 dashboard · 8030 gateway público (solo con claves de API).
 
 El Shopping Agent usa `MERCHANT_AGENT_URL` para hablar con el comercio. Para
 pasar por el proxy: `MERCHANT_AGENT_URL=http://localhost:8010/a2a/merchant_agent`.
@@ -227,7 +229,7 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     desde `find_products`. Toda tarea lleva un `guard.veredicto` (el del
     comercio se borra); si el proxy no pudo evaluar, lleva uno `bloqueado`
     con motivo fijo del proxy. Texto al agente: plantilla fija
-    `Pre-Sign Guard: <status>. <motivo>`.
+    `KaiAI: <status>. <motivo>`.
   - **Aprobaciones:** atadas a contexto, cart y centavos + moneda firmados;
     nunca hacen pasar un `bloqueado`. No emiten `Evento` (no hay tipo en el
     contrato): el dashboard consulta `GET /guard/aprobaciones`.
@@ -368,6 +370,42 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   resto sigue en `127.0.0.1`, sin tocar `world/` ni el proxy.
   `DASHBOARD_PUBLIC_ORIGINS` (y `DASHBOARD_EXTRA_HOSTS`) suman el dominio
   público a los `Origin`/`Host` que acepta `/api/*`.
+- **Gateway de producción (2026-10-18, rama `etapa2/produccion`, a revisar
+  entre los tres).** El proxy abierto a integradores externos. Guía para
+  ellos: `docs/INTEGRACION.md`; para el operador: `proxy/README.md` y
+  `deploy/README.md`. Sin configuración nueva, la demo no cambia.
+  - **Dos oyentes, un proceso:** el local (:8010, como siempre) y el público
+    (:8030), que solo se abre con al menos una clave activa en
+    `GATEWAY_CLAVES_ARCHIVO`. En el público no existe `/guard/*`.
+  - **Claves `psg_<kid>_<secreto>`;** el archivo guarda solo el sha256. Con
+    claves, el stub está prohibido y el filtro es obligatorio.
+  - **Compras de integrador:** `POST /v1/compras` fija la ficha (con tope
+    obligatorio) y nada del tráfico la cambia; no hay intake, solo el porqué.
+    El agente manda `X-Compra-Id`, que ata cada `contextId` a la compra.
+    Una compra = un comercio. El Guard está siempre prendido para ese
+    tráfico. Responder, decidir y aprobar solo por `/v1`: el dashboard da
+    409 `compra_de_integrador`.
+  - **Comercios por archivo** (`/a2a/m/{id}`, sin URL libre), con
+    `merchant_ids` obligatorios: el `merchant.id` firmado tiene que ser de la
+    ruta y va a la `Politica` del Guard.
+  - **Webhooks** HMAC con `t` (anti-replay) y SSRF con la IP fijada. La cola
+    vive en memoria: se reconcilia con `GET /v1/compras/{id}`.
+  - **Estado:** `GATEWAY_ESTADO=supabase` solo explícito; la migración
+    `proxy/sql/003_gateway.sql` no está aplicada (se aplica a mano). Tras un
+    reinicio, las esperas cierran del lado seguro (porqué → literal,
+    oportunidad → `vencida`) y la aprobación de un solo uso se reclama en la
+    base. Una sola instancia.
+  - **Fuera de alcance:** verificar la firma ES256 del comercio, comparar
+    comercios en una compra (toca `contracts/`), `Politica` por integrador y
+    cuotas por clave.
+- **Nombre: KaiAI (2026-10-18).** Reemplaza "Pre-Sign Guard" en lo visible:
+  dashboard, docs, la plantilla del proxy (`KaiAI: <status>. <motivo>`), el
+  título de la API `/v1` y el `User-Agent` de los webhooks (`KaiAI-Webhooks/1`).
+  No cambian las claves técnicas (`guard/`, `guard.veredicto`, `/guard/*`),
+  ni `contracts/` ni `world/`: los textos de la herramienta del sample
+  ("Pre-Sign Guard blocked …") y las marcas `HACKATHON (Pre-Sign Guard)`
+  siguen igual, y el dashboard reconoce las dos marcas
+  (`dashboard.demo_api.MARCAS_GUARD`).
 
 Tests de las carpetas nuevas, desde la raíz:
 
