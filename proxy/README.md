@@ -600,7 +600,8 @@ El cuerpo es la `VistaCompra` del momento (la misma del GET), firmada con
 HMAC-SHA256 en `X-Guard-Firma: t=<unix>,v1=<hex>`. Hasta 6 intentos; solo
 `https` a IPs públicas, resolviendo el host en cada intento y conectando a la
 IP ya verificada (contra DNS rebinding); no sigue redirecciones. La cola es en
-memoria (hasta 1000 pendientes) y **no sobrevive a un reinicio**: el
+memoria (hasta 1000 pendientes, 200 por integrador; cada intento, 10 s en
+total) y **no sobrevive a un reinicio**: el
 integrador reconcilia con `GET /v1/compras/{id}`. `GATEWAY_WEBHOOKS_INSEGUROS=1`
 permite `http` e IPs privadas, solo para desarrollo.
 

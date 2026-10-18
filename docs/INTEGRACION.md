@@ -400,7 +400,8 @@ Además:
 - **Deduplicá por `X-Guard-Entrega`.** Un reintento trae el mismo id (y una
   firma nueva: `t` es el momento de cada intento).
 - **El orden no está garantizado.** Ordená por `compra.actualizada`.
-- **Contestá 2xx rápido** (hay 10 s de timeout) y procesá aparte.
+- **Contestá 2xx rápido** (cada intento tiene 10 s en total, cuerpo de la
+  respuesta incluido) y procesá aparte.
 - **Reintentos:** hasta 6 intentos, con espera creciente (1 s, 4 s, 16 s,
   1 min, 5 min, con algo de azar), ante error de red, timeout, 5xx, 408 o
   429. Otro 4xx o una redirección cuentan como falla y no se reintentan.
@@ -414,7 +415,9 @@ Además:
 `GET /v1/webhooks/entregas` muestra cómo le fue a cada entrega (`estado`:
 `pendiente`, `entregada`, `fallida` o `descartada`, y `error` con un código
 fijo: `red`, `timeout`, `http_4xx`, `http_5xx`, `redireccion`,
-`destino_no_permitido`, `cola_llena`, `cerrado`).
+`destino_no_permitido`, `cola_llena`, `cerrado`). `cola_llena` quiere decir
+que tu webhook ya tiene demasiadas entregas pendientes (200): mientras no
+contesta, las nuevas se descartan.
 
 ## 8. Modo mínimo: `POST /v1/evaluar`
 

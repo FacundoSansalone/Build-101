@@ -72,6 +72,10 @@ USER_AGENT = "KaiAI-Webhooks/1"
 MAX_REGISTRO_POR_INTEGRADOR = 500
 MAX_LECTURA_RESPUESTA = 4096        # bytes de la respuesta que se leen, solo para el log
 MAX_GUARDADOS_EN_VUELO = 100        # copias al almacén; si se cuelga no crece sin tope
+MAX_PENDIENTES = 1000               # entregas en vuelo, entre todos los integradores
+# La parte de la cola de cada integrador: uno cuyo webhook no contesta (o
+# falla y se reintenta ~7 min) no deja sin lugar a los demás.
+MAX_PENDIENTES_POR_INTEGRADOR = 200
 JITTER = (0.8, 1.2)
 STATUS_REINTENTABLES_4XX = frozenset({408, 429})
 
@@ -349,7 +353,8 @@ class Despachador:
         azar: Callable[[], float] = random.random,
         max_intentos: int = MAX_INTENTOS,
         backoff_s: tuple[float, ...] = BACKOFF_S,
-        max_pendientes: int = 1000,
+        max_pendientes: int = MAX_PENDIENTES,
+        max_pendientes_por_integrador: int = MAX_PENDIENTES_POR_INTEGRADOR,
         timeout_s: float = 10.0,
     ) -> None:
         self._integradores = integradores
@@ -362,6 +367,11 @@ class Despachador:
         self._max_intentos = max(1, max_intentos)
         self._backoff_s = tuple(backoff_s) or (0.0,)
         self._max_pendientes = max_pendientes
+        self._max_por_integrador = max_pendientes_por_integrador
+        # Tope total de cada intento: los timeouts de httpx son por operación
+        # (cada byte que llega reinicia el de lectura), así que un receptor que
+        # gotea un byte cada 9 s retenía la entrega horas.
+        self._timeout_s = timeout_s
         # Cliente propio: sin proxies del entorno (podrían ver o redirigir el
         # tráfico firmado) y sin seguir redirecciones (saltearían el chequeo
         # de destino). Sin keep-alive: cada POST va a `https://<ip>` con el
@@ -417,7 +427,9 @@ class Despachador:
             if self._cerrado:
                 self._terminar(entrega, "descartada", "cerrado")
                 return entrega.id
-            if len(self._tareas) >= self._max_pendientes:
+            if len(self._tareas) >= self._max_pendientes or (
+                self._pendientes_de(integrador_id) >= self._max_por_integrador
+            ):
                 logger.warning("Cola de webhooks llena: se descarta %s (%s)", entrega.id, tipo)
                 self._terminar(entrega, "descartada", "cola_llena")
                 return entrega.id
@@ -500,6 +512,9 @@ class Despachador:
 
     def _ahora(self) -> datetime:
         return datetime.fromtimestamp(self._reloj(), timezone.utc)
+
+    def _pendientes_de(self, integrador_id: str) -> int:
+        return sum(1 for e in self._tareas.values() if e.integrador_id == integrador_id)
 
     def _nueva(self, integrador_id: str, tipo: str, compra: dict[str, Any] | None) -> EntregaWebhook:
         compra_id = compra.get("compra_id") if isinstance(compra, dict) else None
@@ -638,25 +653,28 @@ class Despachador:
             headers["Host"] = _cabecera_host(host, puerto)
             extensions["sni_hostname"] = host
 
+        status: int | None = None
+        leido = b""
         try:
-            async with self._client.stream(
-                "POST", destino, content=cuerpo, headers=headers, extensions=extensions
-            ) as resp:
-                status = resp.status_code
-                # Bytes crudos (sin descomprimir: un gzip chico no se vuelve
-                # megas) y como mucho 4 KB: es solo para el log.
-                leido = b""
-                try:
-                    async for trozo in resp.aiter_raw():
-                        leido += trozo
-                        if len(leido) >= MAX_LECTURA_RESPUESTA:
-                            break
-                except httpx.StreamConsumed:  # respuesta ya leída (transportes en memoria)
-                    leido = resp.content[:MAX_LECTURA_RESPUESTA]
+            # Tope total del intento (conexión, headers y lo que se lea).
+            async with asyncio.timeout(self._timeout_s):
+                async with self._client.stream(
+                    "POST", destino, content=cuerpo, headers=headers, extensions=extensions
+                ) as resp:
+                    status = resp.status_code
+                    if not 200 <= status < 300:
+                        # El cuerpo solo sirve para el log de un error: con un 2xx
+                        # no se lee (un cuerpo que gotea no retiene la entrega).
+                        leido = await _leer_para_log(resp)
+        except TimeoutError as e:
+            if status is None:
+                raise _Reintentar("timeout") from e
+            # Se cortó leyendo el cuerpo de un error: vale el status que llegó.
         except httpx.TimeoutException as e:
             raise _Reintentar("timeout") from e
         except httpx.HTTPError as e:
             raise _Reintentar("red") from e
+        assert status is not None
 
         if not (200 <= status < 300):
             logger.debug(
@@ -671,3 +689,17 @@ class Despachador:
         if status in STATUS_REINTENTABLES_4XX:
             raise _Reintentar("http_4xx", status)
         raise _Final("fallida", "http_4xx" if status >= 400 else "red", status)
+
+
+async def _leer_para_log(resp: httpx.Response) -> bytes:
+    """Bytes crudos (sin descomprimir: un gzip chico no se vuelve megas) y como
+    mucho `MAX_LECTURA_RESPUESTA`: es solo para el log."""
+    leido = b""
+    try:
+        async for trozo in resp.aiter_raw():
+            leido += trozo
+            if len(leido) >= MAX_LECTURA_RESPUESTA:
+                break
+    except httpx.StreamConsumed:  # respuesta ya leída (transportes en memoria)
+        leido = resp.content[:MAX_LECTURA_RESPUESTA]
+    return leido

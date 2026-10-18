@@ -604,6 +604,110 @@ async def test_cola_llena() -> None:
     await d.cerrar()
 
 
+class Goteo(httpx.AsyncByteStream):
+    """Un cuerpo que nunca termina: un byte cada tanto (slowloris)."""
+
+    async def __aiter__(self):
+        while True:
+            await asyncio.sleep(0.01)
+            yield b"x"
+
+
+def receptor_que_gotea(status: int):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, stream=Goteo())
+
+    return handler
+
+
+async def _sin_colgarse(d: Despachador) -> None:
+    """`d.esperar()` con un tope: antes del arreglo, estos tests no terminaban."""
+    await asyncio.wait_for(d.esperar(), 3)
+
+
+async def test_un_receptor_que_no_contesta_no_retiene_el_intento() -> None:
+    """Los timeouts de httpx son por operación: un receptor que manda un byte
+    cada 9 s retenía la entrega horas (y su lugar en la cola, que es de todos).
+    Cada intento tiene un tope total (`timeout_s`)."""
+    nunca = asyncio.Event()
+
+    async def colgado(request: httpx.Request) -> httpx.Response:
+        await nunca.wait()
+        return httpx.Response(200)
+
+    d = Despachador(
+        {"acme": integrador()}.get, transport=httpx.MockTransport(colgado),
+        resolver=resolver_publico, timeout_s=0.05, max_intentos=1,
+    )
+    d.notificar("acme", "compra.veredicto", COMPRA)
+    await _sin_colgarse(d)
+    [e] = d.entregas("acme")
+    assert (e["estado"], e["error"]) == ("fallida", "timeout")
+    # El ping de /v1/webhooks/prueba tampoco se cuelga.
+    ping = await asyncio.wait_for(d.probar("acme"), 3)
+    assert (ping["estado"], ping["error"]) == ("fallida", "timeout")
+    await d.cerrar()
+
+
+async def test_un_2xx_con_cuerpo_que_gotea_se_entrega_sin_leerlo() -> None:
+    d = Despachador(
+        {"acme": integrador()}.get, transport=httpx.MockTransport(receptor_que_gotea(200)),
+        resolver=resolver_publico, timeout_s=0.2, max_intentos=1,
+    )
+    d.notificar("acme", "compra.veredicto", COMPRA)
+    await _sin_colgarse(d)
+    [e] = d.entregas("acme")
+    assert (e["estado"], e["status_http"]) == ("entregada", 200)
+    await d.cerrar()
+
+
+async def test_un_error_con_cuerpo_que_gotea_vale_por_su_status() -> None:
+    """El cuerpo de un error se lee solo para el log: si el tope corta esa
+    lectura, cuenta el status que ya llegó (un 400 no se vuelve reintentable)."""
+    for status, error, estado in ((500, "http_5xx", "fallida"), (400, "http_4xx", "fallida")):
+        d = Despachador(
+            {"acme": integrador()}.get,
+            transport=httpx.MockTransport(receptor_que_gotea(status)),
+            resolver=resolver_publico, timeout_s=0.05, max_intentos=1,
+        )
+        d.notificar("acme", "compra.veredicto", COMPRA)
+        await _sin_colgarse(d)
+        [e] = d.entregas("acme")
+        assert (e["estado"], e["error"], e["status_http"]) == (estado, error, status)
+        await d.cerrar()
+
+
+async def test_un_integrador_no_llena_la_cola_de_los_demas() -> None:
+    """La cola (1000 entregas) es de todos: un integrador cuyo webhook no
+    contesta (o falla y se reintenta) la llenaba y los webhooks de los demás
+    se descartaban (`cola_llena`). Cada uno tiene su parte."""
+    nunca = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "malo.example":
+            await nunca.wait()
+        return httpx.Response(200)
+
+    integradores = {
+        "malo": integrador("malo", "https://malo.example/hook"),
+        "acme": integrador(),
+    }
+    d = Despachador(integradores.get, transport=httpx.MockTransport(handler),
+                    resolver=resolver_publico)
+    for _ in range(1000):
+        d.notificar("malo", "compra.veredicto", COMPRA)
+    estados = [e["estado"] for e in d.entregas("malo", 500)]
+    assert estados.count("pendiente") < 1000
+    d.notificar("acme", "compra.veredicto", COMPRA)
+    for _ in range(100):
+        if d.entregas("acme")[0]["estado"] != "pendiente":
+            break
+        await asyncio.sleep(0.01)
+    [e] = d.entregas("acme")
+    assert (e["estado"], e["error"]) == ("entregada", None)
+    await d.cerrar()
+
+
 async def test_cerrar_cancela_lo_pendiente() -> None:
     nunca = asyncio.Event()
     empezo = asyncio.Event()
