@@ -249,6 +249,7 @@ def test_icecat_se_prende_con_credenciales(tmp_path):
         {"FABRICANTE_FUENTE": "icecat"},  # sin usuario
         {"FABRICANTE_FUENTE": "otra"},
         {"FABRICANTE_FUENTE": "icecat", "ICECAT_USUARIO": "yo", "ICECAT_TIMEOUT": "x"},
+        {"FABRICANTE_FUENTE": "icecat", "ICECAT_USUARIO": "yo", "ICECAT_IDIOMA": "../x"},
     ],
 )
 def test_configuracion_invalida(entorno):

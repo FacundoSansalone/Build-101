@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,8 @@ class IcecatFabricante:
             raise ValueError("Icecat necesita un usuario (ICECAT_USUARIO)")
         if self.timeout <= 0:
             raise ValueError("El timeout de Icecat tiene que ser > 0")
+        if not re.fullmatch(r"[A-Za-z]{2}(_[A-Za-z]{2})?", self.idioma or ""):
+            raise ValueError("ICECAT_IDIOMA tiene que ser un código como EN o ES")  # va al nombre de la caché
         self.cache_dir = Path(self.cache_dir) if self.cache_dir is not None else CACHE_POR_DEFECTO
 
     # -- caché ----------------------------------------------------------------
