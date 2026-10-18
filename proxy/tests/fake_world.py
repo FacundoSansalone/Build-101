@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -167,6 +168,9 @@ class FakeMerchant:
         cart_id = cart_id or cart["cart_id"]
         monto = cart["amount"] if monto is None else monto
         amount_cents = int(round(monto * 100))
+        # Como create_checkout() del sample: vigente desde ahora por una hora
+        # (el Guard valida exp/iat contra `ahora`).
+        iat = int(time.time())
         payload = {
             "id": cart_id,
             "merchant": {"id": "merchant_1", "name": "Generic Merchant"},
@@ -186,8 +190,8 @@ class FakeMerchant:
                 {"type": "subtotal", "amount": amount_cents},
                 {"type": "total", "amount": amount_cents},
             ],
-            "iat": 1700000000 + len(self.checkouts),
-            "exp": 1700003600 + len(self.checkouts),
+            "iat": iat,
+            "exp": iat + 3600,
         }
         jwt = self.firmar_jwt(
             {"alg": "ES256", "typ": "JWT", "kid": "merchant-key-1"}, payload
