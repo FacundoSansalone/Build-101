@@ -126,15 +126,17 @@ def test_escenarios_con_inyeccion_tienen_senales(nombre):
     assert "heuristica:instruccion_ia" in revisar(textos)
 
 
+# ~100k caracteres (el filtro acepta hasta 300k por respuesta). Con las regex
+# cuadráticas de antes, cada uno tardaba más de 100 s; ahora, décimas.
 ADVERSARIOS = {
-    "punto_y_espacios": ". " + " " * 200_000 + "x",
-    "corchete_y_espacios": "[" + " " * 200_000 + "x",
-    "angulo_y_saltos": "<" + "\n" * 200_000 + "x",
-    "saludo_y_saltos": "hi" + "\n" * 200_000 + "x",
-    "imagenes_sin_cierre": "![" * 100_000,
-    "urls_pegadas": "http://a.b/" * 50_000,
-    "ignore_repetido": "ignore " + "the " * 100_000 + "x",
-    "display_y_espacios": "display" + " " * 200_000 + "x",
+    "punto_y_espacios": ". " + " " * 100_000 + "x",
+    "corchete_y_espacios": "[" + " " * 100_000 + "x",
+    "angulo_y_saltos": "<" + "\n" * 100_000 + "x",
+    "saludo_y_saltos": "hi" + "\n" * 100_000 + "x",
+    "imagenes_sin_cierre": "![" * 50_000,
+    "urls_pegadas": "http://a.b/" * 10_000,
+    "ignore_repetido": "ignore " + "the " * 25_000 + "x",
+    "display_y_espacios": "display" + " " * 100_000 + "x",
 }
 
 
