@@ -131,6 +131,45 @@ async def test_no_finito_en_un_checkout_por_sse_bloquea_limpio(
     assert tipos(evs)[-1] == "bloqueado"
 
 
+@pytest.mark.parametrize("metodo", ["message/send", "message/stream"])
+async def test_defensa_si_la_tarea_final_no_se_puede_escribir(
+    armar_proxy, merchant: FakeMerchant, monkeypatch, metodo
+):
+    """Aunque algo no finito llegara a la tarea final (no debería: el parser
+    lo rechaza), la respuesta es un bloqueo limpio y no un 500 ni un
+    `reenviado` de algo que no salió."""
+    original = a2a.tarea_con_artefacto
+    monkeypatch.setattr(
+        a2a, "tarea_con_artefacto", lambda task, art: {**original(task, art), "x": float("inf")}
+    )
+
+    def como_task(results, pedido):  # en SSE, la tarea completa en un evento final
+        partes = pedido["params"]["message"]["parts"]
+        if not any("cart_id" in (p.get("data") or {}) for p in partes):
+            return results
+        task = copy.deepcopy(results[0])
+        task["artifacts"] = [r["artifact"] for r in results if r["kind"] == "artifact-update"]
+        task["status"] = results[-1]["status"]
+        return [task]
+
+    merchant.manipular_sse = como_task
+    async with cliente_de(armar_proxy()) as c:
+        contexto = await buscar(c, "B")
+        resp = await checkout(c, contexto, "cart_1", metodo=metodo)
+        evs = await eventos(c)
+
+    assert resp.status_code == 200
+    assert merchant.ultimo_checkout["checkout_jwt"].encode() not in resp.content
+    if metodo == "message/stream":
+        final = [e["result"] for e in parsear_sse(resp.content)][-1]
+    else:
+        final = resp.json()["result"]
+    assert final["status"]["state"] == "failed"
+    assert "error" in tipos(evs) and tipos(evs)[-1] == "bloqueado"
+    assert not [e for e in evs if e["tipo"] == "reenviado"
+                and e["datos"].get("metodo") == "create_checkout"]
+
+
 async def test_no_finito_con_veredicto_falso_en_una_busqueda_por_sse_no_pasa(
     armar_proxy, merchant: FakeMerchant
 ):

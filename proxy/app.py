@@ -42,6 +42,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from contracts import (
+    GUARD_VEREDICTO_KEY,
     STATUS_LLEGAN_A_FIRMA,
     CheckoutVisto,
     Evento,
@@ -417,24 +418,18 @@ class ProxyGuard:
     ) -> tuple[bytes, int]:
         pedido, activo = llamada.pedido, llamada.guard_activo
         body, error = a2a.parsear_json(contenido)
+        salida = contenido
+        if error is None and isinstance(body, dict):
+            # guard.veredicto solo lo pone el proxy.
+            body, cambiado = a2a.quitar_veredictos_ajenos(body)
+            try:
+                salida = a2a.dumps(body) if cambiado else contenido
+            except ValueError as e:  # defensa (N6): algo que no se puede reescribir
+                error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or f"se esperaba un objeto JSON y llegó {type(body).__name__}"
-            self._emitir_busqueda(llamada, None)
-            menciona = (
-                a2a.menciona_checkout(contenido)
-                if error is not None
-                else a2a.contar_clave(body, a2a.CHECKOUT_KEY) > 0
-            )
-            if activo and (self._es_de_checkout(llamada) or menciona):
-                return self._bloqueo_sintetico(
-                    llamada, "la respuesta del comercio no se pudo leer", detalle
-                ), 200
-            self._error(llamada, f"Respuesta ilegible del comercio: {detalle}")
-            return contenido, status
+            return self._respuesta_ilegible(contenido, llamada, status, detalle)
 
-        # guard.veredicto solo lo pone el proxy.
-        body, cambiado = a2a.quitar_veredictos_ajenos(body)
-        salida = a2a.dumps(body) if cambiado else contenido
         result = body.get("result")
         n_checkouts = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
 
@@ -475,8 +470,39 @@ class ProxyGuard:
             nuevo = a2a.tarea_bloqueada(result, decision.texto, decision.artefacto())
         else:
             nuevo = a2a.tarea_con_artefacto(result, decision.artefacto())
+        try:
+            cuerpo = a2a.dumps({**body, "result": nuevo})
+        except ValueError as e:  # defensa (N6): nunca un 500 sin veredicto ni evento
+            return self._bloqueo_sintetico(
+                llamada, "la respuesta del comercio no se pudo reenviar",
+                f"{type(e).__name__}: {e}"[:200],
+            ), 200
         self._emitir_resultado(decision, llamada)
-        return a2a.dumps({**body, "result": nuevo}), status
+        return cuerpo, status
+
+    def _respuesta_ilegible(
+        self, contenido: bytes, llamada: Llamada, status: int, detalle: str
+    ) -> tuple[bytes, int]:
+        """JSON inválido, con NaN/Infinity o con números que desbordan (1e999).
+
+        Si puede ser un checkout: bloqueo limpio (`error` + `bloqueado`). Si
+        no: evento `error` y la respuesta tal cual, salvo que traiga un
+        `guard.veredicto` (no se puede sacar de algo ilegible): ahí 502.
+        """
+        self._emitir_busqueda(llamada, None)
+        if llamada.guard_activo and (
+            self._es_de_checkout(llamada) or a2a.menciona_checkout(contenido)
+        ):
+            return self._bloqueo_sintetico(
+                llamada, "la respuesta del comercio no se pudo leer", detalle
+            ), 200
+        self._error(llamada, f"Respuesta ilegible del comercio: {detalle}")
+        if a2a.menciona_clave(contenido, GUARD_VEREDICTO_KEY):
+            error = a2a.error_jsonrpc(
+                llamada.pedido.rpc_id, "Proxy del Guard: respuesta ilegible del comercio"
+            )
+            return a2a.dumps(error), 502
+        return contenido, status
 
     # -- SSE -----------------------------------------------------------------
 
@@ -497,6 +523,8 @@ class ProxyGuard:
             falla = f"el stream del comercio supera el tope de {e.limite} bytes"
         except httpx.HTTPError as e:
             falla = f"el stream del comercio se cortó ({type(e).__name__})"
+        except ValueError as e:  # defensa (N6): un evento que no se puede reescribir
+            falla = f"un evento del comercio no se pudo reenviar ({type(e).__name__})"
         finally:
             await resp.aclose()
 
@@ -521,21 +549,29 @@ class ProxyGuard:
     ) -> list[bytes]:
         pedido, activo = llamada.pedido, llamada.guard_activo
         body, error = a2a.parsear_json(evento.data)
+        crudo = b""
+        if error is None and isinstance(body, dict):
+            body, cambiado = a2a.quitar_veredictos_ajenos(body)
+            try:
+                crudo = a2a.bloque_sse(body) if cambiado else evento.serializar()
+            except ValueError as e:  # defensa (N6)
+                error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or "el evento no es un objeto JSON"
+            datos = evento.data.encode("utf-8")
             if activo and (
                 self._es_de_checkout(llamada)
                 or est.pendiente is not None
-                or a2a.menciona_checkout(evento.data.encode("utf-8"))
+                or a2a.menciona_checkout(datos)
             ):
                 return self._sse_cortar(
                     llamada, est, "un evento SSE del comercio no se pudo leer", detalle
                 )
             self._error(llamada, f"Evento SSE ilegible del comercio: {detalle}")
+            if a2a.menciona_clave(datos, GUARD_VEREDICTO_KEY):
+                return []  # un guard.veredicto que no se puede sacar no se reenvía
             return self._sse_encolar(est, evento.serializar(), final=False)
 
-        body, cambiado = a2a.quitar_veredictos_ajenos(body)
-        crudo = a2a.bloque_sse(body) if cambiado else evento.serializar()
         result = body.get("result")
         n = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
         if not isinstance(result, dict):
@@ -601,9 +637,11 @@ class ProxyGuard:
             decision = self._resolver(decision, est.task_id)
             if decision.retiene:
                 return self._sse_aplicar_retencion(llamada, est, decision, result)
+            # Primero se escribe (puede fallar: N6) y recién después se da por resuelto.
+            bloque = self._bloque(llamada, a2a.tarea_con_artefacto(result, decision.artefacto()))
             est.resuelto = True
             self._emitir_resultado(decision, llamada)
-            return [self._bloque(llamada, a2a.tarea_con_artefacto(result, decision.artefacto()))]
+            return [bloque]
         # Pasa: se retiene hasta el evento final, para que un segundo
         # checkout en el mismo stream no llegue nunca al cliente.
         est.pendiente = [crudo]
@@ -625,11 +663,12 @@ class ProxyGuard:
         decision = self._resolver(est.decision, est.task_id)
         if decision.retiene:  # p. ej. la aprobación ya se usó en otro intento
             return self._sse_aplicar_retencion(llamada, est, decision, None)
-        est.resuelto = True
-        self._emitir_resultado(decision, llamada)
         final = pendiente.pop()
         artefacto = a2a.evento_artefacto(est.task_id, est.contexto_id, decision.artefacto())
-        return [*pendiente, self._bloque(llamada, artefacto), final]
+        bloque = self._bloque(llamada, artefacto)
+        est.resuelto = True
+        self._emitir_resultado(decision, llamada)
+        return [*pendiente, bloque, final]
 
     def _sse_aplicar_retencion(
         self,

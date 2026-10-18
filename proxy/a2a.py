@@ -51,10 +51,21 @@ def _constante_no_estandar(nombre: str) -> Any:
     raise ValueError(f"constante JSON no estándar: {nombre}")
 
 
+def _float_finito(texto: str) -> float:
+    valor = float(texto)
+    if not math.isfinite(valor):
+        raise ValueError(f"número no finito: {texto[:20]}")
+    return valor
+
+
 def parsear_json(contenido: bytes | str) -> tuple[Any, str | None]:
-    """JSON estricto (sin NaN ni Infinity). Devuelve (objeto, None) o (None, motivo)."""
+    """JSON estricto: sin NaN ni Infinity, y sin números que desbordan a
+    infinito (`1e999`, que `json.loads` acepta como `inf` pero `dumps` no puede
+    volver a escribir). Devuelve (objeto, None) o (None, motivo)."""
     try:
-        return json.loads(contenido, parse_constant=_constante_no_estandar), None
+        return json.loads(
+            contenido, parse_constant=_constante_no_estandar, parse_float=_float_finito
+        ), None
     except (ValueError, UnicodeDecodeError, RecursionError) as e:
         return None, f"{type(e).__name__}: {e}"[:200]
 
@@ -75,16 +86,20 @@ def contar_clave(obj: Any, clave: str) -> int:
     return n
 
 
-def menciona_checkout(contenido: bytes) -> bool:
-    """¿Una respuesta que no se pudo leer en estricto trae un ap2.checkout?
+def menciona_clave(contenido: bytes, clave: str) -> bool:
+    """¿Una respuesta que no se pudo leer en estricto trae `clave`?
 
     Prueba el parser permisivo (el mismo que usaría el cliente, que acepta
-    NaN) y, si tampoco puede, busca el texto.
+    NaN y 1e999) y, si tampoco puede, busca el texto.
     """
     try:
-        return contar_clave(json.loads(contenido), CHECKOUT_KEY) > 0
+        return contar_clave(json.loads(contenido), clave) > 0
     except (ValueError, UnicodeDecodeError, RecursionError):
-        return CHECKOUT_KEY.encode() in contenido
+        return clave.encode() in contenido
+
+
+def menciona_checkout(contenido: bytes) -> bool:
+    return menciona_clave(contenido, CHECKOUT_KEY)
 
 
 def data_parts(parts: Any) -> list[dict[str, Any]]:
@@ -346,13 +361,6 @@ def _sin_duplicadas(pares: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"clave duplicada: {clave!r}")
         objeto[clave] = valor
     return objeto
-
-
-def _float_finito(texto: str) -> float:
-    valor = float(texto)
-    if not math.isfinite(valor):
-        raise ValueError(f"número no finito: {texto[:20]}")
-    return valor
 
 
 def _payload_estricto(jwt: Any) -> dict[str, Any] | None:
