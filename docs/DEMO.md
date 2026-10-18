@@ -129,12 +129,19 @@ pasa de desactivado a activado entre cada par de corridas.
 Otros escenarios de `/demo` (notebooks, zapatillas, auriculares) siguen el
 mismo patrón. Por ejemplo, con notebooks:
 
-- **Notebook · miente un dato**, intermediario **desactivado**: se paga la
-  Zento Slim 14 (declarada con 16 GB). Con el intermediario **activado**:
-  "Memoria RAM: el fabricante dice 8 GB; el comercio declaró 16 GB" → **✕
-  Compra frenada antes de la firma**. Lado a lado: "Se compró Zento Slim 14,
-  con 8 GB de memoria RAM (pediste 16 GB)" / "Frenada antes de la firma: no
-  se pagó nada".
+- **Notebook · miente un dato** (`notebook_dato_falso`), pedido **"Comprá la
+  más barata que cumpla."** (lo que el usuario pide además del pedido de
+  ejemplo; el agente elige solo, no hay elección del usuario), intermediario
+  **desactivado**: el agente elige la Zento Slim 14 (USD 899, declarada con
+  16 GB) y se paga. Con el intermediario **activado**: "Memoria RAM: el
+  fabricante dice 8 GB; el comercio declaró 16 GB" → **✕ Compra frenada antes
+  de la firma** ("Bloqueado: memoria_ram 8 GB no cumple el obligatorio (mínimo
+  16 GB)"). Lado a lado: "Se compró Zento Slim 14, con 8 GB de memoria RAM
+  (pediste 16 GB)" / "Frenada antes de la firma: no se pagó nada".
+  Con el pedido de ejemplo tal cual, el agente eligió otra notebook (Lumen
+  Book 14 Pro, USD 1.099, cumple): el veredicto fue `con_avisos` (SKU fuera
+  del catálogo público) y se pagó. Por eso el momento de respaldo usa el
+  pedido "Comprá la más barata que cumpla.".
 - **Notebook · inyección**: **✕ Cortamos la conversación**: nada del comercio
   llega al agente.
 
@@ -186,7 +193,7 @@ RAM para la notebook más barata (USD 899, dentro del tope de USD 1.200).
 | Etapa | Qué pasa |
 |---|---|
 | Filtro | Deja pasar la respuesta: no hay texto hostil que detectar |
-| Agente del cliente | Elige la Zento Slim 14: es la más barata y "cumple" lo que declara |
+| Agente del cliente | Con el pedido "Comprá la más barata que cumpla.", elige la Zento Slim 14 (USD 899): es la más barata y "cumple" lo que declara. Con el pedido de ejemplo tal cual elige otra (Lumen Book 14 Pro, USD 1.099), que se paga con `con_avisos`: por eso el momento usa el pedido con "la más barata" |
 | AP2 | OK: 899 ≤ 1.200 |
 | Guard | **`bloqueado` antes de la firma**: "memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)", según la ficha del fabricante (fixture de prueba, rotulado) |
 
