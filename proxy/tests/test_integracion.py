@@ -161,6 +161,26 @@ async def test_el_guard_bloquea_la_ram_falsa_con_el_fabricante_fixture(armar_pro
     assert consultas["02001234000031"]["con_dato"] is True  # la Zento Slim 14
 
 
+async def test_el_filtro_no_lo_ve_y_el_guard_igual_frena(armar_proxy, guard_real):
+    """notebook_dato_falso: sin inyección, solo un dato falso. El filtro deja
+    pasar la respuesta (no hay nada que detectar) y el Guard la bloquea antes
+    de la firma con la ficha del fabricante: la garantía no depende del filtro."""
+    from filtro import FiltroSeguridad
+
+    app = armar_proxy(
+        evaluador=guard_real,
+        filtro=FiltroSeguridad(solo_heuristicas=True),
+        fabricante=FixtureFabricante(),
+    )
+    async with cliente_de(app) as c:
+        contexto = await buscar(c, "notebook_dato_falso")  # pasa el filtro
+        task = (await checkout(c, contexto, "cart_4")).json()["result"]
+        evs = await eventos(c)
+    assert not any(e["tipo"] == "bloqueado" and e["datos"].get("etapa") == "seguridad" for e in evs)
+    assert veredictos(task)[0]["status"] == "bloqueado" and not checkouts(task)
+    assert "memoria_ram 8 GB no cumple" in veredictos(task)[0]["motivo"]
+
+
 async def test_con_el_fabricante_la_honesta_llega_a_la_firma(armar_proxy, guard_real):
     app = armar_proxy(evaluador=guard_real, fabricante=FixtureFabricante())
     async with cliente_de(app) as c:
