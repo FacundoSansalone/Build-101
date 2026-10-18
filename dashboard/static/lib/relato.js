@@ -4,7 +4,7 @@
 // decidió el Guard con sus plantillas y lo que dijo el agente de compras.
 // Sin DOM: se testea con node --test.
 
-import { ATRIBUTOS, CAMPOS, formatearEntregas, formatearValor } from "./agente.js";
+import { ATRIBUTOS, CAMPOS, describirParametro, formatearEntregas, formatearValor } from "./agente.js";
 
 const MAX_LINEA = 240;
 const MAX_TITULO = 60;
@@ -167,7 +167,7 @@ function humanizarDetalle(detalle) {
 }
 
 const linea = (item, texto, tono, actor, extra = {}) => ({
-  id: `${item.id}${extra.sufijo ?? ""}`, ts: item.ts, hora: hora(item.ts), texto: recortar(texto, 320), tono, actor,
+  id: `${item.id}${extra.sufijo ?? ""}`, ts: item.ts, hora: hora(item.ts), texto: recortar(texto, extra.max ?? 320), tono, actor,
   pausa: pausaDe(item),
 });
 
@@ -263,12 +263,60 @@ function lineasVeredicto(item, d) {
   return out;
 }
 
+// Categorías del catálogo público en palabras. Una desconocida se muestra
+// como slug (el proxy solo acepta letras, números, espacios y guiones).
+const CATEGORIAS = {
+  basketball_shoes: "zapatillas de básquet", lifestyle_sneakers: "zapatillas urbanas",
+  laptops: "notebooks", headphones: "auriculares",
+  fuera_de_catalogo: "fuera del catálogo público", dicha: "el que pediste",
+};
+
+// Cómo quedó cada parámetro: lo dijiste, lo dedujo (y hay que confirmarlo),
+// lo dijiste pero no quedó claro, o falta.
+function marcaParametro(p) {
+  if (p.estado === "resuelto") return ["lo dijiste", "ok"];
+  if (p.estado === "a_confirmar") return p.origen === "inferido" ? ["lo deduje: confirmalo", "aviso"] : ["a confirmar", "aviso"];
+  return ["falta", "crit"];
+}
+
+/**
+ * La ficha parcial del intake (`ficha_parcial` de pedido_detectado, como la
+ * arma el proxy) en filas legibles: [{nombre, valor, marca, tono, preferido}].
+ * Los valores son plantillas del intake (números, fechas, monedas) o
+ * requisitos tipados: nada del comercio salvo el nombre de una categoría de
+ * su catálogo público.
+ */
+export function filasFicha(fichaParcial) {
+  return (Array.isArray(fichaParcial) ? fichaParcial : [])
+    .filter((p) => p && typeof p === "object" && typeof p.parametro === "string")
+    .map((p) => {
+      const d = describirParametro(p);
+      let valor = d.valor;
+      if (p.parametro === "categoria" && p.estado !== "faltante" && typeof p.valor === "string") {
+        valor = CATEGORIAS[p.valor] ?? titulo(p.valor.replace(/_/g, " "));
+      }
+      const [marca, tono] = marcaParametro(p);
+      return { nombre: d.nombre, valor, marca, tono, preferido: !d.obligatorio };
+    });
+}
+
+const NOTA_FICHA = "Escribí «sí» para confirmarla o corregí lo que haga falta. "
+  + "Si no confirmás, queda autorizado solo lo que dijiste con claridad: lo que deduje, no.";
+
+// Las preguntas de nuestro agente son plantillas del intake (nada del
+// comercio): la de confirmar, con lo que dedujo y lo que falta, es larga.
+const MAX_PREGUNTA = 640;
+
 function lineaPedido(item, d) {
   const n = Number.isInteger(d.turno) ? d.turno : 0;
   const pregunta = String(d.pregunta ?? "").trim();
-  if (d.confirmar) return linea(item, `Nuestro agente te pide confirmar: ${pregunta}`, "aviso", "guard");
-  if (n > 0) return linea(item, `Nuestro agente repregunta: ${pregunta}`, "aviso", "guard");
-  return linea(item, `Nuestro agente pregunta: ${pregunta}`, "aviso", "guard");
+  if (d.confirmar) {
+    const l = linea(item, `Nuestro agente te pide confirmar: ${pregunta}`, "aviso", "guard", { max: MAX_PREGUNTA });
+    const ficha = filasFicha(d.ficha_parcial);
+    return ficha.length ? { ...l, ficha, nota: NOTA_FICHA } : l;
+  }
+  if (n > 0) return linea(item, `Nuestro agente repregunta: ${pregunta}`, "aviso", "guard", { max: MAX_PREGUNTA });
+  return linea(item, `Nuestro agente pregunta: ${pregunta}`, "aviso", "guard", { max: MAX_PREGUNTA });
 }
 
 // Lo que el usuario dijo flexible, en palabras de la plantilla. Las

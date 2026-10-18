@@ -405,6 +405,45 @@ function actualizarLinea(li, l) {
   if (tx.textContent !== visible) tx.textContent = visible;
   li.dataset.tono = l.tono;
   li.dataset.actor = l.actor;
+  pintarFicha(li, l);
+}
+
+// La ficha que nuestro agente pide confirmar (lib/relato.js → filasFicha):
+// parámetro, valor y si lo dijiste, lo dedujo o falta. Siempre como texto.
+function pintarFicha(li, l) {
+  const firma = Array.isArray(l.ficha) ? JSON.stringify([l.ficha, l.nota ?? ""]) : "";
+  if ((li.dataset.ficha ?? "") === firma) return;
+  li.dataset.ficha = firma;
+  for (const viejo of li.querySelectorAll(".ficha, .ficha-nota")) viejo.remove();
+  if (!firma) return;
+  const tabla = document.createElement("table");
+  tabla.className = "ficha";
+  const titulo = document.createElement("caption");
+  titulo.className = "sr-only";
+  titulo.textContent = "Ficha de la compra";
+  const cuerpo = document.createElement("tbody");
+  for (const f of l.ficha) {
+    const fila = document.createElement("tr");
+    fila.dataset.tono = f.tono ?? "";
+    const nombre = document.createElement("th");
+    nombre.scope = "row";
+    nombre.textContent = f.nombre ?? "";
+    const valor = document.createElement("td");
+    valor.textContent = f.preferido ? `${f.valor} (si se puede)` : (f.valor ?? "");
+    const marca = document.createElement("td");
+    marca.className = "ficha-marca";
+    marca.textContent = f.marca ?? "";
+    fila.append(nombre, valor, marca);
+    cuerpo.append(fila);
+  }
+  tabla.append(titulo, cuerpo);
+  li.append(tabla);
+  if (l.nota) {
+    const nota = document.createElement("p");
+    nota.className = "ficha-nota";
+    nota.textContent = l.nota;
+    li.append(nota);
+  }
 }
 
 // El relato queda pegado al final mientras el usuario no suba a leer.
@@ -803,7 +842,8 @@ function actualizarHistorial(lineas, fin) {
     guardActivo: estado.proxy.guardActivo !== false,
     fin: fin ? { clave: fin.clave, texto: fin.texto, tono: fin.tono } : null,
     finId: fin?.item.id ?? null,
-    lineas: lineas.slice(-80).map(({ id: lid, ts, hora, texto: t, tono, actor }) => ({ id: lid, ts, hora, texto: t, tono, actor })),
+    lineas: lineas.slice(-80).map(({ id: lid, ts, hora, texto: t, tono, actor, ficha, nota }) =>
+      ({ id: lid, ts, hora, texto: t, tono, actor, ...(ficha ? { ficha, nota } : {}) })),
   };
   const previa = estado.historial.find((h) => h.id === id);
   if (previa && previa.lineas.length === entrada.lineas.length && previa.fin?.clave === entrada.fin?.clave

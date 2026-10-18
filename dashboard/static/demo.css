@@ -283,6 +283,21 @@ svg { flex: none; }
 .linea[data-tono="pensando"] .texto::after { content: "…"; display: inline-block; width: 1.4em; animation: puntos 1.2s steps(1) infinite; }
 @keyframes puntos { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 .linea[data-final="true"] .texto { font-size: 15.5px; box-shadow: var(--sombra); }
+/* La ficha que nuestro agente pide confirmar: parámetro, valor y de dónde salió. */
+.ficha {
+  width: 100%; max-width: 520px; margin-top: 4px; border-collapse: separate; border-spacing: 0;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 13.5px; overflow: hidden;
+}
+.ficha th, .ficha td { padding: 6px 10px; text-align: left; vertical-align: baseline; border-top: 1px solid var(--line); }
+.ficha tr:first-child th, .ficha tr:first-child td { border-top: 0; }
+.ficha th { font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.ficha td { color: var(--ink); overflow-wrap: anywhere; }
+.ficha .ficha-marca { font-size: 12px; font-weight: 600; white-space: nowrap; text-align: right; }
+.ficha tr[data-tono="ok"] .ficha-marca { color: var(--ok); }
+.ficha tr[data-tono="aviso"] .ficha-marca { color: var(--warn); }
+.ficha tr[data-tono="crit"] .ficha-marca { color: var(--crit); }
+.ficha tr[data-tono="crit"] td:not(.ficha-marca) { color: var(--muted); }
+.ficha-nota { font-size: 12.5px; color: var(--muted); max-width: 520px; }
 
 /* ------------------------------------------------------------------ composer */
 
@@ -328,6 +343,8 @@ svg { flex: none; }
   .contraste-lado, .contraste-lado + .contraste-lado { padding: 0; border-left: 0; }
   .contraste-lado + .contraste-lado { padding-top: 8px; border-top: 1px solid var(--line); }
   .linea[data-actor="usuario"] { max-width: 90%; }
+  .ficha th, .ficha td { padding-inline: 8px; }
+  .ficha .ficha-marca { white-space: normal; }
 }
 
 @media (prefers-reduced-motion: reduce) {
