@@ -195,6 +195,22 @@ def sha256_hex(texto: Any) -> str:
     return hashlib.sha256(str(texto).encode("utf-8")).hexdigest()
 
 
+def huella_checkout(checkout: Any) -> str:
+    """SHA-256 del data part `ap2.checkout` COMPLETO en JSON canónico (claves
+    ordenadas, sin espacios). Cambia si cambia cualquier campo (el JWT, el
+    `checkout_hash`, `amount`, `amount_cents`, `currency`, `item_label`…), no
+    si solo cambia el orden de las claves. Si no se puede serializar devuelve
+    una huella única: nunca coincide con una decisión guardada."""
+    try:
+        canonico = json.dumps(
+            checkout, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, RecursionError):
+        return f"no-serializable-{uuid.uuid4().hex}"
+    return hashlib.sha256(canonico.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Pedido (lo que manda el Shopping Agent)
 # ---------------------------------------------------------------------------

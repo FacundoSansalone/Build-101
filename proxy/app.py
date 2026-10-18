@@ -138,7 +138,8 @@ class Decision:
     cart_id: str | None
     contexto_id: str | None
     veredicto: Veredicto | None = None
-    clave: tuple[str | None, str, str | None] | None = None  # task, sha256(jwt), cart
+    # (task, huella del data part ap2.checkout completo, cart): ver a2a.huella_checkout
+    clave: tuple[str | None, str, str | None] | None = None
     centavos: int | None = None
     moneda: str | None = None
     por_aprobar: bool = False  # escalar con una aprobación humana disponible
@@ -756,7 +757,6 @@ class ProxyGuard:
         """Con el Guard prendido: valida que el checkout sea el del pedido y
         pide el veredicto (o reusa el de la caché, para tasks/get)."""
         pedido = llamada.pedido
-        jwt = checkout.get("checkout_jwt")
         if pedido.tipo == "create_checkout":
             cart_id, contexto_id = pedido.cart_id, pedido.contexto_id
         elif pedido.es_de_tarea:
@@ -768,7 +768,8 @@ class ProxyGuard:
                 )
             if previa.retiene:
                 return previa  # bloqueada o retenida: nunca devuelve el checkout
-            if previa.clave == (task_id, a2a.sha256_hex(jwt), previa.cart_id):
+            # Cualquier cambio en el data part ap2.checkout (no solo el JWT) reevalúa.
+            if previa.clave == (task_id, a2a.huella_checkout(checkout), previa.cart_id):
                 return previa
             cart_id, contexto_id = previa.cart_id, previa.contexto_id  # cambió: se reevalúa
         else:
@@ -777,7 +778,7 @@ class ProxyGuard:
                 "un ap2.checkout en una respuesta que no es a create_checkout",
             )
 
-        clave = (task_id, a2a.sha256_hex(jwt), cart_id)
+        clave = (task_id, a2a.huella_checkout(checkout), cart_id)
         self._emitir_checkout_recibido(checkout, cart_id, contexto_id, True)
 
         def bloqueo(motivo: str, detalle: str | None = None) -> Decision:
