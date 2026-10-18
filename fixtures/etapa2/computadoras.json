@@ -1,5 +1,5 @@
 {
-  "_comment": "Escrito a mano para la etapa 2 (intencion/, guard/ y proxy/) hasta que world/ tenga el escenario de computadoras (Dev 1). Mismo formato que export_fixtures, más quantity y deliveries en demo.offer_details. Fechas fijas: hoy es el domingo 2026-10-18; lunes 19, miércoles 21, jueves 22, viernes 23. Va en fixtures/etapa2/ para no sumarse a la lista de escenarios de la demo de zapatillas.",
+  "_comment": "Generado por world/ (demo_world.export_fixtures) desde data/scenarios.json: no editar a mano. Va en fixtures/etapa2/ para no sumarse a la lista de escenarios de la demo de zapatillas. Etapa 2 (intencion/, guard/ y proxy/). Fechas fijas: hoy es el domingo 2026-10-18; lunes 19, miércoles 21, jueves 22, viernes 23. Los productos no están en el catálogo público (data/unlisted.json).",
   "scenario": "computadoras",
   "title": "Proveedor honesto sin punto de encuentro literal",
   "description": "Pedido: 20 computadoras para el lunes, hasta USD 20.000. El proveedor no puede entregar 20 el lunes. Ofrece dos alternativas: 10 el lunes y 10 el viernes (más barata) o 10 el lunes y 10 el miércoles.",
@@ -10,7 +10,12 @@
       "max_price": 20000.0,
       "currency": "USD",
       "quantity": 20,
-      "deliveries": [{"quantity": 20, "date": "2026-10-19"}]
+      "deliveries": [
+        {
+          "quantity": 20,
+          "date": "2026-10-19"
+        }
+      ]
     },
     "preferred": {},
     "criterion": "lowest_price_among_compliant"
@@ -18,8 +23,14 @@
   "contexto_demo": {
     "respuesta_usuario": "Entran 10 trabajadores el lunes y otros 10 el jueves.",
     "necesidad_entregas": [
-      {"cantidad": 10, "fecha": "2026-10-19"},
-      {"cantidad": 10, "fecha": "2026-10-22"}
+      {
+        "cantidad": 10,
+        "fecha": "2026-10-19"
+      },
+      {
+        "cantidad": 10,
+        "fecha": "2026-10-22"
+      }
     ]
   },
   "carts": [
@@ -50,8 +61,14 @@
       "sizes": [],
       "quantity": 20,
       "deliveries": [
-        {"quantity": 10, "date": "2026-10-19"},
-        {"quantity": 10, "date": "2026-10-23"}
+        {
+          "quantity": 10,
+          "date": "2026-10-19"
+        },
+        {
+          "quantity": 10,
+          "date": "2026-10-23"
+        }
       ],
       "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD. 20 units: 10 on Monday and 10 on Friday."
     },
@@ -68,8 +85,14 @@
       "sizes": [],
       "quantity": 20,
       "deliveries": [
-        {"quantity": 10, "date": "2026-10-19"},
-        {"quantity": 10, "date": "2026-10-21"}
+        {
+          "quantity": 10,
+          "date": "2026-10-19"
+        },
+        {
+          "quantity": 10,
+          "date": "2026-10-21"
+        }
       ],
       "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD. 20 units: 10 on Monday and 10 on Wednesday."
     }

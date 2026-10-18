@@ -1,0 +1,189 @@
+{
+  "_comment": "Productos que el comercio vende pero NO publica en su catálogo público (el catálogo no siempre existe). Son la verdad de world/ (para armar las ofertas y para el benchmark), pero el catálogo público (:8011, fixtures/public_catalog.json) no los sirve. Las notebooks y los auriculares tienen GTIN: la fuente independiente es la ficha del fabricante (data/manufacturers.json).",
+  "products": [
+    {
+      "sku": "LM-NB-14",
+      "title": "Lumen Notebook 14",
+      "brand": "Lumen",
+      "category": "laptops",
+      "use": "office",
+      "price": 850.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD."
+    },
+    {
+      "sku": "OR-NB-14",
+      "title": "Orion Notebook 14",
+      "brand": "Orion",
+      "category": "laptops",
+      "use": "office",
+      "price": 900.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD."
+    },
+    {
+      "sku": "LM-NB-16",
+      "title": "Lumen Book 14 Pro",
+      "brand": "Lumen",
+      "category": "laptops",
+      "use": "work",
+      "price": 1099.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "description": "14-inch laptop for developers. 16 GB RAM, 512 GB SSD, 1.35 kg.",
+      "gtin": "2001234000017",
+      "categoria_taxonomia": "328",
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 14, "unidad": "in"},
+        "weight": {"valor": 1.35, "unidad": "kg"}
+      }
+    },
+    {
+      "sku": "OR-NB-15",
+      "title": "Orion Book 15",
+      "brand": "Orion",
+      "category": "laptops",
+      "use": "work",
+      "price": 1149.0,
+      "currency": "USD",
+      "stock": 18,
+      "sizes": [],
+      "description": "15.6-inch laptop. 16 GB RAM, 1 TB SSD, 1.8 kg.",
+      "gtin": "2001234000024",
+      "categoria_taxonomia": "328",
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 15.6, "unidad": "in"},
+        "weight": {"valor": 1.8, "unidad": "kg"}
+      }
+    },
+    {
+      "sku": "ZT-NB-08",
+      "title": "Zento Slim 14",
+      "brand": "Zento",
+      "category": "laptops",
+      "use": "work",
+      "price": 899.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "description": "Thin and light 14-inch laptop. 8 GB RAM, 512 GB SSD, 1.2 kg.",
+      "gtin": "2001234000031",
+      "categoria_taxonomia": "328",
+      "atributos": {
+        "memoria_ram": {"valor": 8, "unidad": "GB"},
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 14, "unidad": "in"},
+        "weight": {"valor": 1.2, "unidad": "kg"}
+      }
+    },
+    {
+      "sku": "LM-NB-32",
+      "title": "Lumen Book 16 Max",
+      "brand": "Lumen",
+      "category": "laptops",
+      "use": "work",
+      "price": 1599.0,
+      "currency": "USD",
+      "stock": 7,
+      "sizes": [],
+      "description": "16-inch workstation laptop. 32 GB RAM, 1 TB SSD, 1.9 kg.",
+      "gtin": "2001234000048",
+      "categoria_taxonomia": "328",
+      "atributos": {
+        "memoria_ram": {"valor": 32, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 16, "unidad": "in"},
+        "weight": {"valor": 1.9, "unidad": "kg"}
+      }
+    },
+    {
+      "sku": "SN-HP-ANC1",
+      "title": "Sonora Quiet 45",
+      "brand": "Sonora",
+      "category": "headphones",
+      "use": "travel",
+      "price": 229.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "description": "Over-ear wireless headphones with active noise cancelling. 30 h battery.",
+      "gtin": "2004567000013",
+      "categoria_taxonomia": "543626",
+      "atributos": {
+        "cancelacion_ruido": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 30, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth", "usb-c"], "unidad": null},
+        "weight": {"valor": 250, "unidad": "g"}
+      }
+    },
+    {
+      "sku": "AU-HP-ANC2",
+      "title": "Auralis Travel ANC",
+      "brand": "Auralis",
+      "category": "headphones",
+      "use": "travel",
+      "price": 199.0,
+      "currency": "USD",
+      "stock": 22,
+      "sizes": [],
+      "description": "Over-ear travel headphones with active noise cancelling. 22 h battery.",
+      "gtin": "2004567000020",
+      "categoria_taxonomia": "543626",
+      "atributos": {
+        "cancelacion_ruido": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 22, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth"], "unidad": null},
+        "weight": {"valor": 310, "unidad": "g"}
+      }
+    },
+    {
+      "sku": "AU-HP-BAS3",
+      "title": "Auralis Basic",
+      "brand": "Auralis",
+      "category": "headphones",
+      "use": "travel",
+      "price": 89.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "description": "On-ear wireless headphones. 40 h battery. No noise cancelling.",
+      "gtin": "2004567000037",
+      "categoria_taxonomia": "543626",
+      "atributos": {
+        "cancelacion_ruido": {"valor": false, "unidad": null},
+        "autonomia_bateria": {"valor": 40, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth"], "unidad": null},
+        "weight": {"valor": 180, "unidad": "g"}
+      }
+    },
+    {
+      "sku": "SN-HP-PRO4",
+      "title": "Sonora Studio Pro",
+      "brand": "Sonora",
+      "category": "headphones",
+      "use": "travel",
+      "price": 349.0,
+      "currency": "USD",
+      "stock": 9,
+      "sizes": [],
+      "description": "Premium over-ear headphones with adaptive noise cancelling. 35 h battery.",
+      "gtin": "2004567000044",
+      "categoria_taxonomia": "543626",
+      "atributos": {
+        "cancelacion_ruido": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 35, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth", "usb-c"], "unidad": null},
+        "weight": {"valor": 280, "unidad": "g"}
+      }
+    }
+  ]
+}

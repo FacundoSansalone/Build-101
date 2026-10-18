@@ -1,0 +1,89 @@
+{
+  "_comment": "Fichas de los FABRICANTES por GTIN: una fuente que el comercio no controla. Son datos de prueba (no son de Icecat): export_fixtures los escribe en formato Icecat en fixtures/fabricante/<gtin>.json. 'name' es el nombre de la característica en Icecat; 'atributo' es el nombre canónico con el que la comparan los tests de world/ contra catalog.json.",
+  "products": {
+    "2001234000017": {
+      "brand": "Lumen", "product_name": "Book 14 Pro", "title": "Lumen Book 14 Pro",
+      "category": {"id": "151", "name": "Notebooks"},
+      "features": [
+        {"group": "Memory", "name": "Internal memory", "atributo": "memoria_ram", "type": "numerical", "value": "16", "unit": "GB"},
+        {"group": "Storage", "name": "Total storage capacity", "atributo": "almacenamiento", "type": "numerical", "value": "512", "unit": "GB"},
+        {"group": "Display", "name": "Display diagonal", "atributo": "tamano_pantalla", "type": "numerical", "value": "35.6", "unit": "cm"},
+        {"group": "Display", "name": "Touchscreen", "type": "y_n", "value": "N"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "1350", "unit": "g"}
+      ]
+    },
+    "2001234000024": {
+      "brand": "Orion", "product_name": "Book 15", "title": "Orion Book 15",
+      "category": {"id": "151", "name": "Notebooks"},
+      "features": [
+        {"group": "Memory", "name": "Internal memory", "atributo": "memoria_ram", "type": "numerical", "value": "16", "unit": "GB"},
+        {"group": "Storage", "name": "Total storage capacity", "atributo": "almacenamiento", "type": "numerical", "value": "1000", "unit": "GB"},
+        {"group": "Display", "name": "Display diagonal", "atributo": "tamano_pantalla", "type": "numerical", "value": "39.6", "unit": "cm"},
+        {"group": "Display", "name": "Touchscreen", "type": "y_n", "value": "N"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "1800", "unit": "g"}
+      ]
+    },
+    "2001234000031": {
+      "brand": "Zento", "product_name": "Slim 14", "title": "Zento Slim 14",
+      "category": {"id": "151", "name": "Notebooks"},
+      "features": [
+        {"group": "Memory", "name": "Internal memory", "atributo": "memoria_ram", "type": "numerical", "value": "8", "unit": "GB"},
+        {"group": "Storage", "name": "Total storage capacity", "atributo": "almacenamiento", "type": "numerical", "value": "512", "unit": "GB"},
+        {"group": "Display", "name": "Display diagonal", "atributo": "tamano_pantalla", "type": "numerical", "value": "35.6", "unit": "cm"},
+        {"group": "Display", "name": "Touchscreen", "type": "y_n", "value": "N"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "1200", "unit": "g"}
+      ]
+    },
+    "2001234000048": {
+      "brand": "Lumen", "product_name": "Book 16 Max", "title": "Lumen Book 16 Max",
+      "category": {"id": "151", "name": "Notebooks"},
+      "features": [
+        {"group": "Memory", "name": "Internal memory", "atributo": "memoria_ram", "type": "numerical", "value": "32", "unit": "GB"},
+        {"group": "Storage", "name": "Total storage capacity", "atributo": "almacenamiento", "type": "numerical", "value": "1000", "unit": "GB"},
+        {"group": "Display", "name": "Display diagonal", "atributo": "tamano_pantalla", "type": "numerical", "value": "40.6", "unit": "cm"},
+        {"group": "Display", "name": "Touchscreen", "type": "y_n", "value": "Y"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "1900", "unit": "g"}
+      ]
+    },
+    "2004567000013": {
+      "brand": "Sonora", "product_name": "Quiet 45", "title": "Sonora Quiet 45",
+      "category": {"id": "1193", "name": "Headphones & Headsets"},
+      "features": [
+        {"group": "Audio", "name": "Active Noise Cancelling (ANC)", "atributo": "cancelacion_ruido", "type": "y_n", "value": "Y"},
+        {"group": "Power", "name": "Battery life", "atributo": "autonomia_bateria", "type": "numerical", "value": "30", "unit": "h"},
+        {"group": "Ports & interfaces", "name": "Connectivity technology", "atributo": "conectividad", "type": "multi_dropdown", "value": "Bluetooth,USB-C"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "250", "unit": "g"}
+      ]
+    },
+    "2004567000020": {
+      "brand": "Auralis", "product_name": "Travel ANC", "title": "Auralis Travel ANC",
+      "category": {"id": "1193", "name": "Headphones & Headsets"},
+      "features": [
+        {"group": "Audio", "name": "Active Noise Cancelling (ANC)", "atributo": "cancelacion_ruido", "type": "y_n", "value": "Y"},
+        {"group": "Power", "name": "Battery life", "atributo": "autonomia_bateria", "type": "numerical", "value": "22", "unit": "h"},
+        {"group": "Ports & interfaces", "name": "Connectivity technology", "atributo": "conectividad", "type": "multi_dropdown", "value": "Bluetooth"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "310", "unit": "g"}
+      ]
+    },
+    "2004567000037": {
+      "brand": "Auralis", "product_name": "Basic", "title": "Auralis Basic",
+      "category": {"id": "1193", "name": "Headphones & Headsets"},
+      "features": [
+        {"group": "Audio", "name": "Active Noise Cancelling (ANC)", "atributo": "cancelacion_ruido", "type": "y_n", "value": "N"},
+        {"group": "Power", "name": "Battery life", "atributo": "autonomia_bateria", "type": "numerical", "value": "40", "unit": "h"},
+        {"group": "Ports & interfaces", "name": "Connectivity technology", "atributo": "conectividad", "type": "multi_dropdown", "value": "Bluetooth"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "180", "unit": "g"}
+      ]
+    },
+    "2004567000044": {
+      "brand": "Sonora", "product_name": "Studio Pro", "title": "Sonora Studio Pro",
+      "category": {"id": "1193", "name": "Headphones & Headsets"},
+      "features": [
+        {"group": "Audio", "name": "Active Noise Cancelling (ANC)", "atributo": "cancelacion_ruido", "type": "y_n", "value": "Y"},
+        {"group": "Power", "name": "Battery life", "atributo": "autonomia_bateria", "type": "numerical", "value": "35", "unit": "h"},
+        {"group": "Ports & interfaces", "name": "Connectivity technology", "atributo": "conectividad", "type": "multi_dropdown", "value": "Bluetooth,USB-C"},
+        {"group": "Weight & dimensions", "name": "Weight", "atributo": "weight", "type": "numerical", "value": "280", "unit": "g"}
+      ]
+    }
+  }
+}

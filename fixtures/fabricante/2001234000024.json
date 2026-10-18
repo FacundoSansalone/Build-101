@@ -1,0 +1,143 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/manufacturers.json.",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Orion Book 15",
+      "Brand": "Orion",
+      "ProductName": "Book 15",
+      "GTIN": [
+        "2001234000024"
+      ],
+      "Category": {
+        "CategoryID": "151",
+        "Name": {
+          "Value": "Notebooks",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Memory",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "16",
+            "PresentationValue": "16 GB",
+            "Feature": {
+              "Name": {
+                "Value": "Internal memory",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "GB"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Storage",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "1000",
+            "PresentationValue": "1000 GB",
+            "Feature": {
+              "Name": {
+                "Value": "Total storage capacity",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "GB"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Display",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "39.6",
+            "PresentationValue": "39.6 cm",
+            "Feature": {
+              "Name": {
+                "Value": "Display diagonal",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "cm"
+                }
+              }
+            }
+          },
+          {
+            "Type": "y_n",
+            "Value": "N",
+            "PresentationValue": "N",
+            "Feature": {
+              "Name": {
+                "Value": "Touchscreen",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "1800",
+            "PresentationValue": "1800 g",
+            "Feature": {
+              "Name": {
+                "Value": "Weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "g"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -41,9 +41,12 @@ def _merchant() -> Merchant:
   return Merchant(id=m["id"], name=m["name"], website=m["website"])
 
 
-def open_payment_mandate() -> OpenPaymentMandate:
-  """El mandato abierto que firmaría el usuario a partir del intent."""
-  hard = scenario.intent()["hard"]
+def open_payment_mandate(
+    intent: dict[str, Any] | None = None,
+) -> OpenPaymentMandate:
+  """El mandato abierto que firmaría el usuario a partir del intent (el del
+  escenario si se pasa; si no, el global)."""
+  hard = (intent or scenario.intent())["hard"]
   return OpenPaymentMandate(
       constraints=[
           AmountRange(max=_cents(hard["max_price"]), currency=hard["currency"]),
@@ -69,8 +72,10 @@ def closed_payment_mandate(offer: dict[str, Any]) -> PaymentMandate:
   )
 
 
-def ap2_violations(offer: dict[str, Any]) -> list[str]:
+def ap2_violations(
+    offer: dict[str, Any], intent: dict[str, Any] | None = None
+) -> list[str]:
   """Violaciones que detecta el SDK de AP2 para esta oferta (vacío = pasa)."""
   return check_payment_constraints(
-      open_payment_mandate(), closed_payment_mandate(offer)
+      open_payment_mandate(intent), closed_payment_mandate(offer)
   )

@@ -145,6 +145,15 @@ def test_malicious_notebook_lies_about_ram_but_truth_and_manufacturer_say_8():
   assert fabricante["memoria_ram"] == {"valor": "8", "unidad": "GB"}
 
 
+def test_category_products_are_sold_but_not_in_the_public_catalog():
+  # El catálogo no siempre existe: la fuente independiente es el fabricante.
+  public = scenario.products_by_sku()
+  for name in CATEGORIAS:
+    for offer in scenario.build_offers(name):
+      assert offer["sku"] not in public
+      assert scenario.manufacturer_attributes(offer["truth"]["gtin"])
+
+
 def test_manufacturer_data_matches_the_catalog_truth():
   products = [p for p in scenario.all_products_by_sku().values() if p.get("gtin")]
   assert len(products) == 8
