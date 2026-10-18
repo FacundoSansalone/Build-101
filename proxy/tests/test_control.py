@@ -33,6 +33,7 @@ async def test_get_state(cliente: httpx.AsyncClient):
         "evaluador": "stub",
         "intencion": None,  # etapa 2: sin agente de intención
         "filtro": False,  # etapa 2: sin filtro de seguridad
+        "filtro_modo": None,  # sin filtro, sin modo
     }
 
 
@@ -46,6 +47,7 @@ async def test_post_state_cambia_y_emite_evento(cliente: httpx.AsyncClient):
         "evaluador": "stub",
         "intencion": None,  # etapa 2: sin agente de intención
         "filtro": False,  # etapa 2: sin filtro de seguridad
+        "filtro_modo": None,  # sin filtro, sin modo
     }
     assert (await cliente.get("/guard/state")).json()["guard_activo"] is False
     (evento,) = (await cliente.get("/guard/events/history")).json()

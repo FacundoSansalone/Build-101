@@ -150,10 +150,14 @@ async def test_una_compra_de_api_viva_no_sale_de_memoria_por_el_tope():
 def _reloj_que_avanza(monkeypatch) -> None:
     """Cada lectura del reloj avanza 1 ms: en Windows dos `datetime.now()`
     seguidos pueden dar el mismo instante (una compra recién creada tendría
-    edad 0 y `0 > ttl_s=0` es falso)."""
+    edad 0 y `0 > ttl_s=0` es falso). Las marcas monótonas de `creada`
+    arrancan de cero con este reloj (si no, seguirían las del reloj real)."""
+    from proxy.compras import MarcasMonotonas
+
     base = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
     lecturas = iter(range(1, 10**6))
     monkeypatch.setattr("proxy.compras._ahora", lambda: base + timedelta(milliseconds=next(lecturas)))
+    monkeypatch.setattr("proxy.compras._marcas", MarcasMonotonas())
 
 
 async def test_una_compra_de_api_esperando_no_sale_aunque_pase_el_ttl(monkeypatch):

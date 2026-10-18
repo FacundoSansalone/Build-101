@@ -354,7 +354,8 @@ class EstadoMemoria:
             for f in self._compras.values()
             if f["integrador_id"] == integrador_id and (estado is None or f["estado"] == estado)
         ]
-        filas.sort(key=lambda f: _fecha(f["creada"]), reverse=True)
+        # La más nueva primero; a igual `creada` (filas de otro proceso), por id.
+        filas.sort(key=lambda f: (_fecha(f["creada"]), f["id"]), reverse=True)
         return copy.deepcopy(filas[:limite])
 
     async def contar_activas(self, integrador_id: str, desde: datetime) -> int:
@@ -572,7 +573,7 @@ class EstadoSupabase:
     ) -> list[dict[str, Any]]:
         params = {
             "integrador_id": f"eq.{_id_slug(integrador_id, 'integrador_id')}",
-            "order": "creada.desc",
+            "order": "creada.desc,id.desc",  # como EstadoMemoria: a igual fecha, por id
             "limit": str(_limite(limite)),
             "select": "*",
         }

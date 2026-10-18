@@ -26,6 +26,7 @@ aplica el veredicto y bloquea lo que no pudo evaluar (fail-closed).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import functools
 import hmac
@@ -33,7 +34,8 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
@@ -42,6 +44,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -144,7 +147,12 @@ _HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
-_NO_HACIA_COMERCIO = _HOP_BY_HOP | {"host", "content-length", "accept-encoding", "cookie"}
+# Tampoco los headers de control propios: el token de /guard/* (lo manda el
+# reenvío del dashboard) y la compra del gateway nunca llegan al comercio.
+_NO_HACIA_COMERCIO = _HOP_BY_HOP | {
+    "host", "content-length", "accept-encoding", "cookie",
+    HEADER_TOKEN.lower(), HEADER_COMPRA.lower(),
+}
 # Del comercio al cliente solo pasa esto (el Content-Type se normaliza). Nunca
 # Set-Cookie: las cookies no distinguen puerto y llegarían al dashboard.
 _DEL_COMERCIO_AL_CLIENTE = {"x-a2a-extensions"}
@@ -180,7 +188,9 @@ _SUFIJO_RETENIDO_API = (
     "la API del Guard y después reintentá create_checkout."
 )
 # Errores del tráfico A2A de integrador antes de reenviar (diseño §1.2): un
-# HTTP con status y un error JSON-RPC con código fijo. Mensajes fijos.
+# HTTP con status y un error JSON-RPC con código fijo. Mensajes fijos. El
+# tráfico anónimo usa `contexto_ajeno` y `estado_no_disponible` (un contexto
+# de una compra de integrador).
 _ERRORES_A2A: dict[str, tuple[int, str]] = {
     "falta_compra": (400, f"falta {HEADER_COMPRA} o no tiene el formato de una compra."),
     "comercio_no_permitido": (403, "el comercio no está permitido para esta clave."),
@@ -239,8 +249,17 @@ _MINIMO_REPREGUNTA_S = 30.0
 # La taxonomía (unas 3 llamadas cortas) solo si queda al menos esto.
 _MINIMO_TAXONOMIA_S = 10.0
 _TIMEOUT_LLM_S = 45.0
+# Otra búsqueda de la misma compra espera a la que está preguntando lo que le
+# queda a su espera más esto (el LLM de después y la respuesta), no el
+# presupuesto entero de la llamada.
+_MARGEN_ESPERA_SECUNDARIA_S = _TIMEOUT_LLM_S + _MARGEN_S
 _TIMEOUT_FILTRO_S = 30.0
 _TIMEOUT_FABRICANTE_S = 15.0  # todas las consultas de una compra (Icecat: 3 s cada una)
+# Hilos propios: el filtro en uno y el LLM y el fabricante en otro. `wait_for`
+# corta la espera, no el hilo: con el pool compartido de asyncio, unos LLM
+# colgados dejaban al filtro (lo primero de cada respuesta) sin hilos.
+HILOS_FILTRO = 16
+HILOS_LLM = 16
 MAX_INTAKES = 200  # estados de intake en memoria (como las compras)
 
 AccionEtapa2 = Literal["pasar", "con_parametros", "vencida", "bloqueada", "contexto_ajeno"]
@@ -471,6 +490,7 @@ class ProxyGuard:
         comercios: RegistroComercios | None = None,
         almacen: AlmacenEstado | None = None,
         despachador: Despachador | None = None,
+        filtro_modo: str | None = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -480,7 +500,10 @@ class ProxyGuard:
         self.evaluador = evaluador
         self.guard_activo = config.guard_activo
         self.bus = BusDeEventos(
-            config.events_jsonl, max_suscriptores=config.max_suscriptores_sse
+            config.events_jsonl,
+            max_suscriptores=config.max_suscriptores_sse,
+            # Los de compras de integrador, aparte: el principal lo sirve el dashboard.
+            jsonl_privado=config.jsonl_privado,
         )
         self.ping_segundos = ping_segundos
         # Secreto de los POST de /guard/* (N4): uno por arranque.
@@ -499,6 +522,12 @@ class ProxyGuard:
         # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
         self.agente = agente
         self.filtro = filtro
+        # Lo que dice `describir()` del módulo del filtro (solo informa).
+        self.filtro_modo = filtro_modo if filtro is not None else None
+        # Los cierra el lifespan de `create_app`. Públicos: `/v1` sin estado
+        # (`sin_estado`) también corre el filtro y el fabricante en estos.
+        self.ejecutor_filtro = ThreadPoolExecutor(HILOS_FILTRO, thread_name_prefix="kaiai-filtro")
+        self.ejecutor_llm = ThreadPoolExecutor(HILOS_LLM, thread_name_prefix="kaiai-llm")
         # Fuente del fabricante por GTIN (fabricante.FuenteFabricante): la arma
         # `python -m proxy` (FABRICANTE_FUENTE, por defecto el fixture). Sin
         # fuente, lo obligatorio que solo declara el comercio escala.
@@ -544,8 +573,35 @@ class ProxyGuard:
                 "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
                 "Guard real; /guard/state y cada evento veredicto lo marcan."
             )
+        if config.demo_hoy is not None:
+            logger.warning(
+                "DEMO_HOY=%s: el agente de intención toma esa fecha como hoy "
+                "(el Guard sigue con el reloj de verdad).",
+                config.demo_hoy.isoformat(),
+            )
 
     # -- utilidades ----------------------------------------------------------
+
+    def hoy(self) -> date:
+        """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
+        ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
+        return self.config.demo_hoy or date.today()
+
+    async def _en_hilo(
+        self, ejecutor: ThreadPoolExecutor, funcion: Callable[..., Any], *args: Any
+    ) -> Any:
+        """Como `asyncio.to_thread` (con el contexto), pero en un pool propio.
+        Si la espera se cancela antes de que tome un hilo, no corre."""
+        contexto = contextvars.copy_context()
+        return await asyncio.get_running_loop().run_in_executor(
+            ejecutor, functools.partial(contexto.run, funcion, *args)
+        )
+
+    def cerrar_hilos(self) -> None:
+        """Al apagar: sin esperar a los que siguen corriendo (un LLM colgado)
+        y descartando los que no empezaron."""
+        for ejecutor in (self.ejecutor_filtro, self.ejecutor_llm):
+            ejecutor.shutdown(wait=False, cancel_futures=True)
 
     def _emitir(
         self,
@@ -564,6 +620,7 @@ class ProxyGuard:
             guard_activo=guard_activo,
             contexto_id=contexto_id,
             escenario=escenario,
+            privado=privado,  # al JSONL privado, no al que sirve el dashboard
         )
         if privado:
             _recordar(self._eventos_privados, evento.id, True, _MAX_MARCAS_PRIVADAS)
@@ -648,16 +705,18 @@ class ProxyGuard:
         ]
         return compra.foto(contextos=contextos, aprobaciones=aprobaciones)
 
-    def guardar_compra(self, compra: Compra) -> None:
+    def guardar_compra(self, compra: Compra, *, tocar: bool = True) -> None:
         """Solo compras de API: marca el cambio y la guarda en segundo plano
         (si se pierde y hay un reinicio, falta el dato y se bloquea).
 
         El paso a un estado terminal (`bloqueada`, `vencida`) no se descarta
         por el tope de escrituras en vuelo: perderlo haría revivir la compra
-        después de un reinicio."""
+        después de un reinicio. `tocar=False` guarda sin mover `actualizada`
+        (una normalización al leer, no un cambio de la compra)."""
         if compra.origen != "api":
             return
-        compra.tocar()
+        if tocar:
+            compra.tocar()
         self.en_fondo.programar(
             self._escribir_compra(compra),
             "compra",
@@ -703,8 +762,9 @@ class ProxyGuard:
         restaurada = self.compras.restaurar(compra)
         if restaurada is compra and compra.estado != fila.get("estado"):
             # `desde_fila` cerró una espera (reinicio): la fila también, así
-            # el listado por estado y el conteo de activas la ven igual.
-            self.guardar_compra(compra)
+            # el listado por estado y el conteo de activas la ven igual. Sin
+            # tocar `actualizada`: leer la compra no es un cambio.
+            self.guardar_compra(compra, tocar=False)
         return restaurada
 
     async def atar_contexto_api(
@@ -773,23 +833,31 @@ class ProxyGuard:
             or self.despachador is not None
         )
 
-    def estado(self) -> dict[str, Any]:
+    def estado(self, *, con_token: bool) -> dict[str, Any]:
         datos = {
             "guard_activo": self.guard_activo,
             "merchant_url": self.config.merchant_upstream_url,
             "evaluador": self.evaluador.nombre,
             "intencion": getattr(self.agente, "nombre", "agente") if self.agente else None,
             "filtro": self.filtro is not None,
+            "filtro_modo": self.filtro_modo,
         }
         if self.gateway_configurado:
             # Solo con el gateway configurado: sin configuración nueva, el
             # /guard/state es el mismo de siempre (lo leen el dashboard y sus tests).
-            datos["gateway"] = {
-                "integradores": len(self.integradores.todos()),
-                "comercios": [c.id for c in self.comercios.todos()],
+            gateway: dict[str, Any] = {
                 "almacen": self.almacen.nombre,
                 "publico": self.integradores.hay_claves(),
             }
+            if con_token:
+                # Sin token (el GET del dashboard publicado se reenvía sin
+                # autenticar) no se enumeran los comercios ni los integradores.
+                gateway = {
+                    "integradores": len(self.integradores.todos()),
+                    "comercios": [c.id for c in self.comercios.todos()],
+                    **gateway,
+                }
+            datos["gateway"] = gateway
         return datos
 
     def ficha_de(self, contexto_id: str | None) -> Ficha:
@@ -874,13 +942,42 @@ class ProxyGuard:
             return JSONResponse(
                 {"error": "card_no_disponible", "status_comercio": status}, status_code=502
             )
-        card, _ = a2a.parsear_json(contenido)
+        card, _ = _leer_del_comercio(contenido)
         if not isinstance(card, dict):
             return JSONResponse({"error": "card_ilegible"}, status_code=502)
+        # Con un integrador el Guard está siempre prendido (como en `rpc`).
+        activo = True if integrador is not None else self.guard_activo
+        if activo and self.filtro is not None and not await self._card_pasa(
+            card, comercio, integrador
+        ):
+            return JSONResponse({"error": "card_bloqueada"}, status_code=502)
         publica = self._url_publica_card(request, comercio)
         logger.info("Agent Card: %s → %s", card.get("url"), publica)
         # Solo el JSON reescrito: ningún header del comercio (Set-Cookie, etc.).
         return JSONResponse(a2a.reescribir_card(card, publica))
+
+    async def _card_pasa(
+        self, card: dict[str, Any], comercio: Comercio, integrador: Integrador | None
+    ) -> bool:
+        """La Agent Card también es texto del comercio que lee el agente
+        (nombre, descripciones, skills): pasa por el filtro antes de llegarle.
+        Si el filtro la corta, falla o tarda de más, no se entrega (y queda un
+        evento `error` con un motivo fijo, nada de la card)."""
+        llamada = Llamada(
+            pedido=a2a.Pedido(), guard_activo=True, comercio=comercio, integrador=integrador
+        )
+        try:
+            if (await self._correr_filtro(card)).pasa:
+                return True
+            motivo = "La Agent Card del comercio no pasó el filtro de seguridad: no se entrega."
+        except Exception as e:  # noqa: BLE001 - fail-closed
+            logger.exception("El filtro de seguridad falló con la Agent Card")
+            motivo = (
+                f"El filtro de seguridad no pudo revisar la Agent Card ({type(e).__name__}): "
+                "no se entrega."
+            )
+        self._error(llamada, motivo)
+        return False
 
     # -- JSON-RPC ------------------------------------------------------------
 
@@ -916,6 +1013,15 @@ class ProxyGuard:
             oyente=_oyente(request),
         )
         pedido = llamada.pedido
+        if integrador is None:
+            # Tráfico anónimo (la demo): nunca en el contexto de una compra de
+            # integrador. Lo adoptaría (su ficha, sus ofertas) y podría
+            # bloquearla. No se reenvía ni se emite nada.
+            ajeno = await self._contexto_es_de_integrador(pedido.contexto_id)
+            if ajeno is None:
+                return _error_a2a(pedido.rpc_id, "estado_no_disponible")
+            if ajeno:
+                return _error_a2a(pedido.rpc_id, "contexto_ajeno")
         if integrador is not None:
             error = await self._preparar_integrador(request, llamada)
             if error is not None:
@@ -956,6 +1062,10 @@ class ProxyGuard:
                 status_code=resp.status_code,
                 headers={**headers, "Cache-Control": "no-cache"},
                 media_type="text/event-stream",
+                # Si el cliente se va a mitad del stream, Starlette cancela el
+                # envío y el `finally` de `_sse` recién corre cuando el GC junta
+                # el generador: la respuesta del comercio se cierra igual acá.
+                background=BackgroundTask(resp.aclose),
             )
         try:
             contenido = await a2a.leer_acotado(
@@ -1037,17 +1147,14 @@ class ProxyGuard:
         compra = llamada.compra
         assert compra is not None
         if compra.estado != "creada":
-            if not compra.contexto_listo.is_set():
-                try:
-                    await asyncio.wait_for(compra.contexto_listo.wait(), self._restante(llamada))
-                except asyncio.TimeoutError:
-                    pass
+            # Si vence, sigue literal, como siempre (el Guard igual verifica).
+            await self._esperar_a_la_otra(llamada, compra, compra.contexto_listo)
             return
         # Antes de cualquier await: otra búsqueda de la misma compra ya no
         # entra acá (espera `contexto_listo`).
         compra.estado = "negociando"
         pedido = llamada.pedido
-        hoy = date.today()
+        hoy = self.hoy()
         contexto = None
         try:
             if self.agente is None or not compra.intencion_activa:
@@ -1169,14 +1276,14 @@ class ProxyGuard:
         self, contenido: bytes, llamada: Llamada, status: int
     ) -> tuple[bytes, int]:
         pedido, activo = llamada.pedido, llamada.guard_activo
-        body, error = a2a.parsear_json(contenido)
+        body, error = _leer_del_comercio(contenido)
         salida = contenido
         if error is None and isinstance(body, dict):
-            # guard.veredicto solo lo pone el proxy.
-            body, cambiado = a2a.quitar_veredictos_ajenos(body)
             try:
+                # guard.veredicto solo lo pone el proxy.
+                body, cambiado = a2a.quitar_veredictos_ajenos(body)
                 salida = a2a.dumps(body) if cambiado else contenido
-            except ValueError as e:  # defensa (N6): algo que no se puede reescribir
+            except (ValueError, RecursionError) as e:  # defensa (N6): no se puede reescribir
                 error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or f"se esperaba un objeto JSON y llegó {type(body).__name__}"
@@ -1196,7 +1303,7 @@ class ProxyGuard:
                     etapa="seguridad", senales=corte[1],
                 ), 200
 
-        if llamada.de_integrador and not await self._contexto_respuesta_ok(llamada, result):
+        if not await self._contexto_respuesta_ok(llamada, result):
             # El comercio respondió con el contexto de otra compra (o uno
             # ilegible): no se reenvía nada de esa respuesta.
             return self._cortar(
@@ -1253,7 +1360,7 @@ class ProxyGuard:
             nuevo = a2a.tarea_con_artefacto(result, decision.artefacto())
         try:
             cuerpo = a2a.dumps({**body, "result": nuevo})
-        except ValueError as e:  # defensa (N6): nunca un 500 sin veredicto ni evento
+        except (ValueError, RecursionError) as e:  # defensa (N6): nunca un 500 sin veredicto
             return self._bloqueo_sintetico(
                 llamada, "la respuesta del comercio no se pudo reenviar",
                 f"{type(e).__name__}: {e}"[:200],
@@ -1308,7 +1415,7 @@ class ProxyGuard:
             falla = f"el stream del comercio supera el tope de {e.limite} bytes"
         except httpx.HTTPError as e:
             falla = f"el stream del comercio se cortó ({type(e).__name__})"
-        except ValueError as e:  # defensa (N6): un evento que no se puede reescribir
+        except (ValueError, RecursionError) as e:  # defensa (N6): no se puede reescribir
             falla = f"un evento del comercio no se pudo reenviar ({type(e).__name__})"
         finally:
             await resp.aclose()
@@ -1352,13 +1459,13 @@ class ProxyGuard:
         self, evento: a2a.EventoSSE, llamada: Llamada, est: EstadoStream
     ) -> list[bytes]:
         pedido, activo = llamada.pedido, llamada.guard_activo
-        body, error = a2a.parsear_json(evento.data)
+        body, error = _leer_del_comercio(evento.data)
         crudo = b""
         if error is None and isinstance(body, dict):
-            body, cambiado = a2a.quitar_veredictos_ajenos(body)
             try:
+                body, cambiado = a2a.quitar_veredictos_ajenos(body)
                 crudo = a2a.bloque_sse(body) if cambiado else evento.serializar()
-            except ValueError as e:  # defensa (N6)
+            except (ValueError, RecursionError) as e:  # defensa (N6)
                 error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or "el evento no es un objeto JSON"
@@ -1387,7 +1494,7 @@ class ProxyGuard:
             corte = await self._filtrar(result if isinstance(result, dict) else body, llamada)
             if corte is not None:
                 return self._sse_cortar_etapa2(llamada, est, corte[0], corte[1])
-        if llamada.de_integrador and not await self._contexto_respuesta_ok(llamada, result):
+        if not await self._contexto_respuesta_ok(llamada, result):
             return self._sse_cortar_etapa2(llamada, est, _MOTIVO_CONTEXTO_AJENO)
         if not isinstance(result, dict):
             if "error" in body:
@@ -1595,12 +1702,20 @@ class ProxyGuard:
         return True
 
     async def _contexto_respuesta_ok(self, llamada: Llamada, result: Any) -> bool:
-        """Tráfico de integrador: el `contextId` que trae la respuesta (JSON o
-        cada evento SSE) tiene que ser de la compra del pedido. Si no estaba
-        atado, se ata. Uno de otra compra, ilegible o una falla del almacén
-        → False (el llamador corta)."""
+        """El `contextId` que trae la respuesta (JSON o cada evento SSE).
+
+        - Tráfico de integrador: tiene que ser de la compra del pedido. Si no
+          estaba atado, se ata.
+        - Tráfico anónimo (la demo): no puede ser de una compra de integrador
+          (el comercio no la puede "mudar" ahí, ni con un `tasks/get` de una
+          tarea suya).
+
+        Uno de otra compra, ilegible o una falla del almacén → False (el
+        llamador corta)."""
         if not isinstance(result, dict) or result.get("contextId") is None:
             return True
+        if not llamada.de_integrador:
+            return await self._contexto_es_de_integrador(result["contextId"]) is False
         compra, comercio = llamada.compra, llamada.comercio
         if compra is None or comercio is None:
             return False
@@ -1613,9 +1728,35 @@ class ProxyGuard:
         espera hasta 600 s y las dos esperas caen en la misma llamada."""
         return max(0.0, _PRESUPUESTO_LLAMADA_S - (time.monotonic() - llamada.inicio))
 
+    async def _esperar_a_la_otra(
+        self, llamada: Llamada, compra: Compra, evento: asyncio.Event
+    ) -> bool:
+        """Otra búsqueda de la misma compra espera a la que está preguntando
+        (`evento`: `contexto_listo` o `resuelta`). True si terminó.
+
+        Cada tramo dura lo que le queda a la espera de la compra
+        (`compra.restante()`) más un margen para el LLM, nunca más que la
+        llamada. Si vence y la compra abrió otra espera mientras tanto (otro
+        plazo), vuelve a calcular; si no avanzó, False y quien llama cierra
+        del lado seguro (antes esperaba el presupuesto entero, 570 s)."""
+        while not evento.is_set():
+            tramo = min(self._restante(llamada), compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
+            if tramo <= 0:
+                return False
+            plazo = compra.vence
+            try:
+                await asyncio.wait_for(evento.wait(), tramo)
+            except asyncio.TimeoutError:
+                if compra.vence == plazo:
+                    return False
+        return True
+
     async def _llm(self, funcion: Any, *args: Any) -> Any:
-        """Una llamada al agente de intención, en un hilo y con tope de tiempo."""
-        return await asyncio.wait_for(asyncio.to_thread(funcion, *args), _TIMEOUT_LLM_S)
+        """Una llamada al agente de intención, en un hilo (el pool del LLM) y
+        con tope de tiempo."""
+        return await asyncio.wait_for(
+            self._en_hilo(self.ejecutor_llm, funcion, *args), _TIMEOUT_LLM_S
+        )
 
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
         """La ficha confirmada de la demo para ese escenario (si hay), con los
@@ -1670,7 +1811,7 @@ class ProxyGuard:
         # Una compra nueva: si el usuario registró su pedido en /demo, el
         # intake lee sus palabras además de la búsqueda del agente (una vez).
         texto = pedido_para_intake(pedido.catalog_search or "", self.pedido_usuario.tomar())
-        hoy = date.today()
+        hoy = self.hoy()
         categorias: list[str] | None = None
         resultado: Any = None  # intencion.intake.ResultadoIntake del último turno
         try:
@@ -1897,6 +2038,18 @@ class ProxyGuard:
             return JSONResponse({"error": "estado", "estado": e.estado}, status_code=409)
         return JSONResponse(self._compra_json(compra.a_json()))
 
+    async def _correr_filtro(self, objetivo: Any) -> ResultadoFiltro:
+        """El filtro sobre una copia de `objetivo`, en su pool y con tope de
+        tiempo. Lanza si falla, si tarda de más o si no devuelve un
+        `ResultadoFiltro`: quien llama falla cerrado."""
+        salida = await asyncio.wait_for(
+            self._en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(objetivo)),
+            _TIMEOUT_FILTRO_S,
+        )
+        if isinstance(salida, ResultadoFiltro):
+            return salida
+        return ResultadoFiltro.model_validate(salida)
+
     async def _filtrar(
         self, objetivo: dict[str, Any], llamada: Llamada
     ) -> tuple[str, list[str]] | None:
@@ -1910,14 +2063,7 @@ class ProxyGuard:
         # proveedor: no se le pasa al filtro (la respuesta reenviada no cambia).
         revisar = a2a.sin_eco_del_pedido(objetivo, llamada.pedido.mensaje)
         try:
-            salida = await asyncio.wait_for(
-                asyncio.to_thread(self.filtro, copy.deepcopy(revisar)), _TIMEOUT_FILTRO_S
-            )
-            veredicto = (
-                salida
-                if isinstance(salida, ResultadoFiltro)
-                else ResultadoFiltro.model_validate(salida)
-            )
+            veredicto = await self._correr_filtro(revisar)
             corte = None if veredicto.pasa else (_MOTIVO_FILTRO, list(veredicto.senales))
         except Exception as e:  # noqa: BLE001 - fail-closed
             logger.exception("El filtro de seguridad falló")
@@ -1928,7 +2074,9 @@ class ProxyGuard:
             compra = llamada.compra or self.compras.de_contexto(
                 contexto if isinstance(contexto, str) else llamada.pedido.contexto_id
             )
-            if compra is not None:
+            # El tráfico anónimo no bloquea una compra de integrador (el
+            # comercio puede contestar con el contexto de una ajena).
+            if compra is not None and (compra.origen != "api" or llamada.de_integrador):
                 compra.estado = "bloqueada"
                 compra.resuelta.set()
                 self.guardar_compra(compra)
@@ -1957,10 +2105,9 @@ class ProxyGuard:
         compra.resolver_ficha(self._ficha_confirmada(escenario))
 
         if compra.estado == "esperando_decision":
-            try:
-                await asyncio.wait_for(compra.resuelta.wait(), self._restante(llamada))
-            except asyncio.TimeoutError:
-                return "vencida", None
+            listo = await self._esperar_a_la_otra(llamada, compra, compra.resuelta)
+            if not listo or compra.estado == "esperando_decision":
+                return "vencida", None  # sin decisión: el silencio no autoriza
         if compra.estado == "aceptada" and compra.oportunidad and compra.requisitos_autorizados:
             artefacto = self._artefacto_parametros(
                 compra.oportunidad.cart_id, compra.oportunidad.id, compra.requisitos_autorizados
@@ -2014,6 +2161,10 @@ class ProxyGuard:
         oportunidad = _con_titulo_publico(oportunidad, ofertas)
 
         compra.oportunidad = oportunidad
+        # Las otras búsquedas esperan esta decisión (`resuelta`). Puede venir
+        # puesta: `Compra.desde_fila` la deja así al hidratar después de un
+        # reinicio, y otra búsqueda pasaba sin la decisión del usuario.
+        compra.resuelta.clear()
         compra.estado = "esperando_decision"
         vence = compra.fijar_plazo(
             min(self.config.espera_decision_s, self._restante(llamada) - _MARGEN_S)
@@ -2373,7 +2524,8 @@ class ProxyGuard:
         gtins = gtins_de_ofertas(offer_details, catalogo)
         try:
             resultados = await asyncio.wait_for(
-                asyncio.to_thread(consultar_gtins, self.fabricante, gtins), _TIMEOUT_FABRICANTE_S
+                self._en_hilo(self.ejecutor_llm, consultar_gtins, self.fabricante, gtins),
+                _TIMEOUT_FABRICANTE_S,
             )
         except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala
             logger.warning("La fuente del fabricante no respondió: %s", type(e).__name__)
@@ -2422,6 +2574,11 @@ class ProxyGuard:
                 "no se encontraron los parámetros que autorizó el integrador", clave=clave,
             )
         catalogo, fabricante = await self._con_fabricante(catalogo, guardadas.offer_details)
+        # Un solo instante por evaluación: la vigencia del JWT y la fecha del
+        # recibo (en el Guard) y la vista y la fila del veredicto. Es el reloj
+        # de verdad, nunca DEMO_HOY.
+        ahora = datetime.now(timezone.utc)
+        con_ahora = {"ahora": ahora} if self.evaluador.acepta_ahora else {}
         try:
             resultado = self.evaluador.evaluar(
                 ficha,  # parámetros autorizados de la compra
@@ -2437,6 +2594,7 @@ class ProxyGuard:
                 politica=politica_de([comercio]),
                 checkout_hash=checkout.get("checkout_hash"),
                 checkout=visto,  # siempre: el Guard ata lo firmado al cart
+                **con_ahora,
             )
             veredicto = (
                 resultado
@@ -2489,7 +2647,6 @@ class ProxyGuard:
         if compra_api is not None:
             # Antes del evento: el webhook `compra.veredicto` lleva la foto
             # con este veredicto (vista reducida, sin texto del comercio).
-            ahora = datetime.now(timezone.utc)
             compra_api.registrar_veredicto(
                 vista_veredicto(
                     veredicto, contexto_id=contexto_id, ts=ahora, evaluador=self.evaluador.nombre
@@ -2756,7 +2913,7 @@ class ProxyGuard:
     # -- API de control (dashboard) -------------------------------------------
 
     async def get_state(self, request: Request) -> Response:
-        return JSONResponse(self.estado())
+        return JSONResponse(self.estado(con_token=self._con_token(request)))
 
     async def post_state(self, request: Request) -> Response:
         body, error = a2a.parsear_json(await request.body())
@@ -2773,7 +2930,8 @@ class ProxyGuard:
             {"guard_activo": self.guard_activo},
             guard_activo=self.guard_activo,
         )
-        return JSONResponse(self.estado())
+        # El POST ya exige el token (ControlLocal).
+        return JSONResponse(self.estado(con_token=self._con_token(request)))
 
     async def get_aprobaciones(self, request: Request) -> Response:
         listado = self.aprobaciones.listar()
@@ -2791,6 +2949,25 @@ class ProxyGuard:
         if contexto_id in self._contextos_api:
             return True
         return self._compra_api(None, contexto_id) is not None
+
+    async def _contexto_es_de_integrador(self, contexto_id: Any) -> bool | None:
+        """¿El contexto es de una compra de integrador? Primero la memoria y,
+        si puede haber compras que no están en memoria (claves activas o un
+        almacén durable, después de un reinicio), el almacén. None si el
+        almacén falla: quien llama corta (fail-closed)."""
+        if not isinstance(contexto_id, str) or not contexto_id:
+            return False
+        if self._contexto_de_integrador(contexto_id):
+            return True
+        if not (self.integradores.hay_claves() or self.almacen.durable):
+            return False  # la demo sola: no hay compras de integrador
+        if not es_id(ID_SEGURO_RE, contexto_id):
+            return False  # uno así nunca se ata a una compra (`atar_contexto_api`)
+        try:
+            return await self.almacen.compra_de_contexto(contexto_id) is not None
+        except ErrorAlmacen as e:
+            logger.error("No se pudo saber de quién es el contexto %s: %s", contexto_id, e)
+            return None
 
     async def post_aprobacion(self, request: Request) -> Response:
         body, error = a2a.parsear_json(await request.body())
@@ -3029,6 +3206,16 @@ def _oyente(request: Request) -> str:
     return "publico" if getattr(request.state, "oyente", "local") == "publico" else "local"
 
 
+def _leer_del_comercio(contenido: bytes | str) -> tuple[Any, str | None]:
+    """JSON estricto de una respuesta (o de un evento SSE) del comercio, que
+    además no esté anidado de más (`a2a.PROFUNDIDAD_MAXIMA`): una así no se
+    puede copiar ni registrar en un evento, y se trata como ilegible."""
+    body, error = a2a.parsear_json(contenido)
+    if error is None and a2a.anidado_de_mas(body, a2a.PROFUNDIDAD_MAXIMA):
+        return None, f"la respuesta tiene más de {a2a.PROFUNDIDAD_MAXIMA} niveles de anidamiento"
+    return body, error
+
+
 def _pedido_legible(raw: bytes) -> bool:
     """El pedido de un integrador: un objeto JSON estricto (sin NaN ni
     Infinity) con un `contextId`, si viene, de texto. Un `contextId` de otro
@@ -3089,12 +3276,14 @@ def create_app(
     comercios: RegistroComercios | None = None,
     almacen: AlmacenEstado | None = None,
     despachador: Despachador | None = None,
+    filtro_modo: str | None = None,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
     `persistencia` (Supabase), `agente` (intencion.Agente), `filtro`
-    (contracts.Filtro, de Dev 1) y `fabricante` (fabricante.FuenteFabricante)
-    los arma `python -m proxy` desde el entorno; acá no se lee el entorno, así
+    (contracts.Filtro, de Dev 1, y `filtro_modo`, lo que dice su
+    `describir()`) y `fabricante` (fabricante.FuenteFabricante) los arma
+    `python -m proxy` desde el entorno; acá no se lee el entorno, así
     los tests nunca escriben en la base real ni llaman a un LLM.
 
     Gateway de producción (todo opcional; sin esto, la app es la de siempre):
@@ -3126,7 +3315,7 @@ def create_app(
         config, client, evaluador, ping_segundos,
         persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
         integradores=integradores, comercios=comercios, almacen=almacen,
-        despachador=despachador,
+        despachador=despachador, filtro_modo=filtro_modo,
     )
     nucleo = NucleoProxy(proxy)
     # El oyente público solo existe con claves: sin ellas, todo pedido es local.
@@ -3145,6 +3334,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         yield
+        proxy.cerrar_hilos()
         if despachador is not None:
             await despachador.cerrar()
         await proxy.en_fondo.cerrar()

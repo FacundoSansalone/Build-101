@@ -47,16 +47,27 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `CATALOGO_RESPALDO_FIXTURE` | `0` | `1` solo para la demo offline: si el catálogo no responde, usar `fixtures/public_catalog.json`. Con `0`, se evalúa sin catálogo |
 | `GUARD_ACTIVO` | `true` | Estado inicial del interruptor |
 | `GUARD_EVENTS_JSONL` | `.logs/guard_events.jsonl` | Copia de los eventos (relativo a la raíz del repo; se crea con modo 0600) |
+| `GUARD_EVENTS_JSONL_PRIVADO` | `.logs/guard_events_privados.jsonl` (junto a `GUARD_EVENTS_JSONL`) | Copia de los eventos de compras de integrador (modo 0600). El dashboard no la sirve. Tiene que ser otro archivo que `GUARD_EVENTS_JSONL` (si no, no arranca) |
 | `GUARD_KEY_PATH` | `.temp-db/guard_signing_key.pem` | Clave del recibo (la maneja `guard.recibo`) |
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control, nuevo en cada arranque (modo 0600 donde aplica). Lo lee el servidor del dashboard |
 | `PROXY_ALLOW_STUB` | `0` | `1` para arrancar con el stub si no hay `guard.evaluar()` real (solo pruebas) |
 | `PROXY_MAX_RESPUESTA_BYTES` | `5242880` | Tope por respuesta del comercio (5 MB) |
+| `PROXY_MAX_SUSCRIPTORES_SSE` | `20` | Suscriptores de `GET /guard/events` a la vez (503 después). Cada uno guarda hasta 1000 eventos en su cola: el tope acota la memoria. Un entero mayor que 0 (si no, no arranca) |
 | `SUPABASE_URL` | — | Proyecto de Supabase (`https://<ref>.supabase.co`). Con la clave, activa el registro en Supabase |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Clave de servicio de Supabase (`sb_secret_…` o la `service_role` legacy). También se acepta como `SUPABASE_SECRET_KEY`, el nombre que usa hoy el dashboard. **Secreta**: va en el entorno o en un `.env` ignorado por git, nunca en el repo. El proxy no lee `.env` solo: `set -a; source .env; set +a` antes de `python -m proxy` |
 
 Los servicios locales van por `127.0.0.1` y no por `localhost`: en Windows
 `localhost` prueba primero `::1`, donde el comercio y el catálogo no
 escuchan, y cada intento fallido suma ~2 s.
+
+Al revés, el Shopping Agent habla con el proxy por `localhost:8010`
+(`MERCHANT_AGENT_URL`): con `PROXY_HOST=127.0.0.1` (el default) el proxy
+escucha además en `[::1]` al mismo puerto (medido en Windows: ~2,1 s menos
+por conexión nueva). Si la máquina no tiene IPv6, sigue solo con IPv4 y lo
+avisa en el log; si otro proceso tiene ese puerto en `[::1]`, **no arranca**
+(los clientes de `localhost` le hablarían a ese). En Windows los sockets se
+abren con `SO_EXCLUSIVEADDRUSE`, así ningún otro proceso se ata al mismo
+puerto (con el `SO_REUSEADDR` de uvicorn, Windows lo dejaba).
 
 ## Apuntar el flujo al proxy
 
@@ -88,8 +99,8 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
 
 | Llamada | Qué hace el proxy |
 |---|---|
-| `GET /a2a/merchant_agent/.well-known/agent-card.json` (o `agent.json`) | Pide la card al comercio y reescribe `url` y `additionalInterfaces[].url` con `PROXY_PUBLIC_URL`. Sin esto, el cliente del sample manda el JSON-RPC directo a `:8001`. Devuelve solo el JSON (`Content-Type: application/json`), **sin ningún header del comercio** (nunca `Set-Cookie`). Cualquier otra ruta bajo `/a2a/merchant_agent/` da 404 y no se pide al comercio. |
-| `POST /a2a/merchant_agent` | Reenvía el JSON-RPC (bytes del pedido tal cual, con `X-A2A-Extensions`). Respuesta JSON (`message/send`, lo que usa el sample) o SSE (`message/stream`, `tasks/resubscribe`), detectada con `"text/event-stream" in content-type.lower()`. Del comercio al cliente solo pasa `X-A2A-Extensions`; el `Content-Type` se normaliza. |
+| `GET /a2a/merchant_agent/.well-known/agent-card.json` (o `agent.json`) | Pide la card al comercio y reescribe `url` y `additionalInterfaces[].url` con `PROXY_PUBLIC_URL`. Sin esto, el cliente del sample manda el JSON-RPC directo a `:8001`. Devuelve solo el JSON (`Content-Type: application/json`), **sin ningún header del comercio** (nunca `Set-Cookie`). Cualquier otra ruta bajo `/a2a/merchant_agent/` da 404 y no se pide al comercio. Con filtro (`GUARD_FILTRO`) y el Guard prendido (siempre, con un integrador), la card del comercio pasa por el filtro antes de llegar al agente: nombre, descripciones y skills son texto del comercio. Si el filtro la corta, falla o tarda de más, 502 `card_bloqueada` y un evento `error` con motivo fijo. Más de 64 niveles de anidamiento: 502 `card_ilegible`. |
+| `POST /a2a/merchant_agent` | Reenvía el JSON-RPC (bytes del pedido tal cual, con `X-A2A-Extensions`). Respuesta JSON (`message/send`, lo que usa el sample) o SSE (`message/stream`, `tasks/resubscribe`), detectada con `"text/event-stream" in content-type.lower()`. Del comercio al cliente solo pasa `X-A2A-Extensions`; el `Content-Type` se normaliza. Si el cliente se va a mitad de un SSE, la respuesta del comercio se cierra igual (tarea de fondo de la `StreamingResponse`). |
 | `find_products` (pedido con `catalog_search`) | Pasa sin cambios. **Solo de estas respuestas** salen las ofertas: carts, offer_details y escenario, guardados (copiados) por el `context_id` de la respuesta. Una búsqueda nueva del cliente en el mismo contexto las reemplaza; ninguna otra respuesta las toca. |
 | `create_checkout` (pedido con `cart_id`) | Exige **un solo** `ap2.checkout`, en los artefactos de una tarea, con `cart_id` = el del pedido y `contextId` = el del pedido. Evalúa con las ofertas del contexto del pedido: `evaluar(ficha, OfertasVistas(...), cart_id_del_pedido, catalogo, politica=None, checkout_hash=..., checkout=CheckoutVisto.model_validate(ap2.checkout))` (siempre con `checkout=`). |
 | `tasks/get`, `tasks/resubscribe` | Con checkout: usa la decisión guardada por `(task_id, sha256 del data part ap2.checkout completo en JSON canónico, cart_id)`. Si cambia cualquier campo del data part (el JWT, `checkout_hash`, `amount`, `amount_cents`, `currency`, `item_label`…), se reevalúa; el orden de las claves no cuenta. Si la tarea fue bloqueada o retenida, **nunca** devuelve el checkout (aunque se apague el Guard). Si el proxy no evaluó esa tarea, bloquea. |
@@ -201,7 +212,7 @@ ve todo. La demo (tráfico anónimo) se ve igual que siempre.
 | `POST /guard/state` con `{"guard_activo": bool}` y `X-Guard-Token` | Mismo formato. Emite `guard_cambiado`. 400 si el cuerpo no es eso. |
 | `POST /guard/aprobaciones` con `{"contexto_id": str, "cart_id": str}` y `X-Guard-Token` | 409 `compra_de_integrador` si el contexto es de una compra de integrador (en memoria, en el almacén o marcado al registrar su veredicto); 503 si el almacén no responde. Si no, registra una **aprobación humana de un solo uso** para ese contexto y cart, atada al **total firmado exacto** del último veredicto `escalar` de ese contexto/cart: el `totals[type=total].amount` del payload del `checkout_jwt` (un entero, en centavos) y su `currency`, sin fallbacks a `line_items` ni al data part. 201 con la aprobación; 200 si ya había una pendiente igual; 409 si el último veredicto no es `escalar` o si el checkout escalado no tiene un total firmado entero exacto (falta, es float, hay dos, claves duplicadas…): queda retenido; 400 si el cuerpo no es exactamente eso. |
 | `GET /guard/aprobaciones` | `{"pendientes": [...], "usadas": [...]}`; cada una con `id`, `contexto_id`, `cart_id`, `centavos`, `monto`, `moneda`, `creada`, `estado`, `usada`, `task_id`. |
-| `GET /guard/events` | SSE. Cada mensaje: `event: evento` + `data: <Evento JSON>`. Al conectar reenvía los últimos eventos en memoria (hasta 200). `: ping` cada 15 s. Hasta 20 suscriptores (503 después). |
+| `GET /guard/events` | SSE. Cada mensaje: `event: evento` + `data: <Evento JSON>`. Al conectar reenvía los últimos eventos en memoria (hasta 200). `: ping` cada 15 s. Hasta `PROXY_MAX_SUSCRIPTORES_SSE` suscriptores (20; 503 después). |
 | `GET /guard/events/history?limit=200` | Lista JSON de `Evento` (los más viejos primero, máximo 200). |
 | `GET /guard/public-key` | `{"kid": "...", "jwk": {...}}` si hay Guard real con `guard.recibo`; 404 si no. |
 
@@ -214,7 +225,11 @@ checkout pasa intacto y la aprobación queda usada.
 ### Eventos (`contracts.Evento`)
 
 Además van a `GUARD_EVENTS_JSONL`, una línea por evento. `escenario` es el
-`demo_scenario` de la compra; `contexto_id`, el `context_id` de A2A.
+`demo_scenario` de la compra; `contexto_id`, el `context_id` de A2A. Los de
+compras de integrador (los que sin token no salen por `/guard/*`: llevan
+checkout_jwt y mandatos de clientes del gateway) van a
+`GUARD_EVENTS_JSONL_PRIVADO` y no al principal, que el dashboard sirve para el
+replay. En memoria y en el SSE siguen todos.
 
 | `tipo` | `datos` |
 |---|---|
@@ -317,7 +332,10 @@ Reglas que no dependen de la demo:
   llamada (los plazos se recortan a lo que queda), y cada llamada al agente
   de intención tiene un tope de 45 s.
 - **Filtro.** Corre en un hilo, con un tope de 30 s. Si vence o falla,
-  bloquea. Revisa también los errores del comercio, los `result` que no son
+  bloquea. Tiene su propio pool (`ProxyGuard.ejecutor_filtro`, 16 hilos) y el
+  agente de intención y el fabricante, otro (`ejecutor_llm`, 16): un LLM
+  colgado sigue ocupando su hilo después del tope y, con el pool compartido
+  de asyncio, dejaba al filtro sin hilos. El lifespan los cierra sin esperar. Revisa también los errores del comercio, los `result` que no son
   objeto y cada evento de un stream. Lo que no se puede leer, con filtro, no
   se reenvía.
 - **Streams (SSE).** El filtro corta evento por evento. La respuesta no se
@@ -325,7 +343,12 @@ Reglas que no dependen de la demo:
   el Guard igual verifica el checkout.
 - **Búsquedas repetidas.** Otra búsqueda de la misma compra espera el mismo
   porqué y la misma decisión. Después de vencida o bloqueada, tampoco recibe
-  nada; después de aceptada, vuelve a llevar los parámetros.
+  nada; después de aceptada, vuelve a llevar los parámetros. Espera lo que
+  le queda a la espera de la compra más 65 s (el LLM de después), y vuelve a
+  calcular si la compra abrió otra espera; si la otra no avanzó, cierra del
+  lado seguro (el porqué: sigue literal; la decisión: vencida). Una compra
+  que entra en `esperando_decision` limpia `resuelta` (al hidratarla después
+  de un reinicio venía puesta y otra búsqueda pasaba sin la decisión).
 - **Contexto.** Una respuesta del comercio que usa el `contextId` de otra
   compra se corta.
 - **Fallas del agente.** Si el agente de intención falla, la compra sigue con
@@ -346,6 +369,7 @@ Reglas que no dependen de la demo:
 | `PROXY_ESPERA_DECISION_S` | `420` | Cuánto se espera la decisión sobre la oportunidad |
 | `PROXY_PERMITIR_SIN_FILTRO` | `0` | Con la intención activa, sin `GUARD_FILTRO` el proxy no arranca; `1` lo permite (solo tests y demo, se avisa en el log) |
 | `PROXY_FICHA_DEMO` | `1` | `0`: no usar las fichas de la demo (`scenarios.json`, `fixtures/`), como con un comercio real. Mandan los parámetros que armó y confirmó el intake; sin compra, el Guard escala |
+| `DEMO_HOY` | — | Fecha `YYYY-MM-DD` que el agente de intención toma como hoy. Las ofertas de la demo tienen fechas fijas (hoy = domingo `2026-10-18`, "el lunes" = `2026-10-19`): para correrla otro día, `DEMO_HOY=2026-10-18`. Se avisa en el log al arrancar; otro formato no arranca. No llega al Guard: los vencimientos del checkout firmado se miran con el reloj de verdad |
 | `FABRICANTE_FUENTE` | `fixture` | Ficha del fabricante por GTIN: `fixture` (`fixtures/fabricante/`, datos de prueba rotulados), `icecat` (en vivo) o `ninguna`. Un valor inválido (o `icecat` sin `ICECAT_USUARIO`) no arranca. Ver [`fabricante/README.md`](../fabricante/README.md) (`FABRICANTE_FIXTURES_DIR`, `ICECAT_*`) |
 | `FILTRO_SOLO_HEURISTICAS`, `DECISIONES_PROVEEDOR`, `DECISIONES_MODELO_*`, `FILTRO_TIMEOUT_S` | — | Del filtro y del cliente de decisiones: ver [`filtro/README.md`](../filtro/README.md) |
 
@@ -356,8 +380,12 @@ Reglas que no dependen de la demo:
 | `POST /guard/compras/decision` con `{"compra_id", "decision": "aceptar"\|"rechazar"}` y `X-Guard-Token` | Igual: 200, 404, 409 (si no hay una consulta pendiente) o 400 |
 | `POST /guard/compras/pedido` con `{"texto"}` y `X-Guard-Token` | Lo que escribió el usuario en `/demo` para el intake de la próxima compra nueva (reemplaza al anterior; vence a los 180 s; un uso). 200 `{"registrado": true, "vence"}` (sin el texto), o `{"registrado": false, "motivo": "intermediario_apagado" \| "sin_agente_de_intencion"}` si ninguna compra lo usaría (no se guarda); 400 si no es exactamente eso (1 a 1000 caracteres) |
 
-`GET /guard/state` suma `"intencion"` (nombre del agente o `null`) y
-`"filtro"` (bool).
+`GET /guard/state` suma `"intencion"` (nombre del agente o `null`),
+`"filtro"` (bool) y `"filtro_modo"`: lo que dice `describir()` del módulo de
+`GUARD_FILTRO` (por ejemplo, si corre solo con heurísticas), o `null` si no
+hay filtro o el módulo no lo tiene. También sale en la línea de arranque
+(`filtro: sí (<modo>)`). Solo informa: si `describir()` falla, se avisa y el
+filtro sigue igual.
 
 ## Seguridad
 
@@ -369,9 +397,16 @@ Reglas que no dependen de la demo:
   proxy no arranca (salvo `PROXY_ALLOW_STUB=1`, marcado en todo).
 - Por el veredicto no le llega al agente texto del comercio (versión
   reducida); `id`/`event` del SSE se sanean.
-- Ningún header del comercio llega al cliente salvo `X-A2A-Extensions`.
+- Ningún header del comercio llega al cliente salvo `X-A2A-Extensions`. Al
+  revés, los headers de control propios (`X-Guard-Token`, `X-Compra-Id`)
+  nunca llegan al comercio, tampoco en el tráfico anónimo.
 - JSON estricto (sin `NaN`/`Infinity`), lectura con tope de bytes y SSE leído
-  línea a línea con el mismo tope.
+  línea a línea con el mismo tope. Una respuesta (o un evento SSE) del
+  comercio con más de 64 niveles de anidamiento se trata como ilegible: más
+  hondo, copiarla daba `RecursionError` y su evento no se podía serializar
+  (pydantic corta cerca de los 100), y quedaba en memoria rompiendo el SSE
+  del dashboard. Un evento que igual no se puede serializar (el payload de
+  un JWT anidado de más) va con `datos: {"no_serializable": true}`.
 - Los textos que el proxy manda al agente son plantillas fijas; los detalles
   de errores (que pueden traer texto del comercio) solo van al evento `error`.
 
@@ -505,6 +540,14 @@ es de un integrador:
   identificador seguro también se corta.
 - Antes de reenviar se sacan `Authorization` y `X-Compra-Id`: la clave nunca
   llega al comercio. Tope de cuerpo: `GATEWAY_MAX_CUERPO_A2A_BYTES` (413).
+- **El tráfico anónimo no entra en una compra de integrador.** Un pedido sin
+  clave con un `contextId` atado a una compra de integrador (en memoria o,
+  con claves o un almacén durable, en el almacén) da 409 `contexto_ajeno` sin
+  reenviar ni emitir nada (503 `estado_no_disponible` si el almacén no
+  responde). Si el comercio contesta un pedido anónimo con ese contexto (JSON,
+  cada evento SSE, también un `tasks/get`), se corta; y un corte del filtro
+  en ese tráfico no bloquea la compra ajena. Antes, la demo la adoptaba:
+  evaluaba con su ficha, pisaba sus ofertas y la podía dejar `bloqueada`.
 - Los errores antes de reenviar son HTTP + error JSON-RPC (`code: -32001`,
   mensaje fijo `KaiAI: …` y `data.codigo`). `comercio_desconocido`
   (404), `comercio_no_permitido` (403) y `pedido_ilegible` (400) salen con
@@ -610,7 +653,12 @@ prefijo NAT64 (`64:ff9b::/96`) se juzga por la IPv4 de adentro, y las
 IPv4-compatibles (`::/96`) y las IPv4-traducidas (`::ffff:0:0:0/96`) se
 rechazan.
 El cuerpo es la `VistaCompra` del momento (la misma del GET), firmada con
-HMAC-SHA256 en `X-Guard-Firma: t=<unix>,v1=<hex>`. Hasta 6 intentos; solo
+HMAC-SHA256 en `X-Guard-Firma: t=<unix>,v1=<hex>`. El integrador ordena por
+`compra.actualizada`: `creada` y `actualizada` son marcas monótonas del
+proceso (`max(ahora, última + 1 µs)`, también después de la marca de una fila
+de otro proceso), porque en Windows dos `datetime.now()` seguidos dan el
+mismo instante. Una normalización al leer (una espera que se cierra al
+hidratar la compra después de un reinicio) no la mueve. Hasta 6 intentos; solo
 `https` a IPs públicas, resolviendo el host en cada intento y conectando a la
 IP ya verificada (contra DNS rebinding); no sigue redirecciones. La cola es en
 memoria (hasta 1000 pendientes, 200 por integrador; cada intento, 10 s en
@@ -675,7 +723,9 @@ Con `GATEWAY_ESTADO=supabase` y sin las tablas, crear una compra da 503
 Si hay algo del gateway configurado (claves activas, más de un comercio, un
 almacén que no es memoria o webhooks), la respuesta suma
 `"gateway": {"integradores": int, "comercios": [id], "almacen": "memoria"|"supabase", "publico": bool}`.
-Sin configuración nueva, el `/guard/state` es el de siempre.
+Sin `X-Guard-Token` (el GET del dashboard publicado se reenvía sin
+autenticar) solo `{"almacen", "publico"}`: no se enumeran los comercios ni
+los integradores. Sin configuración nueva, el `/guard/state` es el de siempre.
 
 ### Probarlo en local
 
@@ -736,7 +786,7 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `seguridad.py` | Middleware de la API de control (`Host`, `Origin`, `Content-Type`, `X-Guard-Token`) y el token por arranque |
 | `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo` |
 | `guard_stub.py` | Stub con la firma de `contracts.Evaluador`: bloquea si el elegido es el último cart |
-| `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta 20) y JSONL |
+| `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta `PROXY_MAX_SUSCRIPTORES_SSE`) y JSONL (los de compras de integrador, en el privado) |
 | `fuentes.py` | Intent y ficha de la demo (`ficha_del_intent`, con atributos), catálogo público (con su fuente), `intent_ap2(ficha)` y `ap2_check` con el tope de la compra |
 | `config.py` | Variables de entorno (también las `GATEWAY_*`), chequeo de loopback y `verificar_gateway` |
 | `persistencia.py` | Registro opcional en Supabase (veredictos y aprobaciones), en segundo plano y sin cortar el flujo si falla |

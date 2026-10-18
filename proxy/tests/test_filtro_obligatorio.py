@@ -89,6 +89,9 @@ def entorno(monkeypatch, tmp_path):
     monkeypatch.setenv("GUARD_KEY_PATH", str(tmp_path / "k.pem"))
     monkeypatch.setenv("GUARD_API_TOKEN_PATH", str(tmp_path / "token"))
     arranques: list[Any] = []
+    # Sin puertos de verdad: `main()` abre los sockets y sirve sobre ellos.
+    monkeypatch.setattr(principal, "sockets_de", lambda app, config, gateway: ["local"])
+    monkeypatch.setattr(principal, "servir", lambda app, sockets: arranques.append(app))
     monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: arranques.append(app))
     return arranques
 

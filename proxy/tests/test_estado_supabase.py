@@ -100,7 +100,7 @@ async def test_listar_compras():
     a = almacen(fake)
     assert await a.listar_compras("acme", limite=10) == []
     assert params(fake.ultimo) == {
-        "integrador_id": "eq.acme", "order": "creada.desc", "limit": "10", "select": "*",
+        "integrador_id": "eq.acme", "order": "creada.desc,id.desc", "limit": "10", "select": "*",
     }
     await a.listar_compras("acme", estado="negociando")
     assert params(fake.ultimo)["estado"] == "eq.negociando"

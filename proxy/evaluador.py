@@ -52,11 +52,15 @@ class EvaluadorCargado:
     # Se detecta en tiempo de ejecución: un guard/ viejo (o un stub) puede no
     # aceptar todavía `checkout=` (CLAUDE.md → Ronda de revisión 2026-10-17).
     acepta_checkout: bool = field(init=False)
+    # `ahora=` es del contrato, pero un evaluador de prueba puede no tenerlo:
+    # sin él, el Guard toma su propio reloj.
+    acepta_ahora: bool = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "acepta_checkout", acepta_parametro(self.evaluar, "checkout")
         )
+        object.__setattr__(self, "acepta_ahora", acepta_parametro(self.evaluar, "ahora"))
 
 
 class EvaluadorNoDisponible(RuntimeError):
