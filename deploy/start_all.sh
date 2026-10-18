@@ -19,6 +19,13 @@
 #   FILTRO_SOLO_HEURISTICAS   1 por defecto: con el modelo, el filtro corta el
 #                             desafío OTP del comercio honesto (DEMO.md)
 #   DEMO_PAUSA_AUTO_S         8 por defecto: plan gratuito de Gemini (0 si es pago)
+#   DEMO_HOY                  2026-10-18 por defecto: el "hoy" de nuestro agente.
+#                             Las ofertas de los escenarios tienen fechas fijas
+#                             (el domingo 2026-10-18): sin esto, "el lunes" de
+#                             otro día no coincide y el caso honesto no propone.
+#   PROXY_MAX_SUSCRIPTORES_SSE 200 por defecto: cada pestaña del panel abre una
+#                             suscripción al proxy (con 20, la pestaña 21 se
+#                             queda sin eventos).
 #
 # Gateway de producción (opcional; sin estas variables, todo igual que antes):
 #   GATEWAY_CLAVES_ARCHIVO    JSON de integradores (proxy/claves.py). El
@@ -51,6 +58,8 @@ if [ -f .temp-db/deploy.env ]; then set -a; source .temp-db/deploy.env; set +a; 
 export GUARD_FILTRO="${GUARD_FILTRO:-filtro:filtrar}"
 export FILTRO_SOLO_HEURISTICAS="${FILTRO_SOLO_HEURISTICAS:-1}"
 export DEMO_PAUSA_AUTO_S="${DEMO_PAUSA_AUTO_S:-8}"
+export DEMO_HOY="${DEMO_HOY:-2026-10-18}"
+export PROXY_MAX_SUSCRIPTORES_SSE="${PROXY_MAX_SUSCRIPTORES_SSE:-200}"
 
 PY="world/ap2/.venv/bin/python"
 # Windows (Git Bash): el venv tiene Scripts/python.exe, y Python espera
