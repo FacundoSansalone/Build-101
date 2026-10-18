@@ -18,30 +18,70 @@ logger = logging.getLogger("proxy")
 
 
 def cargar_agente(env: dict[str, str] | None = None) -> Any:
-    """Agente de intención (etapa 2) con Gemini, o None.
+    """Agente de intención (etapa 2), o None.
 
-    Sin GOOGLE_API_KEY ni GEMINI_API_KEY, o con INTENCION_ACTIVA=0, no hay
-    pregunta ni oportunidades: el proxy sigue como en la etapa 1. El modelo
-    se cambia con INTENCION_MODELO.
+    `INTENCION_PROVEEDOR=decisiones|gemini`. Sin la variable: `decisiones` si
+    hay cliente de decisiones (OPENAI_API_KEY o TYPESAFE_API_KEY, ver
+    `decisiones.cliente_desde_entorno`), si no `gemini`.
+
+    - decisiones: intake con juicios tipados (repregunta hasta tener todo).
+      Las oportunidades las detecta Gemini si hay GOOGLE_API_KEY o
+      GEMINI_API_KEY; si no, no hay oportunidades.
+    - gemini: el agente de siempre (una sola pregunta). INTENCION_MODELO
+      cambia el modelo.
+
+    Sin la clave del proveedor, o con INTENCION_ACTIVA=0, no hay pregunta ni
+    oportunidades: el proxy sigue como en la etapa 1. Un proveedor
+    desconocido no arranca.
     """
     env = dict(os.environ) if env is None else env
     if not _bool(env.get("INTENCION_ACTIVA", "1"), "INTENCION_ACTIVA"):
         return None
-    clave = env.get("GOOGLE_API_KEY") or env.get("GEMINI_API_KEY")
-    if not clave:
+    proveedor = (env.get("INTENCION_PROVEEDOR") or "").strip().lower()
+    if proveedor not in ("", "decisiones", "gemini"):
+        raise SystemExit(
+            f"INTENCION_PROVEEDOR={proveedor!r} no existe: usá decisiones o gemini."
+        )
+    from decisiones import cliente_desde_entorno
+
+    try:
+        cliente = cliente_desde_entorno(env)
+    except ValueError as e:  # DECISIONES_PROVEEDOR desconocido
+        raise SystemExit(str(e)) from e
+    clave_gemini = env.get("GOOGLE_API_KEY") or env.get("GEMINI_API_KEY")
+
+    def gemini() -> Any:
+        from google import genai
+
+        from intencion import MODELO_POR_DEFECTO, AgenteGemini
+
+        return AgenteGemini(
+            cliente=genai.Client(api_key=clave_gemini),
+            modelo=env.get("INTENCION_MODELO") or MODELO_POR_DEFECTO,
+        )
+
+    if proveedor == "decisiones" or (not proveedor and cliente is not None):
+        if cliente is None:
+            logger.warning(
+                "INTENCION_PROVEEDOR=decisiones sin OPENAI_API_KEY ni TYPESAFE_API_KEY: "
+                "la capa de intención (pregunta y oportunidades) queda apagada."
+            )
+            return None
+        from intencion.agente_decisiones import AgenteDecisiones
+
+        if not clave_gemini:
+            logger.warning(
+                "Intención con decisiones sin GOOGLE_API_KEY: hay intake (pregunta y "
+                "repreguntas) pero no detección de oportunidades."
+            )
+        return AgenteDecisiones(cliente, detector=gemini() if clave_gemini else None)
+    if not clave_gemini:
         logger.warning(
-            "Sin GOOGLE_API_KEY ni GEMINI_API_KEY: la capa de intención (pregunta "
-            "y oportunidades) queda apagada."
+            "Sin GOOGLE_API_KEY ni GEMINI_API_KEY (ni cliente de decisiones): la capa "
+            "de intención (pregunta y oportunidades) queda apagada."
         )
         return None
-    from google import genai
-
-    from intencion import MODELO_POR_DEFECTO, AgenteGemini
-
-    return AgenteGemini(
-        cliente=genai.Client(api_key=clave),
-        modelo=env.get("INTENCION_MODELO") or MODELO_POR_DEFECTO,
-    )
+    return gemini()
 
 
 def cargar_filtro(env: dict[str, str] | None = None) -> Any:
