@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import sys
 import types
 from datetime import datetime, timezone
@@ -71,15 +70,6 @@ def test_stub_sin_carts_bloquea():
 # ---------------------------------------------------------------------------
 
 
-def test_sin_guard_evaluar_usa_stub_y_avisa(monkeypatch, caplog):
-    monkeypatch.setitem(sys.modules, "guard", types.ModuleType("guard"))
-    with caplog.at_level(logging.WARNING):
-        cargado = cargar_evaluador()
-    assert cargado.nombre == "stub"
-    assert cargado.evaluar is guard_stub.evaluar
-    assert "usando stub" in caplog.text
-
-
 def test_con_guard_evaluar_usa_el_real(monkeypatch):
     modulo = types.ModuleType("guard")
 
@@ -92,13 +82,7 @@ def test_con_guard_evaluar_usa_el_real(monkeypatch):
     assert cargado.nombre == "guard"
     assert cargado.evaluar is evaluar
 
-
-def test_guard_que_no_importa_usa_stub(monkeypatch, caplog):
-    monkeypatch.setitem(sys.modules, "guard", None)  # import guard -> ImportError
-    with caplog.at_level(logging.WARNING):
-        cargado = cargar_evaluador()
-    assert cargado.nombre == "stub"
-    assert "usando stub" in caplog.text
+# (sin guard real: ver test_evaluador_fail_closed.py)
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +152,13 @@ def test_clave_publica_sin_guard_recibo(monkeypatch, tmp_path):
 def test_config_por_defecto():
     c = Config.desde_entorno({})
     assert c.port == 8010
-    assert c.merchant_upstream_url == "http://localhost:8001/a2a/merchant_agent"
+    # Servicios locales por IPv4: en Windows `localhost` prueba primero ::1,
+    # donde el comercio (127.0.0.1) y el catálogo (0.0.0.0) no escuchan, y
+    # cada intento fallido suma ~2 s.
+    assert c.merchant_upstream_url == "http://127.0.0.1:8001/a2a/merchant_agent"
+    assert c.catalogo_url == "http://127.0.0.1:8011"
+    # La URL pública que ve el cliente A2A no cambia (la usa MERCHANT_AGENT_URL).
     assert c.proxy_public_url == "http://localhost:8010/a2a/merchant_agent"
-    assert c.catalogo_url == "http://localhost:8011"
     assert c.guard_activo is True
     assert c.events_jsonl == REPO_ROOT / ".logs" / "guard_events.jsonl"
     assert c.guard_key_path == REPO_ROOT / ".temp-db" / "guard_signing_key.pem"

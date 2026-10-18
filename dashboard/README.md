@@ -21,10 +21,22 @@ PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m dashboard     # Linux/macOS: worl
 | `DASHBOARD_PORT` | `8020` | Puerto del panel (también define qué `Host` y `Origin` acepta su API) |
 | `DASHBOARD_HOST` | `127.0.0.1` | Interfaz. Abrilo como `localhost`: WebCrypto (verificar el recibo) no anda por IP de red sin HTTPS. **Fuera de loopback no arranca** salvo `DASHBOARD_ALLOW_REMOTE=1` |
 | `DASHBOARD_ALLOW_REMOTE` | `0` | `1` para escuchar en la red (no recomendado: muestra mandatos y checkouts completos) |
-| `PROXY_URL` | `http://localhost:8010` | Proxy del Guard. Dejalo en `localhost`: el proxy solo acepta `Host` local |
+| `PROXY_URL` | `http://127.0.0.1:8010` | Proxy del Guard. `127.0.0.1` y no `localhost`: en Windows `localhost` prueba primero `::1`, donde el proxy no escucha, y cada intento fallido suma ~2 s (el panel mostraba "proxy desconectado"). El proxy acepta `Host` `127.0.0.1:8010` y `localhost:8010` |
+| `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control del proxy (lo escribe el proxy en cada arranque). El servidor lo agrega en los POST que reenvía; tiene que ser el mismo archivo que usa el proxy |
 
 Atajos de teclado: `1`–`6` cambian de vista. El tema (auto, claro, oscuro) se
 cambia con el botón al lado del nombre.
+
+Con el proxy y el dashboard levantados juntos:
+
+```sh
+PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy       # :8010, escribe .temp-db/guard_api_token
+PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m dashboard                # :8020, lo lee en cada POST
+```
+
+Si se reinicia el proxy, el token cambia y el panel toma el nuevo solo (lo lee
+en cada POST). Conviene una sola pestaña del panel abierta: cada una tiene su
+SSE y el navegador limita las conexiones por host.
 
 ## Fuentes de datos
 
@@ -32,8 +44,13 @@ Arriba a la derecha se elige la fuente de eventos:
 
 - **En vivo (proxy)**: los `Evento` llegan por SSE desde `GET {proxy}/guard/events`.
   El servidor del panel lo reenvía desde el mismo origen (`/api/proxy/...`), así
-  que el proxy no necesita CORS. Si el proxy no responde, el panel dice
-  **"proxy desconectado"** y reintenta solo.
+  que el proxy no necesita CORS. Al conectar (y al reconectar) la página pide
+  además `GET /api/proxy/guard/events/history`: aunque el SSE tarde o se corte,
+  las compras se arman igual (los eventos no se duplican). El SSE se cierra al
+  recargar o salir de la página. El estado del proxy se consulta cada 4 s, con
+  un solo pedido en vuelo, y el panel dice **"proxy desconectado"** recién
+  después de 3 sondeos fallidos seguidos (uno suelto no cambia nada); reintenta
+  solo. Con el evaluador `stub`, cada evento `veredicto` trae `evaluador: "stub"`.
 - **Replay (archivo)**: lee un `.jsonl` (un `Evento` por línea) de
   `.logs/guard_events.jsonl` (lo escribe el proxy) o de `dashboard/demo/*.jsonl`.
   **Reproducir** los vuelve a pasar con su ritmo (entre 0,3 y 1,4 s por evento).
@@ -98,6 +115,21 @@ evidencia del Guard (motivo y chequeos que no dieron OK) y el botón
 El botón solo está activo en vivo con el proxy conectado; en replay se ven los
 estados pero no se puede aprobar.
 
+### Controles estables
+
+El interruptor del Guard, el selector y el botón **Reproducir** del replay son
+nodos fijos de `index.html`: cada sondeo o evento solo actualiza sus atributos
+y su texto si cambian (el `<select>` y el botón se rearman solo si cambia su
+contenido). El interruptor se deshabilita únicamente sin proxy (después de los
+3 sondeos fallidos), nunca mientras cambia: durante el POST tiene
+`aria-busy="true"` y se ignoran los clics. En las vistas, si un render dibuja
+exactamente lo mismo que había, vuelven los nodos anteriores: botones como
+**Verificar la firma en este navegador** o **Aprobar igual** no se reemplazan
+bajo el puntero y un clic en curso no se pierde. Probado en Chrome con
+DevTools: el clic del interruptor manda el `POST`, **Aprobar igual** da 201,
+**Verificar la firma** y **Reproducir** responden, y los nodos siguen siendo
+los mismos después de varios sondeos.
+
 ## Qué se ve en cada vista
 
 1. **Momento clave.** Escenario B (se puede cambiar) en dos columnas con los
@@ -153,9 +185,9 @@ estados pero no se puede aprobar.
 | `GET /api/catalog` | `fixtures/public_catalog.json` |
 | `GET /api/replay` · `/api/replay/{nombre}` | Archivos `.jsonl` y sus `Evento` validados (las líneas inválidas se cuentan en `X-Lineas-Invalidas`) |
 | `GET /api/public-key` | Clave pública del Guard (proxy o local) |
-| `GET/POST /api/proxy/guard/state`, `GET /api/proxy/guard/events` (SSE), `GET /api/proxy/guard/events/history` | Reenvío al proxy |
+| `GET/POST /api/proxy/guard/state`, `GET /api/proxy/guard/events` (SSE), `GET /api/proxy/guard/events/history` | Reenvío al proxy (el POST, con el token) |
 | `GET /api/proxy/guard/aprobaciones` | Reenvío de `GET :8010/guard/aprobaciones` (`{"pendientes", "usadas"}`) |
-| `POST /api/proxy/guard/aprobaciones` con `{"contexto_id": str, "cart_id": str}` | Valida (400 si no es exactamente eso) y reenvía al proxy; devuelve su status (201, 200, 409) |
+| `POST /api/proxy/guard/aprobaciones` con `{"contexto_id": str, "cart_id": str}` | Valida (400 si no es exactamente eso) y reenvía al proxy con el token; devuelve su status (201, 200, 409). 503 `sin_token_del_proxy` si no está `.temp-db/guard_api_token` |
 
 Los nombres de archivo se buscan en una lista blanca armada listando las
 carpetas: no hay path traversal.
@@ -167,11 +199,20 @@ aprobaciones), así que se protege igual que `/guard/*`:
 
 - `/api/*` solo atiende `Host` = `localhost:<DASHBOARD_PORT>` o
   `127.0.0.1:<DASHBOARD_PORT>` (403 si no): frena el DNS rebinding.
-- Los POST exigen `Content-Type: application/json` (415) y, si traen `Origin`,
-  que sea el del propio panel (403): una página ajena no puede apagar el Guard
-  ni aprobar un checkout.
-- Al reenviar, el servidor manda JSON, sin `Origin` y con el `Host` de
-  `PROXY_URL` (`localhost:8010`), así pasa los mismos controles del proxy.
+- Los POST exigen el `Origin` del propio panel (403 `origen_requerido` si
+  falta, `origen_no_permitido` si es otro) y, si viene `Sec-Fetch-Site`, que
+  sea `same-origin`; además `Content-Type: application/json` (415). El
+  navegador siempre manda `Origin` en un POST: una página ajena no puede
+  apagar el Guard ni aprobar un checkout, y curl o una herramienta HTTP del
+  agente no pueden usar el panel para saltear el token del proxy (tendrían que
+  falsificar a propósito los headers de un navegador; para un proceso local con
+  esa intención el límite es el usuario del sistema y el permiso 0600 del
+  token).
+- Al reenviar un POST, el servidor lee `.temp-db/guard_api_token` (el que el
+  proxy escribió en este arranque) y agrega `X-Guard-Token`; el navegador
+  nunca lo ve ni aparece en ninguna respuesta del panel. Manda JSON, sin
+  `Origin` y con el `Host` de `PROXY_URL` (`127.0.0.1:8010`), así pasa los
+  mismos controles del proxy. Los GET reenviados no llevan el token.
 - Los mandatos y el `checkout_jwt` completos se muestran (la demo lo exige);
   por eso el panel y el proxy escuchan solo en loopback.
 

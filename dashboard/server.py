@@ -15,7 +15,10 @@ decisión del humano ("Aprobar igual") cuando el Guard escala.
 
 Como es la puerta al proxy, la API (`/api/*`) solo atiende `Host`
 localhost/127.0.0.1 con su puerto, y los POST exigen JSON y el `Origin` del
-propio panel (ver `SoloLocal`).
+propio panel (ver `SoloLocal`). Los POST que reenvía al proxy llevan el
+token de su API de control (`X-Guard-Token`), que el proxy escribe en
+`.temp-db/guard_api_token` en cada arranque: lo lee el servidor, nunca el
+navegador.
 """
 
 from __future__ import annotations
@@ -47,9 +50,16 @@ from contracts import Evento, Ficha
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-DEFAULT_PROXY_URL = "http://localhost:8010"
+# 127.0.0.1 y no localhost: en Windows localhost prueba primero ::1, donde el
+# proxy no escucha, y cada intento fallido suma ~2 s (el panel daba "proxy
+# desconectado"). El proxy acepta Host 127.0.0.1:8010.
+DEFAULT_PROXY_URL = "http://127.0.0.1:8010"
 DEFAULT_PORT = 8020
 GUARD_KID = "guard-key-1"  # CLAUDE.md → Decisiones, punto 6
+# Token de la API de control del proxy (N4): lo escribe el proxy al arrancar.
+TOKEN_RELATIVO = Path(".temp-db") / "guard_api_token"
+HEADER_TOKEN = "X-Guard-Token"
+_TOKEN_VALIDO = re.compile(r"[A-Za-z0-9_-]{32,256}")
 
 # En Windows, mimetypes lee el registro y a veces sirve .js como text/plain:
 # el navegador rechaza los módulos ES con ese tipo. Lo fijamos acá.
@@ -82,6 +92,8 @@ class Config:
     repo_root: Path = REPO_ROOT
     proxy_url: str = DEFAULT_PROXY_URL
     port: int = DEFAULT_PORT
+    # Archivo con el token del proxy (None: <repo_root>/.temp-db/guard_api_token).
+    token_path: Path | None = None
     # Solo para tests: transporte de httpx hacia el proxy.
     proxy_transport: httpx.AsyncBaseTransport | None = field(
         default=None, compare=False
@@ -110,6 +122,10 @@ class Config:
         return self.repo_root / "dashboard" / "demo"
 
     @property
+    def archivo_token(self) -> Path:
+        return self.token_path or self.repo_root / TOKEN_RELATIVO
+
+    @property
     def clave_guard_pem(self) -> Path:
         return self.repo_root / ".temp-db" / "guard_signing_key.pem"
 
@@ -118,9 +134,14 @@ class Config:
 
 
 def config_desde_entorno() -> Config:
+    token = os.environ.get("GUARD_API_TOKEN_PATH")
+    token_path = Path(token) if token else REPO_ROOT / TOKEN_RELATIVO
+    if not token_path.is_absolute():
+        token_path = REPO_ROOT / token_path
     return Config(
         proxy_url=os.environ.get("PROXY_URL", DEFAULT_PROXY_URL).rstrip("/"),
         port=int(os.environ.get("DASHBOARD_PORT", DEFAULT_PORT)),
+        token_path=token_path,
     )
 
 
@@ -150,8 +171,12 @@ class SoloLocal:
 
     - `Host` de /api/* tiene que ser localhost/127.0.0.1 con el puerto del
       panel (403): frena el DNS rebinding.
-    - Los POST exigen `Content-Type: application/json` (415) y, si traen
-      `Origin`, que sea el del panel (403).
+    - Los POST exigen el `Origin` del panel (403 si falta o es otro; el
+      navegador siempre lo manda en un POST) y, si viene `Sec-Fetch-Site`,
+      que sea `same-origin`: el panel agrega el token del proxy, así que solo
+      reenvía pedidos de su propia página, no de curl ni de una herramienta
+      HTTP del agente (N4).
+    - Los POST exigen `Content-Type: application/json` (415).
 
     ASGI puro: no interfiere con el SSE reenviado.
     """
@@ -175,7 +200,12 @@ class SoloLocal:
         if scope["method"] != "POST" or scope["path"] not in RUTAS_POST:
             return None
         origen = headers.get("origin")
-        if origen is not None and origen not in self.cfg.origenes:
+        if origen is None:
+            return _error(403, "origen_requerido")
+        if origen not in self.cfg.origenes:
+            return _error(403, "origen_no_permitido")
+        sitio = headers.get("sec-fetch-site")
+        if sitio is not None and sitio != "same-origin":
             return _error(403, "origen_no_permitido")
         tipo = headers.get("content-type", "").split(";")[0].strip().lower()
         if tipo != "application/json":
@@ -554,7 +584,24 @@ def _cliente_proxy(cfg: Config, timeout: httpx.Timeout | None = None):
     # En Windows, conectar a un puerto cerrado tarda ~2 s en fallar: cortamos
     # antes para que el panel muestre "proxy desconectado" enseguida.
     timeout = timeout or httpx.Timeout(3.0, connect=1.0)
-    return httpx.AsyncClient(transport=cfg.proxy_transport, timeout=timeout)
+    # trust_env=False: un HTTP_PROXY del entorno no se mete entre el panel y el proxy.
+    return httpx.AsyncClient(transport=cfg.proxy_transport, timeout=timeout, trust_env=False)
+
+
+def leer_token(cfg: Config) -> str | None:
+    """El token de la API de control del proxy, o None si no está o no tiene
+    la forma de uno (`secrets.token_urlsafe`). Se lee en cada POST: si el
+    proxy se reinicia con otro token, el panel lo toma sin reiniciarse."""
+    try:
+        with open(cfg.archivo_token, "rb") as f:
+            crudo = f.read(1025)
+    except OSError:
+        return None
+    try:
+        token = crudo.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return None
+    return token if len(crudo) <= 1024 and _TOKEN_VALIDO.fullmatch(token) else None
 
 
 def _proxy_desconectado(cfg: Config, e: Exception) -> JSONResponse:
@@ -574,10 +621,24 @@ async def _reenviar_json(
     cuerpo: Any = None,
     params: dict[str, Any] | None = None,
 ) -> Response:
+    headers: dict[str, str] = {}
+    if metodo != "GET":
+        # Los POST de /guard/* exigen el token del proxy (N4). Lo agrega el
+        # servidor: el navegador nunca lo ve.
+        token = leer_token(cfg)
+        if token is None:
+            return _error(
+                503,
+                "sin_token_del_proxy",
+                detalle="No se encontró el token de la API del proxy "
+                f"({TOKEN_RELATIVO.as_posix()}): ¿está levantado el proxy?",
+            )
+        headers[HEADER_TOKEN] = token
     try:
         async with _cliente_proxy(cfg) as cliente:
             r = await cliente.request(
-                metodo, f"{cfg.proxy_url}{ruta}", json=cuerpo, params=params
+                metodo, f"{cfg.proxy_url}{ruta}", json=cuerpo, params=params,
+                headers=headers,
             )
     except httpx.HTTPError as e:
         return _proxy_desconectado(cfg, e)

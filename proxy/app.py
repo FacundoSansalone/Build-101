@@ -42,6 +42,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from contracts import (
+    GUARD_VEREDICTO_KEY,
     STATUS_LLEGAN_A_FIRMA,
     CheckoutVisto,
     Evento,
@@ -58,10 +59,11 @@ from proxy.evaluador import (
     clave_publica,
     firmar_recibo,
     preparar_clave,
+    validar_evaluador,
 )
 from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import cargar_catalogo, cargar_intent, violaciones_ap2
-from proxy.seguridad import ControlLocal
+from proxy.seguridad import ControlLocal, escribir_token, generar_token
 
 logger = logging.getLogger("proxy")
 
@@ -137,7 +139,8 @@ class Decision:
     cart_id: str | None
     contexto_id: str | None
     veredicto: Veredicto | None = None
-    clave: tuple[str | None, str, str | None] | None = None  # task, sha256(jwt), cart
+    # (task, huella del data part ap2.checkout completo, cart): ver a2a.huella_checkout
+    clave: tuple[str | None, str, str | None] | None = None
     centavos: int | None = None
     moneda: str | None = None
     por_aprobar: bool = False  # escalar con una aprobación humana disponible
@@ -174,7 +177,9 @@ class Decision:
         ).model_dump(mode="json")
 
     def artefacto(self) -> dict[str, Any]:
-        return a2a.artefacto_veredicto(self.veredicto_json())
+        """El artefacto para el agente: versión reducida, sin texto del
+        comercio (N5). El completo va al dashboard en el evento `veredicto`."""
+        return a2a.artefacto_veredicto(a2a.veredicto_para_agente(self.veredicto_json()))
 
 
 @dataclass
@@ -207,7 +212,11 @@ class ProxyGuard:
         client: httpx.AsyncClient,
         evaluador: EvaluadorCargado,
         ping_segundos: float = 15.0,
+        api_token: str | None = None,
     ) -> None:
+        # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
+        # PROXY_ALLOW_STUB=1) el proxy no se arma.
+        validar_evaluador(evaluador, config.permitir_stub)
         self.config = config
         self.client = client
         self.evaluador = evaluador
@@ -216,15 +225,16 @@ class ProxyGuard:
             config.events_jsonl, max_suscriptores=config.max_suscriptores_sse
         )
         self.ping_segundos = ping_segundos
+        # Secreto de los POST de /guard/* (N4): uno por arranque.
+        self.api_token = api_token or generar_token()
         self.aprobaciones = RegistroAprobaciones()
         self._ofertas: OrderedDict[str, OfertasGuardadas] = OrderedDict()
         self._decisiones: OrderedDict[str, Decision] = OrderedDict()
         self._ficha: Ficha | None = None
-        if not evaluador.acepta_checkout:
+        if evaluador.nombre == "stub":
             logger.warning(
-                "evaluar() (%s) no acepta checkout=: el Guard no va a atar el "
-                "checkout firmado al cart evaluado. Actualizá guard/.",
-                evaluador.nombre,
+                "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
+                "Guard real; /guard/state y cada evento veredicto lo marcan."
             )
 
     # -- utilidades ----------------------------------------------------------
@@ -411,24 +421,18 @@ class ProxyGuard:
     ) -> tuple[bytes, int]:
         pedido, activo = llamada.pedido, llamada.guard_activo
         body, error = a2a.parsear_json(contenido)
+        salida = contenido
+        if error is None and isinstance(body, dict):
+            # guard.veredicto solo lo pone el proxy.
+            body, cambiado = a2a.quitar_veredictos_ajenos(body)
+            try:
+                salida = a2a.dumps(body) if cambiado else contenido
+            except ValueError as e:  # defensa (N6): algo que no se puede reescribir
+                error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or f"se esperaba un objeto JSON y llegó {type(body).__name__}"
-            self._emitir_busqueda(llamada, None)
-            menciona = (
-                a2a.menciona_checkout(contenido)
-                if error is not None
-                else a2a.contar_clave(body, a2a.CHECKOUT_KEY) > 0
-            )
-            if activo and (self._es_de_checkout(llamada) or menciona):
-                return self._bloqueo_sintetico(
-                    llamada, "la respuesta del comercio no se pudo leer", detalle
-                ), 200
-            self._error(llamada, f"Respuesta ilegible del comercio: {detalle}")
-            return contenido, status
+            return self._respuesta_ilegible(contenido, llamada, status, detalle)
 
-        # guard.veredicto solo lo pone el proxy.
-        body, cambiado = a2a.quitar_veredictos_ajenos(body)
-        salida = a2a.dumps(body) if cambiado else contenido
         result = body.get("result")
         n_checkouts = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
 
@@ -469,8 +473,39 @@ class ProxyGuard:
             nuevo = a2a.tarea_bloqueada(result, decision.texto, decision.artefacto())
         else:
             nuevo = a2a.tarea_con_artefacto(result, decision.artefacto())
+        try:
+            cuerpo = a2a.dumps({**body, "result": nuevo})
+        except ValueError as e:  # defensa (N6): nunca un 500 sin veredicto ni evento
+            return self._bloqueo_sintetico(
+                llamada, "la respuesta del comercio no se pudo reenviar",
+                f"{type(e).__name__}: {e}"[:200],
+            ), 200
         self._emitir_resultado(decision, llamada)
-        return a2a.dumps({**body, "result": nuevo}), status
+        return cuerpo, status
+
+    def _respuesta_ilegible(
+        self, contenido: bytes, llamada: Llamada, status: int, detalle: str
+    ) -> tuple[bytes, int]:
+        """JSON inválido, con NaN/Infinity o con números que desbordan (1e999).
+
+        Si puede ser un checkout: bloqueo limpio (`error` + `bloqueado`). Si
+        no: evento `error` y la respuesta tal cual, salvo que traiga un
+        `guard.veredicto` (no se puede sacar de algo ilegible): ahí 502.
+        """
+        self._emitir_busqueda(llamada, None)
+        if llamada.guard_activo and (
+            self._es_de_checkout(llamada) or a2a.menciona_checkout(contenido)
+        ):
+            return self._bloqueo_sintetico(
+                llamada, "la respuesta del comercio no se pudo leer", detalle
+            ), 200
+        self._error(llamada, f"Respuesta ilegible del comercio: {detalle}")
+        if a2a.menciona_clave(contenido, GUARD_VEREDICTO_KEY):
+            error = a2a.error_jsonrpc(
+                llamada.pedido.rpc_id, "Proxy del Guard: respuesta ilegible del comercio"
+            )
+            return a2a.dumps(error), 502
+        return contenido, status
 
     # -- SSE -----------------------------------------------------------------
 
@@ -491,6 +526,8 @@ class ProxyGuard:
             falla = f"el stream del comercio supera el tope de {e.limite} bytes"
         except httpx.HTTPError as e:
             falla = f"el stream del comercio se cortó ({type(e).__name__})"
+        except ValueError as e:  # defensa (N6): un evento que no se puede reescribir
+            falla = f"un evento del comercio no se pudo reenviar ({type(e).__name__})"
         finally:
             await resp.aclose()
 
@@ -515,21 +552,29 @@ class ProxyGuard:
     ) -> list[bytes]:
         pedido, activo = llamada.pedido, llamada.guard_activo
         body, error = a2a.parsear_json(evento.data)
+        crudo = b""
+        if error is None and isinstance(body, dict):
+            body, cambiado = a2a.quitar_veredictos_ajenos(body)
+            try:
+                crudo = a2a.bloque_sse(body) if cambiado else evento.serializar()
+            except ValueError as e:  # defensa (N6)
+                error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or "el evento no es un objeto JSON"
+            datos = evento.data.encode("utf-8")
             if activo and (
                 self._es_de_checkout(llamada)
                 or est.pendiente is not None
-                or a2a.menciona_checkout(evento.data.encode("utf-8"))
+                or a2a.menciona_checkout(datos)
             ):
                 return self._sse_cortar(
                     llamada, est, "un evento SSE del comercio no se pudo leer", detalle
                 )
             self._error(llamada, f"Evento SSE ilegible del comercio: {detalle}")
+            if a2a.menciona_clave(datos, GUARD_VEREDICTO_KEY):
+                return []  # un guard.veredicto que no se puede sacar no se reenvía
             return self._sse_encolar(est, evento.serializar(), final=False)
 
-        body, cambiado = a2a.quitar_veredictos_ajenos(body)
-        crudo = a2a.bloque_sse(body) if cambiado else evento.serializar()
         result = body.get("result")
         n = a2a.contar_clave(body, a2a.CHECKOUT_KEY)
         if not isinstance(result, dict):
@@ -595,9 +640,11 @@ class ProxyGuard:
             decision = self._resolver(decision, est.task_id)
             if decision.retiene:
                 return self._sse_aplicar_retencion(llamada, est, decision, result)
+            # Primero se escribe (puede fallar: N6) y recién después se da por resuelto.
+            bloque = self._bloque(llamada, a2a.tarea_con_artefacto(result, decision.artefacto()))
             est.resuelto = True
             self._emitir_resultado(decision, llamada)
-            return [self._bloque(llamada, a2a.tarea_con_artefacto(result, decision.artefacto()))]
+            return [bloque]
         # Pasa: se retiene hasta el evento final, para que un segundo
         # checkout en el mismo stream no llegue nunca al cliente.
         est.pendiente = [crudo]
@@ -619,11 +666,12 @@ class ProxyGuard:
         decision = self._resolver(est.decision, est.task_id)
         if decision.retiene:  # p. ej. la aprobación ya se usó en otro intento
             return self._sse_aplicar_retencion(llamada, est, decision, None)
-        est.resuelto = True
-        self._emitir_resultado(decision, llamada)
         final = pendiente.pop()
         artefacto = a2a.evento_artefacto(est.task_id, est.contexto_id, decision.artefacto())
-        return [*pendiente, self._bloque(llamada, artefacto), final]
+        bloque = self._bloque(llamada, artefacto)
+        est.resuelto = True
+        self._emitir_resultado(decision, llamada)
+        return [*pendiente, bloque, final]
 
     def _sse_aplicar_retencion(
         self,
@@ -753,7 +801,6 @@ class ProxyGuard:
         """Con el Guard prendido: valida que el checkout sea el del pedido y
         pide el veredicto (o reusa el de la caché, para tasks/get)."""
         pedido = llamada.pedido
-        jwt = checkout.get("checkout_jwt")
         if pedido.tipo == "create_checkout":
             cart_id, contexto_id = pedido.cart_id, pedido.contexto_id
         elif pedido.es_de_tarea:
@@ -765,7 +812,8 @@ class ProxyGuard:
                 )
             if previa.retiene:
                 return previa  # bloqueada o retenida: nunca devuelve el checkout
-            if previa.clave == (task_id, a2a.sha256_hex(jwt), previa.cart_id):
+            # Cualquier cambio en el data part ap2.checkout (no solo el JWT) reevalúa.
+            if previa.clave == (task_id, a2a.huella_checkout(checkout), previa.cart_id):
                 return previa
             cart_id, contexto_id = previa.cart_id, previa.contexto_id  # cambió: se reevalúa
         else:
@@ -774,7 +822,7 @@ class ProxyGuard:
                 "un ap2.checkout en una respuesta que no es a create_checkout",
             )
 
-        clave = (task_id, a2a.sha256_hex(jwt), cart_id)
+        clave = (task_id, a2a.huella_checkout(checkout), cart_id)
         self._emitir_checkout_recibido(checkout, cart_id, contexto_id, True)
 
         def bloqueo(motivo: str, detalle: str | None = None) -> Decision:
@@ -848,12 +896,6 @@ class ProxyGuard:
         catalogo, comercio_id, fuente = await cargar_catalogo(
             self.client, self.config.catalogo_url
         )
-        kwargs: dict[str, Any] = {
-            "politica": None,
-            "checkout_hash": checkout.get("checkout_hash"),
-        }
-        if self.evaluador.acepta_checkout:
-            kwargs["checkout"] = visto
         try:
             resultado = self.evaluador.evaluar(
                 self.ficha(),
@@ -864,7 +906,9 @@ class ProxyGuard:
                 ),
                 cart_id,
                 catalogo,
-                **kwargs,
+                politica=None,
+                checkout_hash=checkout.get("checkout_hash"),
+                checkout=visto,  # siempre: el Guard ata lo firmado al cart
             )
             veredicto = (
                 resultado
@@ -903,12 +947,15 @@ class ProxyGuard:
                 "veredicto": veredicto.model_dump(mode="json"),
                 "fuente": fuente,
                 "recibo_firmado": recibo_firmado,
+                "evaluador": self.evaluador.nombre,  # "stub" = no es el Guard real
             },
             guard_activo=True,
             contexto_id=contexto_id,
             escenario=escenario,
         )
-        centavos, moneda = a2a.monto_checkout(checkout)
+        # La aprobación humana se ata solo a lo firmado (N2): sin total entero
+        # exacto en el JWT no se puede aprobar.
+        centavos, moneda = a2a.monto_firmado(checkout) or (None, None)
         self.aprobaciones.registrar_veredicto(
             contexto_id, cart_id, veredicto.status, centavos, moneda
         )
@@ -1126,7 +1173,8 @@ class ProxyGuard:
         backlog, cola = suscripcion
 
         def bloque(evento: Evento) -> bytes:
-            return f"event: evento\ndata: {evento.model_dump_json()}\n\n".encode("utf-8")
+            # Los datos traen texto del comercio: mismo saneo que el SSE A2A (N7).
+            return a2a.EventoSSE(evento.model_dump_json(), event="evento").serializar()
 
         async def generar() -> AsyncIterator[bytes]:
             try:
@@ -1176,12 +1224,20 @@ def create_app(
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests."""
     config = config or Config.desde_entorno()
+    # Fail-closed antes de abrir nada: sin Guard real (o stub sin permiso) no
+    # hay app (EvaluadorNoDisponible).
+    evaluador = evaluador or cargar_evaluador(config.permitir_stub)
+    validar_evaluador(evaluador, config.permitir_stub)
     client = httpx.AsyncClient(
         transport=transport,
         timeout=httpx.Timeout(600.0, connect=5.0),  # create_checkout usa un LLM
         trust_env=False,
     )
-    proxy = ProxyGuard(config, client, evaluador or cargar_evaluador(), ping_segundos)
+    proxy = ProxyGuard(config, client, evaluador, ping_segundos)
+    if config.api_token_path is not None:
+        # Para el servidor del dashboard (lo lee y lo agrega en su reenvío).
+        escribir_token(config.api_token_path, proxy.api_token)
+        logger.info("Token de la API de control en %s", config.api_token_path)
     try:
         # La clave del recibo se crea al arrancar, no en la primera decisión.
         if preparar_clave(config.guard_key_path):
@@ -1213,6 +1269,7 @@ def create_app(
                 hosts=config.hosts_permitidos,
                 origenes=config.dashboard_origins,
                 rutas_post_json=RUTAS_POST_CONTROL,
+                token=proxy.api_token,
             ),
             Middleware(
                 CORSMiddleware,

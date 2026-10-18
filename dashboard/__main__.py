@@ -4,7 +4,8 @@ Variables de entorno:
   DASHBOARD_PORT          puerto (8020)
   DASHBOARD_HOST          interfaz (127.0.0.1; WebCrypto necesita localhost o HTTPS)
   DASHBOARD_ALLOW_REMOTE  1 para escuchar fuera de loopback (no recomendado)
-  PROXY_URL               proxy del Guard (http://localhost:8010)
+  PROXY_URL               proxy del Guard (http://127.0.0.1:8010)
+  GUARD_API_TOKEN_PATH    token de la API del proxy (.temp-db/guard_api_token)
 """
 
 from __future__ import annotations

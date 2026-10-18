@@ -1,8 +1,12 @@
-"""Carga de `guard.evaluar()` (o el stub) y firma del recibo con `guard.recibo`.
+"""Carga de `guard.evaluar()` y firma del recibo con `guard.recibo`.
 
 El proxy no decide nada: transporta, registra y aplica lo que devuelve
-`evaluar()`. Mientras Dev 2 no entregue `guard/`, usa `proxy/guard_stub.py`
-y lo avisa fuerte en el log y en `GET /guard/state` (`"evaluador": "stub"`).
+`evaluar()`. Falla cerrado: si no puede importar el `guard.evaluar()` real o
+este no acepta `checkout=` (no ataría el checkout firmado al cart evaluado),
+el proxy **no arranca** (`EvaluadorNoDisponible`). Solo con
+`PROXY_ALLOW_STUB=1` explícito usa `proxy/guard_stub.py`, y lo marca en el
+log, en `GET /guard/state` y en cada evento `veredicto`
+(`"evaluador": "stub"`).
 """
 
 from __future__ import annotations
@@ -55,7 +59,50 @@ class EvaluadorCargado:
         )
 
 
-def cargar_evaluador() -> EvaluadorCargado:
+class EvaluadorNoDisponible(RuntimeError):
+    """No hay un `guard.evaluar()` real que ate el checkout firmado: el proxy
+    no arranca (salvo `PROXY_ALLOW_STUB=1`)."""
+
+
+_PISTA_STUB = (
+    "Para probar sin el Guard real, definí PROXY_ALLOW_STUB=1 (los veredictos "
+    "serán del stub, no del Guard)."
+)
+
+
+def _stub(motivo: str) -> EvaluadorCargado:
+    logger.warning(
+        "PROXY_ALLOW_STUB=1: %s. Usando el STUB (proxy/guard_stub.py): los "
+        "veredictos NO son del Guard real.",
+        motivo,
+    )
+    return EvaluadorCargado(evaluar=guard_stub.evaluar, nombre="stub")
+
+
+def validar_evaluador(evaluador: EvaluadorCargado, permitir_stub: bool) -> None:
+    """Lanza `EvaluadorNoDisponible` si el evaluador no sirve para decidir.
+
+    Un `evaluar()` que no acepta `checkout=` nunca se usa (ni con permiso):
+    evaluaría sin atar lo firmado. El stub solo con `PROXY_ALLOW_STUB=1`.
+    """
+    if not evaluador.acepta_checkout:
+        raise EvaluadorNoDisponible(
+            f"evaluar() ({evaluador.nombre}) no acepta checkout=: no ataría el "
+            "checkout firmado al cart evaluado. Actualizá guard/."
+        )
+    if evaluador.nombre == "stub" and not permitir_stub:
+        raise EvaluadorNoDisponible(
+            "el evaluador es el stub de prueba y no se pidió explícitamente. "
+            + _PISTA_STUB
+        )
+
+
+def cargar_evaluador(permitir_stub: bool = False) -> EvaluadorCargado:
+    """El `guard.evaluar()` real, o `EvaluadorNoDisponible`.
+
+    Con `permitir_stub=True` (`PROXY_ALLOW_STUB=1`), si el real no está o no
+    acepta `checkout=`, devuelve el stub marcado como tal.
+    """
     try:
         from guard import evaluar  # type: ignore[attr-defined]
 
@@ -63,16 +110,24 @@ def cargar_evaluador() -> EvaluadorCargado:
             evaluar = evaluar.evaluar
         if not callable(evaluar):
             raise TypeError("guard.evaluar no es una función")
-    except Exception as e:  # noqa: BLE001 - cualquier falla cae al stub
-        logger.warning(
-            "guard.evaluar() no está disponible (%s: %s): usando stub "
-            "(proxy/guard_stub.py). Los veredictos NO son del Guard real.",
-            type(e).__name__,
-            e,
+    except Exception as e:  # noqa: BLE001 - cualquier falla: no hay Guard real
+        motivo = f"guard.evaluar() no está disponible ({type(e).__name__}: {e})"
+        if permitir_stub:
+            return _stub(motivo)
+        raise EvaluadorNoDisponible(
+            f"{motivo}. El proxy no arranca sin el Guard real. {_PISTA_STUB}"
+        ) from e
+    cargado = EvaluadorCargado(evaluar=evaluar, nombre="guard")
+    if not cargado.acepta_checkout:
+        motivo = (
+            "guard.evaluar() no acepta checkout=: no ataría el checkout firmado "
+            "al cart evaluado"
         )
-        return EvaluadorCargado(evaluar=guard_stub.evaluar, nombre="stub")
+        if permitir_stub:
+            return _stub(motivo)
+        raise EvaluadorNoDisponible(f"{motivo}. Actualizá guard/. {_PISTA_STUB}")
     logger.info("Usando guard.evaluar() de guard/")
-    return EvaluadorCargado(evaluar=evaluar, nombre="guard")
+    return cargado
 
 
 # ---------------------------------------------------------------------------

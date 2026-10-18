@@ -89,9 +89,11 @@ async def test_aprobado_checkout_byte_identico_y_veredicto_aparte(
     # El veredicto viaja en un artefacto aparte.
     extra = task["artifacts"][len(original["artifacts"]) :]
     assert len(extra) == 1
-    veredicto = Veredicto.model_validate(extra[0]["parts"][0]["data"][GUARD_VEREDICTO_KEY])
-    assert veredicto.status == "aprobado"
-    assert veredicto.cart_id_elegido == "cart_1"
+    # Al agente va la versión reducida (N5): status, motivo, cart y chequeos.
+    veredicto = extra[0]["parts"][0]["data"][GUARD_VEREDICTO_KEY]
+    assert set(veredicto) == {"status", "motivo", "cart_id_elegido", "chequeos"}
+    assert veredicto["status"] == "aprobado"
+    assert veredicto["cart_id_elegido"] == "cart_1"
     # El cliente A2A del SDK acepta la respuesta.
     SendMessageResponse.model_validate(resp.json())
 
@@ -139,10 +141,10 @@ async def test_bloqueado_tarea_failed_sin_checkout(
     assert task["status"]["state"] == "failed"
     assert _checkouts(task) == []  # no se presenta para firma
     assert merchant.ultimo_checkout["checkout_jwt"].encode() not in resp.content
-    veredicto = Veredicto.model_validate(_veredictos(task)[0])
-    assert veredicto.status == "bloqueado"
+    veredicto = _veredictos(task)[0]  # versión reducida para el agente (N5)
+    assert veredicto["status"] == "bloqueado"
     texto = task["status"]["message"]["parts"][0]["text"]
-    assert veredicto.motivo in texto
+    assert veredicto["motivo"] in texto
     assert task["status"]["message"]["taskId"] == task["id"]
     assert task["status"]["message"]["contextId"] == contexto
     parsed = SendMessageResponse.model_validate(resp.json())
@@ -202,7 +204,7 @@ async def test_escalar_retiene_el_checkout_y_agrega_veredicto(
     from contracts import Veredicto as V
 
     def escalar(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
-                checkout_hash=None, ahora=None):
+                checkout_hash=None, ahora=None, checkout=None):
         return V(status="escalar", cart_id_elegido=cart_id_elegido,
                  cart_id_recomendado="cart_1", ranking=["cart_1"], chequeos=[],
                  motivo="precio contradicho")
@@ -233,7 +235,7 @@ async def test_evaluar_recibe_las_entradas_del_contrato(
     llamadas: list[dict[str, Any]] = []
 
     def espia(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
-              checkout_hash=None, ahora=None):
+              checkout_hash=None, ahora=None, checkout=None):
         llamadas.append(dict(ficha=ficha, ofertas=ofertas_vistas, cart=cart_id_elegido,
                              catalogo=catalogo, politica=politica, hash=checkout_hash))
         return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo,
@@ -271,7 +273,7 @@ async def test_catalogo_caido_usa_el_fixture(armar_proxy, config, merchant):
     catalogos: list[dict] = []
 
     def espia(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
-              checkout_hash=None, ahora=None):
+              checkout_hash=None, ahora=None, checkout=None):
         catalogos.append((catalogo, ofertas_vistas.comercio_id))
         return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo)
 

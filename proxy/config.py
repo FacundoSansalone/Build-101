@@ -35,12 +35,17 @@ def _ruta(valor: str) -> Path:
 
 @dataclass(frozen=True)
 class Config:
-    merchant_upstream_url: str = "http://localhost:8001/a2a/merchant_agent"
+    # Servicios locales por IPv4: en Windows `localhost` prueba primero ::1
+    # (donde no escuchan) y cada intento fallido suma ~2 s.
+    merchant_upstream_url: str = "http://127.0.0.1:8001/a2a/merchant_agent"
     proxy_public_url: str = "http://localhost:8010/a2a/merchant_agent"
-    catalogo_url: str = "http://localhost:8011"
+    catalogo_url: str = "http://127.0.0.1:8011"
     guard_activo: bool = True
     events_jsonl: Path | None = REPO_ROOT / ".logs" / "guard_events.jsonl"
     guard_key_path: Path = REPO_ROOT / ".temp-db" / "guard_signing_key.pem"
+    # Token de la API de control (uno por arranque) para el servidor del
+    # dashboard. None: solo en memoria (tests).
+    api_token_path: Path | None = REPO_ROOT / ".temp-db" / "guard_api_token"
     port: int = 8010
     host: str = "127.0.0.1"
     dashboard_origins: tuple[str, ...] = field(
@@ -49,6 +54,9 @@ class Config:
     max_respuesta_bytes: int = MAX_RESPUESTA_BYTES
     max_suscriptores_sse: int = MAX_SUSCRIPTORES_SSE
     permitir_remoto: bool = False  # PROXY_ALLOW_REMOTE=1
+    # PROXY_ALLOW_STUB=1: sin el guard.evaluar() real, usar el stub de prueba
+    # (si no, el proxy no arranca). Los veredictos quedan marcados "stub".
+    permitir_stub: bool = False
 
     @property
     def rpc_path(self) -> str:
@@ -82,6 +90,9 @@ class Config:
             guard_key_path=_ruta(env["GUARD_KEY_PATH"])
             if env.get("GUARD_KEY_PATH")
             else base.guard_key_path,
+            api_token_path=_ruta(env["GUARD_API_TOKEN_PATH"])
+            if env.get("GUARD_API_TOKEN_PATH")
+            else base.api_token_path,
             port=int(env.get("PROXY_PORT", base.port)),
             host=env.get("PROXY_HOST", base.host),
             max_respuesta_bytes=int(
@@ -90,6 +101,7 @@ class Config:
             permitir_remoto=_bool(
                 env.get("PROXY_ALLOW_REMOTE", "0"), "PROXY_ALLOW_REMOTE"
             ),
+            permitir_stub=_bool(env.get("PROXY_ALLOW_STUB", "0"), "PROXY_ALLOW_STUB"),
         )
 
 

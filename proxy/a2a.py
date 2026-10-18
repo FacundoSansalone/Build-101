@@ -12,6 +12,7 @@ import codecs
 import copy
 import hashlib
 import json
+import math
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -50,10 +51,21 @@ def _constante_no_estandar(nombre: str) -> Any:
     raise ValueError(f"constante JSON no estándar: {nombre}")
 
 
+def _float_finito(texto: str) -> float:
+    valor = float(texto)
+    if not math.isfinite(valor):
+        raise ValueError(f"número no finito: {texto[:20]}")
+    return valor
+
+
 def parsear_json(contenido: bytes | str) -> tuple[Any, str | None]:
-    """JSON estricto (sin NaN ni Infinity). Devuelve (objeto, None) o (None, motivo)."""
+    """JSON estricto: sin NaN ni Infinity, y sin números que desbordan a
+    infinito (`1e999`, que `json.loads` acepta como `inf` pero `dumps` no puede
+    volver a escribir). Devuelve (objeto, None) o (None, motivo)."""
     try:
-        return json.loads(contenido, parse_constant=_constante_no_estandar), None
+        return json.loads(
+            contenido, parse_constant=_constante_no_estandar, parse_float=_float_finito
+        ), None
     except (ValueError, UnicodeDecodeError, RecursionError) as e:
         return None, f"{type(e).__name__}: {e}"[:200]
 
@@ -74,16 +86,20 @@ def contar_clave(obj: Any, clave: str) -> int:
     return n
 
 
-def menciona_checkout(contenido: bytes) -> bool:
-    """¿Una respuesta que no se pudo leer en estricto trae un ap2.checkout?
+def menciona_clave(contenido: bytes, clave: str) -> bool:
+    """¿Una respuesta que no se pudo leer en estricto trae `clave`?
 
     Prueba el parser permisivo (el mismo que usaría el cliente, que acepta
-    NaN) y, si tampoco puede, busca el texto.
+    NaN y 1e999) y, si tampoco puede, busca el texto.
     """
     try:
-        return contar_clave(json.loads(contenido), CHECKOUT_KEY) > 0
+        return contar_clave(json.loads(contenido), clave) > 0
     except (ValueError, UnicodeDecodeError, RecursionError):
-        return CHECKOUT_KEY.encode() in contenido
+        return clave.encode() in contenido
+
+
+def menciona_checkout(contenido: bytes) -> bool:
+    return menciona_clave(contenido, CHECKOUT_KEY)
 
 
 def data_parts(parts: Any) -> list[dict[str, Any]]:
@@ -194,6 +210,22 @@ def sha256_hex(texto: Any) -> str:
     return hashlib.sha256(str(texto).encode("utf-8")).hexdigest()
 
 
+def huella_checkout(checkout: Any) -> str:
+    """SHA-256 del data part `ap2.checkout` COMPLETO en JSON canónico (claves
+    ordenadas, sin espacios). Cambia si cambia cualquier campo (el JWT, el
+    `checkout_hash`, `amount`, `amount_cents`, `currency`, `item_label`…), no
+    si solo cambia el orden de las claves. Si no se puede serializar devuelve
+    una huella única: nunca coincide con una decisión guardada."""
+    try:
+        canonico = json.dumps(
+            checkout, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, RecursionError):
+        return f"no-serializable-{uuid.uuid4().hex}"
+    return hashlib.sha256(canonico.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Pedido (lo que manda el Shopping Agent)
 # ---------------------------------------------------------------------------
@@ -293,43 +325,61 @@ class Respuesta:
 
 
 # ---------------------------------------------------------------------------
-# Monto del checkout (para atar la aprobación humana)
+# Monto firmado del checkout (para atar la aprobación humana)
 # ---------------------------------------------------------------------------
 
 
-def monto_checkout(checkout: dict[str, Any]) -> tuple[int | None, str | None]:
-    """(centavos, moneda) del checkout: lo firmado en el JWT si se puede leer
-    (`totals` → total, si no la suma de `line_items`), si no el data part."""
-    _, payload = decodificar_jwt(checkout.get("checkout_jwt"))
-    centavos: int | None = None
-    moneda: str | None = None
-    if payload:
-        moneda = payload.get("currency") if isinstance(payload.get("currency"), str) else None
-        totales = payload.get("totals")
-        if isinstance(totales, list):
-            for t in totales:
-                if isinstance(t, dict) and t.get("type") == "total" and _es_entero(t.get("amount")):
-                    centavos = t["amount"]
-        if centavos is None and isinstance(payload.get("line_items"), list):
-            suma = 0
-            for li in payload["line_items"]:
-                precio = (li.get("item") or {}).get("price") if isinstance(li, dict) else None
-                cantidad = li.get("quantity", 1) if isinstance(li, dict) else None
-                if not (_es_entero(precio) and _es_entero(cantidad)):
-                    suma = None
-                    break
-                suma += precio * cantidad
-            centavos = suma
-    if centavos is None:
-        if _es_entero(checkout.get("amount_cents")):
-            centavos = checkout["amount_cents"]
-        elif isinstance(checkout.get("amount"), (int, float)) and not isinstance(
-            checkout.get("amount"), bool
-        ):
-            centavos = int(round(checkout["amount"] * 100))
-    if moneda is None and isinstance(checkout.get("currency"), str):
-        moneda = checkout["currency"]
-    return centavos, moneda
+def monto_firmado(checkout: dict[str, Any]) -> tuple[int, str] | None:
+    """(centavos, moneda) que firmó el comercio en el `checkout_jwt`, o None.
+
+    Es exactamente el `totals[type=total].amount` del payload (un entero
+    JSON, en centavos) y la `currency` firmada. Sin fallbacks: ni la suma de
+    `line_items` (la arma el comercio) ni el data part (`amount`,
+    `amount_cents`). Si el JWT no se puede leer en estricto (claves
+    duplicadas, números no finitos), falta el total, hay más de uno o no es un
+    entero exacto, devuelve None y no se puede aprobar.
+    """
+    payload = _payload_estricto(checkout.get("checkout_jwt"))
+    if payload is None:
+        return None
+    moneda = payload.get("currency")
+    if not isinstance(moneda, str) or not 0 < len(moneda) <= 16:
+        return None
+    totales = payload.get("totals")
+    if not isinstance(totales, list):
+        return None
+    montos = [t.get("amount") for t in totales if isinstance(t, dict) and t.get("type") == "total"]
+    if len(montos) != 1 or not _es_entero(montos[0]) or montos[0] < 0:
+        return None
+    return montos[0], moneda
+
+
+def _sin_duplicadas(pares: list[tuple[str, Any]]) -> dict[str, Any]:
+    objeto: dict[str, Any] = {}
+    for clave, valor in pares:
+        if clave in objeto:
+            raise ValueError(f"clave duplicada: {clave!r}")
+        objeto[clave] = valor
+    return objeto
+
+
+def _payload_estricto(jwt: Any) -> dict[str, Any] | None:
+    """Payload de un JWT leído en estricto (sin claves duplicadas, NaN ni
+    números que desbordan). No verifica la firma: eso lo hace el Guard/AP2."""
+    if not isinstance(jwt, str) or jwt.count(".") != 2:
+        return None
+    segmento = jwt.split(".")[1]
+    try:
+        raw = base64.urlsafe_b64decode(segmento + "=" * (-len(segmento) % 4))
+        payload = json.loads(
+            raw,
+            object_pairs_hook=_sin_duplicadas,
+            parse_constant=_constante_no_estandar,
+            parse_float=_float_finito,
+        )
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _es_entero(v: Any) -> bool:
@@ -341,7 +391,37 @@ def _es_entero(v: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_CART_ID_SEGURO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+
+
+def veredicto_para_agente(veredicto_json: dict[str, Any]) -> dict[str, Any]:
+    """La versión del veredicto que va al agente, sin texto del comercio.
+
+    Solo `status` y `motivo` (los arma guard/ con plantillas fijas), el
+    `cart_id_elegido` si es un identificador seguro (si no, None) y los
+    chequeos con `tipo` y `resultado`. Nada de `observado`, `esperado`,
+    `detalle`, `campo`, ranking ni recibo (`verificaciones[].declarado`): eso
+    va completo al dashboard en el evento `veredicto`.
+    """
+    cart_id = veredicto_json.get("cart_id_elegido")
+    chequeos = veredicto_json.get("chequeos")
+    return {
+        "status": veredicto_json.get("status"),
+        "motivo": veredicto_json.get("motivo"),
+        "cart_id_elegido": cart_id
+        if isinstance(cart_id, str) and _CART_ID_SEGURO.fullmatch(cart_id)
+        else None,
+        "chequeos": [
+            {"tipo": c.get("tipo"), "resultado": c.get("resultado")}
+            for c in (chequeos if isinstance(chequeos, list) else [])
+            if isinstance(c, dict)
+        ],
+    }
+
+
 def artefacto_veredicto(veredicto_json: dict[str, Any]) -> dict[str, Any]:
+    """El artefacto `guard.veredicto` (para el agente: pasale la versión de
+    `veredicto_para_agente`)."""
     return {
         "artifactId": f"guard-veredicto-{uuid.uuid4().hex}",
         "name": GUARD_VEREDICTO_KEY,
@@ -549,6 +629,21 @@ async def lineas_acotadas(trozos: AsyncIterator[bytes], limite: int) -> AsyncIte
         yield pendiente
 
 
+# Todo lo que `str.splitlines()` toma como fin de línea. El proxy corta el
+# SSE solo en CR/LF, pero el cliente A2A (httpx) corta con splitlines(): si
+# uno de estos caracteres sale crudo, el cliente ve líneas (y eventos) que el
+# proxy nunca vio.
+_FINES_DE_LINEA = "\r\n\x0b\x0c\x1c\x1d\x1e\x85  "
+_SIN_FINES_DE_LINEA = str.maketrans("", "", _FINES_DE_LINEA)
+# En `data:` (JSON) se escapan: dentro de un string JSON valen lo mismo.
+_ESCAPES_DATA = str.maketrans({c: f"\\u{ord(c):04x}" for c in _FINES_DE_LINEA[2:]})
+
+
+def _sanear_campo(valor: str) -> str:
+    """`id`/`event` del comercio sin ningún fin de línea (N7)."""
+    return valor.translate(_SIN_FINES_DE_LINEA)
+
+
 @dataclass
 class EventoSSE:
     data: str
@@ -556,12 +651,18 @@ class EventoSSE:
     id: str | None = None
 
     def serializar(self) -> bytes:
+        """El evento en SSE. `id` y `event` se sanean y los fines de línea
+        que no son CR/LF se escapan en `data` (N7): el cliente ve exactamente
+        las líneas que vio el proxy."""
         lineas = []
-        if self.event:
-            lineas.append(f"event: {self.event}")
+        event = _sanear_campo(self.event) if self.event else ""
+        if event:
+            lineas.append(f"event: {event}")
         if self.id is not None:
-            lineas.append(f"id: {self.id}")
-        lineas.extend(f"data: {linea}" for linea in self.data.split("\n"))
+            lineas.append(f"id: {_sanear_campo(self.id)}")
+        lineas.extend(
+            f"data: {linea.translate(_ESCAPES_DATA)}" for linea in self.data.split("\n")
+        )
         return ("\n".join(lineas) + "\n\n").encode("utf-8")
 
 

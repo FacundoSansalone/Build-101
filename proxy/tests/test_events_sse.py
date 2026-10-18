@@ -21,7 +21,7 @@ def _puerto_libre() -> int:
 
 
 @pytest.fixture
-def servidor(armar_proxy, config) -> Iterator[str]:
+def servidor(armar_proxy, config) -> Iterator[tuple[str, str]]:
     from dataclasses import replace
 
     puerto = _puerto_libre()
@@ -37,13 +37,15 @@ def servidor(armar_proxy, config) -> Iterator[str]:
         if time.monotonic() > limite:
             raise RuntimeError("uvicorn no arrancó")
         time.sleep(0.05)
-    yield f"http://127.0.0.1:{puerto}"
+    yield f"http://127.0.0.1:{puerto}", app.state.proxy.api_token
     server.should_exit = True
     hilo.join(timeout=10)
 
 
-def test_sse_reenvia_historial_y_eventos_nuevos(servidor: str):
-    with httpx.Client(base_url=servidor, timeout=10) as c:
+def test_sse_reenvia_historial_y_eventos_nuevos(servidor):
+    base, token = servidor
+    headers = {"X-Guard-Token": token}
+    with httpx.Client(base_url=base, timeout=10, headers=headers) as c:
         c.post("/guard/state", json={"guard_activo": False})
         c.post("/guard/state", json={"guard_activo": True})
 
@@ -64,7 +66,7 @@ def test_sse_reenvia_historial_y_eventos_nuevos(servidor: str):
             assert [e.datos["guard_activo"] for e in viejos] == [False, True]
 
             # Un evento nuevo llega por la misma conexión.
-            with httpx.Client(base_url=servidor, timeout=10) as otro:
+            with httpx.Client(base_url=base, timeout=10, headers=headers) as otro:
                 otro.post("/guard/state", json={"guard_activo": False})
             for linea in lineas:
                 if linea.startswith("data:"):
