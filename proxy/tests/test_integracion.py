@@ -2,6 +2,9 @@
 
 - La ficha de la demo lleva los atributos y la categoría de la taxonomía
   (`guard.ficha.ficha_desde_intent`), también sin compra (etapa 1).
+- Antes de `evaluar()` se consulta al fabricante por GTIN (`fabricante/`) y
+  sus datos entran dentro del `catalogo`. Sin dato o con falla, lo
+  obligatorio escala. El evento `veredicto` dice qué fuente se usó.
 """
 
 from __future__ import annotations
@@ -15,20 +18,34 @@ import httpx
 import pytest
 
 from contracts import Contexto, Requisito
+from fabricante import FixtureFabricante
 from intencion import Pregunta
-from proxy.tests.ayudantes import RPC, buscar, checkout, cliente_de, evaluador_espia
+from proxy.evaluador import EvaluadorNoDisponible, cargar_evaluador
+from proxy.tests.ayudantes import (
+    RPC,
+    buscar,
+    checkout,
+    checkouts,
+    cliente_de,
+    evaluador_espia,
+    eventos,
+    texto_estado,
+    veredictos,
+)
 from proxy.tests.fake_world import HEADERS_A2A, cuerpo, pedido_find_products
 
 pytestmark = pytest.mark.anyio
 
 
 class AgenteMinimo:
-    """Agente de intención que pregunta y no propone nada."""
+    """Agente de intención que pregunta y no propone nada (anota las ofertas
+    que le llegan al detector)."""
 
     nombre = "minimo"
 
     def __init__(self, requisitos: list[Requisito] | None = None) -> None:
         self.requisitos = requisitos or []
+        self.ofertas_vistas: list[list[Any]] = []
 
     def preguntar(self, pedido: str, hoy: date, categorias: list[str] | None = None) -> Pregunta:
         return Pregunta(pregunta="¿Para qué la necesitás?", requisitos=list(self.requisitos))
@@ -37,6 +54,7 @@ class AgenteMinimo:
         return Contexto(pedido=pedido, pregunta=pregunta, respuesta=respuesta)
 
     def detectar_oportunidad(self, contexto, ficha, ofertas):
+        self.ofertas_vistas.append(list(ofertas))
         return None
 
 
@@ -95,3 +113,110 @@ async def test_la_ficha_confirmada_de_la_demo_lleva_los_atributos(armar_proxy, c
     (llamada,) = llamadas
     assert {"memoria_ram", "almacenamiento", "tamano_pantalla"} <= set(_atributos(llamada["ficha"]))
     assert llamada["ficha"].categoria_taxonomia == "328"
+
+
+# -- 2. fabricante -----------------------------------------------------------------
+
+
+@pytest.fixture
+def guard_real():
+    try:
+        return cargar_evaluador()
+    except EvaluadorNoDisponible:
+        pytest.skip("guard.evaluar() con checkout= no está disponible")
+
+
+class FabricanteRoto:
+    nombre = "rota"
+
+    def consultar(self, gtin):
+        raise RuntimeError("se cayó la red")
+
+
+async def _veredicto(c: httpx.AsyncClient) -> dict[str, Any]:
+    (evento,) = [e for e in await eventos(c) if e["tipo"] == "veredicto"]
+    return evento["datos"]
+
+
+async def test_el_guard_bloquea_la_ram_falsa_con_el_fabricante_fixture(armar_proxy, guard_real):
+    app = armar_proxy(evaluador=guard_real, fabricante=FixtureFabricante())
+    async with cliente_de(app) as c:
+        contexto = await buscar(c, "notebook_malicioso")
+        task = (await checkout(c, contexto, "cart_4")).json()["result"]
+        datos = await _veredicto(c)
+    assert not checkouts(task)
+    assert veredictos(task)[0]["status"] == "bloqueado"
+    ram = next(
+        q for q in datos["veredicto"]["chequeos"]
+        if q["tipo"] == "cumplimiento" and q.get("campo") == "atributo:memoria_ram"
+    )
+    assert ram["resultado"] == "bloquea" and ram["origen"] == "fabricante"
+    assert "fixture de prueba" in ram["detalle"]
+    # El evento dice qué fuente del fabricante se usó, rotulada como fixture.
+    fabricante = datos["fabricante"]
+    assert fabricante["fuente"] == "fixture" and fabricante["fixture"] is True
+    consultas = {q["gtin"]: q for q in fabricante["consultas"]}
+    assert consultas["02001234000031"]["con_dato"] is True  # la Zento Slim 14
+
+
+async def test_con_el_fabricante_la_honesta_llega_a_la_firma(armar_proxy, guard_real):
+    app = armar_proxy(evaluador=guard_real, fabricante=FixtureFabricante())
+    async with cliente_de(app) as c:
+        contexto = await buscar(c, "notebook_honesto")
+        task = (await checkout(c, contexto, "cart_1")).json()["result"]
+    assert checkouts(task), texto_estado(task)
+    assert veredictos(task)[0]["status"] in ("aprobado", "con_avisos")
+
+
+async def test_sin_fabricante_lo_obligatorio_escala(armar_proxy, guard_real):
+    async with cliente_de(armar_proxy(evaluador=guard_real)) as c:
+        contexto = await buscar(c, "notebook_honesto")
+        task = (await checkout(c, contexto, "cart_1")).json()["result"]
+        datos = await _veredicto(c)
+    assert not checkouts(task)
+    assert veredictos(task)[0]["status"] == "escalar"
+    assert datos["fabricante"] == {"fuente": "ninguna", "fixture": False, "consultas": []}
+
+
+async def test_si_el_fabricante_falla_el_guard_escala(armar_proxy, guard_real):
+    app = armar_proxy(evaluador=guard_real, fabricante=FabricanteRoto())
+    async with cliente_de(app) as c:
+        contexto = await buscar(c, "notebook_honesto")
+        task = (await checkout(c, contexto, "cart_1")).json()["result"]
+        datos = await _veredicto(c)
+    assert veredictos(task)[0]["status"] == "escalar"  # nunca aprueba sin la fuente
+    assert datos["fabricante"]["fuente"] == "rota"
+    assert {q["motivo"] for q in datos["fabricante"]["consultas"]} == {"error"}
+    assert not any(q["con_dato"] for q in datos["fabricante"]["consultas"])
+
+
+async def test_la_oportunidad_ve_las_ofertas_verificadas_con_el_fabricante(
+    armar_proxy, config_rapida
+):
+    agente = AgenteMinimo()
+    app = armar_proxy(config=config_rapida, agente=agente, fabricante=FixtureFabricante())
+    async with cliente_de(app) as c:
+        pedido = pedido_find_products("notebook_malicioso")
+        busqueda = asyncio.create_task(c.post(RPC, content=cuerpo(pedido), headers=HEADERS_A2A))
+        compra = await _compra(c, "esperando_contexto")
+        await c.post(
+            "/guard/compras/contexto",
+            json={"compra_id": compra["compra_id"], "respuesta": "Para programar."},
+        )
+        await busqueda
+    (ofertas,) = agente.ofertas_vistas
+    zento = next(o for o in ofertas if o.cart_id == "cart_4")
+    evidencia = zento.evidencia["atributo:memoria_ram"]
+    assert evidencia.estado == "contradicho" and evidencia.origen_usado == "fabricante"
+    assert zento.atributos["memoria_ram"].valor == 8  # el dato del fabricante, no el declarado
+
+
+def test_python_m_proxy_arma_la_fuente_del_fabricante():
+    from proxy.__main__ import cargar_fabricante
+
+    assert isinstance(cargar_fabricante({}), FixtureFabricante)  # por defecto, el fixture
+    assert cargar_fabricante({"FABRICANTE_FUENTE": "ninguna"}) is None
+    with pytest.raises(SystemExit):
+        cargar_fabricante({"FABRICANTE_FUENTE": "otra"})
+    with pytest.raises(SystemExit):
+        cargar_fabricante({"FABRICANTE_FUENTE": "icecat"})  # sin ICECAT_USUARIO
