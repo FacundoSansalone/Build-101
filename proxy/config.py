@@ -39,7 +39,13 @@ class Config:
     # (donde no escuchan) y cada intento fallido suma ~2 s.
     merchant_upstream_url: str = "http://127.0.0.1:8001/a2a/merchant_agent"
     proxy_public_url: str = "http://localhost:8010/a2a/merchant_agent"
-    catalogo_url: str = "http://127.0.0.1:8011"
+    # Catálogo público del comercio: no siempre existe. None (CATALOGO_URL
+    # vacío) = este comercio no publica catálogo; no se consulta nada.
+    catalogo_url: str | None = "http://127.0.0.1:8011"
+    # Si el catálogo no responde, ¿usar fixtures/public_catalog.json? Solo para
+    # la demo offline (CATALOGO_RESPALDO_FIXTURE=1): fuera de la demo sería
+    # verificar contra una copia vieja que no es de este comercio.
+    catalogo_respaldo_fixture: bool = False
     guard_activo: bool = True
     events_jsonl: Path | None = REPO_ROOT / ".logs" / "guard_events.jsonl"
     guard_key_path: Path = REPO_ROOT / ".temp-db" / "guard_signing_key.pem"
@@ -84,7 +90,11 @@ class Config:
             proxy_public_url=env.get(
                 "PROXY_PUBLIC_URL", base.proxy_public_url
             ).rstrip("/"),
-            catalogo_url=env.get("CATALOGO_URL", base.catalogo_url).rstrip("/"),
+            catalogo_url=env.get("CATALOGO_URL", base.catalogo_url or "").strip().rstrip("/")
+            or None,
+            catalogo_respaldo_fixture=_bool(
+                env.get("CATALOGO_RESPALDO_FIXTURE", "0"), "CATALOGO_RESPALDO_FIXTURE"
+            ),
             guard_activo=_bool(env.get("GUARD_ACTIVO", "true"), "GUARD_ACTIVO"),
             events_jsonl=_ruta(jsonl) if jsonl else base.events_jsonl,
             guard_key_path=_ruta(env["GUARD_KEY_PATH"])

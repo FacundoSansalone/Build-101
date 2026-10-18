@@ -110,6 +110,20 @@ test("la compra trae la fuente del catálogo y si el recibo quedó firmado", () 
   assert.equal(s.reciboFirmado, null);
 });
 
+test("sin catálogo público: fuente 'ninguno', comercio firmado y catálogo descartado", () => {
+  const datos = {
+    veredicto: VEREDICTO_ESCALAR, fuente: "ninguno", comercio_id: "merchant_1",
+    catalogo_descartado: "el catálogo es del comercio 'otro'",
+  };
+  const [c] = agruparCompras([ev("veredicto", { contexto_id: "sin-cat", datos })]).compras;
+  assert.equal(c.fuenteCatalogo, "ninguno");
+  assert.equal(c.comercioFirmado, "merchant_1");
+  assert.match(c.catalogoDescartado, /otro/);
+  const [s] = agruparCompras([ev("veredicto", { contexto_id: "x", datos: { veredicto: VEREDICTO_ESCALAR } })]).compras;
+  assert.equal(s.comercioFirmado, null);
+  assert.equal(s.catalogoDescartado, null);
+});
+
 test("describirEvento distingue retenido y aprobado por humano", () => {
   const retenido = describirEvento(ev("bloqueado", { datos: { motivo: "m", status: "escalar", requiere_aprobacion: true } }));
   assert.match(retenido.titulo, /retenido/i);

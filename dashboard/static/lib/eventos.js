@@ -110,9 +110,14 @@ export function armarCompra(contextoId, eventos) {
     checkout: checkoutEvento?.datos ?? null,
     veredicto: datos("veredicto")?.veredicto ?? null,
     // Fuente del catálogo que usó el Guard ("http" = :8011, "fixture" = copia
-    // local) y si el recibo quedó firmado. Solo si el proxy los manda.
+    // local de la demo, "ninguno" = sin catálogo público: solo datos
+    // declarados) y si el recibo quedó firmado. Solo si el proxy los manda.
     fuenteCatalogo: typeof datosVeredicto?.fuente === "string" ? datosVeredicto.fuente : null,
     reciboFirmado: typeof datosVeredicto?.recibo_firmado === "boolean" ? datosVeredicto.recibo_firmado : null,
+    // Comercio que firmó el checkout y, si hubo, por qué no se usó el catálogo.
+    comercioFirmado: typeof datosVeredicto?.comercio_id === "string" ? datosVeredicto.comercio_id : null,
+    catalogoDescartado: typeof datosVeredicto?.catalogo_descartado === "string"
+      ? datosVeredicto.catalogo_descartado : null,
     bloqueo: datos("bloqueado"),
     desenlace: desenlaceCheckout(eventos),
     checkoutTs: checkoutEvento ? tiempo(checkoutEvento) : null,

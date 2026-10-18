@@ -133,7 +133,14 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
    artefacto A2A aparte con la clave `guard.veredicto`; `ap2.checkout` intacto.
 - **Agregados al contrato:** `evaluar(..., ahora=None)` (fecha del recibo,
   para que sea determinística) y `OfertasVistas.comercio_id` (lo completa
-  quien llama con `merchant.id` del catálogo; lo usa el chequeo de política).
+  quien llama; el proxy usa el `merchant.id` **firmado en el checkout**, no el
+  del catálogo; lo usa el chequeo de política).
+- **El catálogo público no siempre existe (2026-10-18).** Sin catálogo (sin
+  `CATALOGO_URL` o si no responde) el Guard evalúa con catálogo vacío: todo
+  queda "solo declarado" y lo obligatorio escala; nunca aprueba sin verificar.
+  El respaldo `fixtures/public_catalog.json` es solo para la demo offline
+  (`CATALOGO_RESPALDO_FIXTURE=1`). Un catálogo que dice ser de otro comercio
+  que el que firmó el checkout no se usa.
   El tipo de evento `guard_cambiado` (interruptor sí/no).
 - **Resultados del benchmark en git:** se escriben en `results/` (raíz) con
   `--out ../../results`. `.gitignore` no cambia.

@@ -177,7 +177,12 @@ export function chipsFuente(compra) {
   if (compra?.fuenteCatalogo === "http") {
     chips.push(chip("catálogo público en vivo (:8011)", { tono: "ok", icon: "check", titulo: "El Guard verificó contra GET :8011/products" }));
   } else if (compra?.fuenteCatalogo === "fixture") {
-    chips.push(chip("catálogo: copia local (fixture)", { tono: "warn", icon: "alert", titulo: ":8011 no respondió: el proxy usó fixtures/public_catalog.json" }));
+    chips.push(chip("catálogo: copia local (fixture)", { tono: "warn", icon: "alert", titulo: ":8011 no respondió: el proxy usó fixtures/public_catalog.json (modo demo)" }));
+  } else if (compra?.fuenteCatalogo === "ninguno") {
+    chips.push(chip("sin catálogo público: solo datos declarados", {
+      tono: "warn", icon: "alert",
+      titulo: compra.catalogoDescartado ?? "El comercio no publica catálogo o no respondió: nada se pudo verificar y lo obligatorio escala",
+    }));
   }
   if (compra?.reciboFirmado === true) chips.push(chip("recibo firmado", { tono: "ok", icon: "key" }));
   else if (compra?.reciboFirmado === false) chips.push(chip("recibo sin firmar", { tono: "warn", icon: "alert" }));

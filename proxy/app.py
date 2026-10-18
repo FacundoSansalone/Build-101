@@ -121,6 +121,18 @@ def _recordar(cache: OrderedDict, clave: Any, valor: Any) -> None:
         cache.popitem(last=False)
 
 
+def comercio_firmado(checkout_jwt: Any) -> str | None:
+    """`merchant.id` del checkout que firmó el comercio (None si no se lee).
+
+    Es la identidad del comercio que usa el chequeo de política: viene firmada,
+    a diferencia del catálogo público, que puede no existir. Solo se lee.
+    """
+    _, payload = a2a.decodificar_jwt(checkout_jwt)
+    merchant = payload.get("merchant") if isinstance(payload, dict) else None
+    comercio = merchant.get("id") if isinstance(merchant, dict) else None
+    return comercio if isinstance(comercio, str) and comercio else None
+
+
 @dataclass(frozen=True)
 class OfertasGuardadas:
     carts: list[dict[str, Any]]
@@ -905,9 +917,20 @@ class ProxyGuard:
         clave: tuple[str | None, str, str | None],
     ) -> Decision:
         escenario = guardadas.escenario
-        catalogo, comercio_id, fuente = await cargar_catalogo(
-            self.client, self.config.catalogo_url
+        catalogo, comercio_catalogo, fuente = await cargar_catalogo(
+            self.client, self.config.catalogo_url, self.config.catalogo_respaldo_fixture
         )
+        # El comercio es el que FIRMÓ el checkout, no el que dice el catálogo
+        # (que puede no existir). Un catálogo de otro comercio no se usa.
+        comercio_id = comercio_firmado(visto.checkout_jwt)
+        catalogo_descartado = None
+        if catalogo and comercio_catalogo and comercio_id and comercio_catalogo != comercio_id:
+            catalogo_descartado = (
+                f"el catálogo es del comercio {comercio_catalogo!r} y el checkout "
+                f"lo firmó {comercio_id!r}: se evalúa sin catálogo"
+            )
+            logger.warning("Catálogo descartado: %s", catalogo_descartado)
+            catalogo, fuente = {}, "ninguno"
         try:
             resultado = self.evaluador.evaluar(
                 self.ficha(),
@@ -953,14 +976,18 @@ class ProxyGuard:
             "veredicto %s para %s (%s, catálogo %s): %s",
             veredicto.status, cart_id, self.evaluador.nombre, fuente, veredicto.motivo,
         )
+        datos_veredicto: dict[str, Any] = {
+            "veredicto": veredicto.model_dump(mode="json"),
+            "fuente": fuente,  # "http", "fixture" (demo) o "ninguno"
+            "comercio_id": comercio_id,  # del checkout firmado
+            "recibo_firmado": recibo_firmado,
+            "evaluador": self.evaluador.nombre,  # "stub" = no es el Guard real
+        }
+        if catalogo_descartado:
+            datos_veredicto["catalogo_descartado"] = catalogo_descartado
         self._emitir(
             "veredicto",
-            {
-                "veredicto": veredicto.model_dump(mode="json"),
-                "fuente": fuente,
-                "recibo_firmado": recibo_firmado,
-                "evaluador": self.evaluador.nombre,  # "stub" = no es el Guard real
-            },
+            datos_veredicto,
             guard_activo=True,
             contexto_id=contexto_id,
             escenario=escenario,

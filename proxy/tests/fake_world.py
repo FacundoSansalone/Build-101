@@ -416,14 +416,19 @@ def _artefacto(data: dict[str, Any]) -> Artifact:
     )
 
 
-def app_catalogo() -> Starlette:
-    """Catálogo público falso: sirve fixtures/public_catalog.json."""
+def app_catalogo(merchant_id: str | None = None) -> Starlette:
+    """Catálogo público falso: sirve fixtures/public_catalog.json.
+
+    Con `merchant_id`, el catálogo dice ser de ese comercio (otro distinto del
+    que firma el checkout del FakeMerchant, "merchant_1").
+    """
     catalogo = json.loads((FIXTURES / "public_catalog.json").read_text("utf-8"))
+    merchant = dict(catalogo["merchant"])
+    if merchant_id is not None:
+        merchant["id"] = merchant_id
 
     async def products(request: Request) -> Response:
-        return JSONResponse(
-            {"merchant": catalogo["merchant"], "products": catalogo["products"]}
-        )
+        return JSONResponse({"merchant": merchant, "products": catalogo["products"]})
 
     return Starlette(routes=[Route("/products", products, methods=["GET"])])
 

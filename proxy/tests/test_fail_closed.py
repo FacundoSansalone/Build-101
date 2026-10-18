@@ -277,18 +277,59 @@ async def test_veredicto_registra_fuente_http_y_recibo_firmado(cliente):
     assert veredicto["datos"]["recibo_firmado"] is bool(firma)
 
 
-async def test_veredicto_registra_fuente_fixture_si_el_catalogo_no_responde(
-    armar_proxy, merchant
-):
+async def _veredicto_sin_catalogo(armar_proxy, merchant, config, **config_extra):
+    import dataclasses
+
     evaluador, _ = evaluador_espia("aprobado")  # veredicto sin recibo
-    app = armar_proxy(transport=RuteoPorHost({MERCHANT_HOST: merchant.app}), evaluador=evaluador)
+    app = armar_proxy(
+        transport=RuteoPorHost({MERCHANT_HOST: merchant.app}),  # :8011 no responde
+        evaluador=evaluador,
+        config=dataclasses.replace(config, **config_extra),
+    )
+    async with cliente_de(app) as c:
+        contexto = await buscar(c, "B")
+        await checkout(c, contexto, "cart_1")
+        (veredicto,) = [e for e in await eventos(c) if e["tipo"] == "veredicto"]
+    return veredicto
+
+
+async def test_veredicto_registra_fuente_ninguno_si_el_catalogo_no_responde(
+    armar_proxy, merchant, config
+):
+    veredicto = await _veredicto_sin_catalogo(armar_proxy, merchant, config)
+
+    assert veredicto["datos"]["fuente"] == "ninguno"
+    assert veredicto["datos"]["comercio_id"] == "merchant_1"  # del checkout firmado
+    assert veredicto["datos"]["recibo_firmado"] is False  # sin recibo no hay firma
+
+
+async def test_veredicto_registra_fuente_fixture_solo_con_respaldo_explicito(
+    armar_proxy, merchant, config
+):
+    veredicto = await _veredicto_sin_catalogo(
+        armar_proxy, merchant, config, catalogo_respaldo_fixture=True
+    )
+    assert veredicto["datos"]["fuente"] == "fixture"
+
+
+async def test_veredicto_avisa_si_el_catalogo_es_de_otro_comercio(armar_proxy, merchant):
+    from proxy.tests.fake_world import CATALOG_HOST, app_catalogo
+
+    evaluador, _ = evaluador_espia("aprobado")
+    app = armar_proxy(
+        transport=RuteoPorHost({
+            MERCHANT_HOST: merchant.app,
+            CATALOG_HOST: app_catalogo(merchant_id="otro_comercio"),
+        }),
+        evaluador=evaluador,
+    )
     async with cliente_de(app) as c:
         contexto = await buscar(c, "B")
         await checkout(c, contexto, "cart_1")
         (veredicto,) = [e for e in await eventos(c) if e["tipo"] == "veredicto"]
 
-    assert veredicto["datos"]["fuente"] == "fixture"
-    assert veredicto["datos"]["recibo_firmado"] is False  # sin recibo no hay firma
+    assert veredicto["datos"]["fuente"] == "ninguno"
+    assert "otro_comercio" in veredicto["datos"]["catalogo_descartado"]
 
 
 def test_la_clave_del_guard_se_crea_al_arrancar(armar_proxy, config):

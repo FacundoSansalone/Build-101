@@ -37,7 +37,8 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `PROXY_ALLOW_REMOTE` | `0` | `1` para escuchar en la red (los eventos llevan mandatos y checkouts completos) |
 | `MERCHANT_UPSTREAM_URL` | `http://127.0.0.1:8001/a2a/merchant_agent` | El comercio real (escucha en 127.0.0.1) |
 | `PROXY_PUBLIC_URL` | `http://localhost:8010/a2a/merchant_agent` | URL que va en la Agent Card que sirve el proxy (y ruta del JSON-RPC). Es la que ve el cliente A2A: queda en `localhost`, igual que `MERCHANT_AGENT_URL` |
-| `CATALOGO_URL` | `http://127.0.0.1:8011` | Catálogo público (`GET /products`) |
+| `CATALOGO_URL` | `http://127.0.0.1:8011` | Catálogo público (`GET /products`). Vacío = el comercio no publica catálogo: no se consulta y se evalúa sin catálogo |
+| `CATALOGO_RESPALDO_FIXTURE` | `0` | `1` solo para la demo offline: si el catálogo no responde, usar `fixtures/public_catalog.json`. Con `0`, se evalúa sin catálogo |
 | `GUARD_ACTIVO` | `true` | Estado inicial del interruptor |
 | `GUARD_EVENTS_JSONL` | `.logs/guard_events.jsonl` | Copia de los eventos (relativo a la raíz del repo; se crea con modo 0600) |
 | `GUARD_KEY_PATH` | `.temp-db/guard_signing_key.pem` | Clave del recibo (la maneja `guard.recibo`) |
@@ -138,9 +139,14 @@ De dónde salen las entradas de `evaluar()`:
 
 - **Ficha:** `demo_world.scenario.intent()` (si no se puede importar,
   `fixtures/scenario_baseline.json` → `intent`).
-- **Catálogo:** `GET CATALOGO_URL/products` → `sku -> producto` y
-  `comercio_id = merchant.id` (si no responde, `fixtures/public_catalog.json`;
-  el evento `veredicto` dice cuál se usó en `fuente`).
+- **Catálogo (no siempre existe):** `GET CATALOGO_URL/products` →
+  `sku -> producto`. Si no hay `CATALOGO_URL` o no responde, se evalúa **sin
+  catálogo** (todo queda "solo declarado" y lo obligatorio escala); el fixture
+  solo con `CATALOGO_RESPALDO_FIXTURE=1`. El evento `veredicto` dice cuál se
+  usó en `fuente` (`http`, `fixture` o `ninguno`).
+- **Comercio:** `comercio_id` es el `merchant.id` **firmado** en el checkout,
+  no el del catálogo. Si el catálogo dice ser de otro comercio, no se usa
+  (`catalogo_descartado` en el evento `veredicto`).
 
 ## API de control (para el dashboard en `:8020`)
 
@@ -184,7 +190,7 @@ Además van a `GUARD_EVENTS_JSONL`, una línea por evento. `escenario` es el
 | `ofertas_recibidas` | `{"carts": [...], "offer_details": [...]}` |
 | `checkout_pedido` | `{"cart_id": str}` |
 | `checkout_recibido` | `{"cart_id", "checkout_jwt", "checkout_hash", "jwt_header", "jwt_payload", "ap2_violaciones"}` (+ `cart_id_checkout` si el del checkout no es el del pedido). Header y payload decodificados solo para mostrar; `ap2_violaciones` = `demo_world.ap2_check.ap2_violations(cart)` |
-| `veredicto` | `{"veredicto": <Veredicto JSON completo>, "fuente": "http"\|"fixture", "recibo_firmado": bool, "evaluador": "guard"\|"stub"}` |
+| `veredicto` | `{"veredicto": <Veredicto JSON completo>, "fuente": "http"\|"fixture"\|"ninguno", "comercio_id": <merchant.id firmado>, "catalogo_descartado"?: str, "recibo_firmado": bool, "evaluador": "guard"\|"stub"}` |
 | `reenviado` | `{"metodo": "find_products"\|"create_checkout"\|"otro", "mandatos": {...}?, "aprobacion_humana": true?, "aprobacion_id": str?}` |
 | `bloqueado` | `{"cart_id", "motivo", "status", "requiere_aprobacion": bool}` (`requiere_aprobacion: true` = retenido por `escalar`) |
 | `guard_cambiado` | `{"guard_activo": bool}` |

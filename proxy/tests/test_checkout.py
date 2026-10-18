@@ -266,30 +266,90 @@ async def test_evaluar_recibe_las_entradas_del_contrato(
     assert {"precio", "moneda", "categoria", "uso", "talle", "marca"} <= campos
 
 
-async def test_catalogo_caido_usa_el_fixture(armar_proxy, config, merchant):
-    from proxy import guard_stub
-    from proxy.tests.fake_world import MERCHANT_HOST, RuteoPorHost
+async def _evaluar_con(armar_proxy, config, transporte, **config_extra):
+    """Compra B/cart_1 y devuelve (catálogo, comercio_id) que recibió evaluar()."""
+    import dataclasses
 
-    catalogos: list[dict] = []
+    from proxy import guard_stub
+
+    llamadas: list[tuple[dict, str | None]] = []
 
     def espia(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
               checkout_hash=None, ahora=None, checkout=None):
-        catalogos.append((catalogo, ofertas_vistas.comercio_id))
+        llamadas.append((catalogo, ofertas_vistas.comercio_id))
         return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo)
 
     app = armar_proxy(
-        transport=RuteoPorHost({MERCHANT_HOST: merchant.app}),  # sin catálogo
+        transport=transporte,
         evaluador=EvaluadorCargado(evaluar=espia, nombre="guard"),
+        config=dataclasses.replace(config, **config_extra),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://localhost:8010"
     ) as c:
         contexto = await _buscar(c, "B")
         resp = await _checkout(c, contexto, "cart_1")
-
     assert resp.json()["result"]["status"]["state"] == "completed"
-    catalogo, comercio = catalogos[0]
+    return llamadas[0]
+
+
+# El catálogo público no siempre existe: sin él el Guard evalúa sin catálogo
+# (todo queda "solo declarado"), nunca contra una copia vieja de otro lado.
+
+
+async def test_catalogo_caido_evalua_sin_catalogo(armar_proxy, config, merchant):
+    from proxy.tests.fake_world import MERCHANT_HOST, RuteoPorHost
+
+    catalogo, comercio = await _evaluar_con(
+        armar_proxy, config, RuteoPorHost({MERCHANT_HOST: merchant.app})  # sin catálogo
+    )
+    assert catalogo == {}
+    assert comercio == "merchant_1"  # sale del checkout firmado, no del catálogo
+
+
+async def test_catalogo_caido_con_respaldo_explicito_usa_el_fixture(
+    armar_proxy, config, merchant
+):
+    from proxy.tests.fake_world import MERCHANT_HOST, RuteoPorHost
+
+    catalogo, comercio = await _evaluar_con(
+        armar_proxy, config, RuteoPorHost({MERCHANT_HOST: merchant.app}),
+        catalogo_respaldo_fixture=True,  # solo para la demo offline
+    )
     assert "NK-OUT-01" in catalogo and comercio == "merchant_1"
+
+
+async def test_sin_catalogo_configurado_no_se_consulta(armar_proxy, config, merchant):
+    from proxy.tests.fake_world import MERCHANT_HOST, RuteoPorHost
+
+    # RuteoPorHost falla ante un host desconocido: si el proxy pidiera el
+    # catálogo, lo detectaría.
+    catalogo, comercio = await _evaluar_con(
+        armar_proxy, config, RuteoPorHost({MERCHANT_HOST: merchant.app}),
+        catalogo_url=None,
+    )
+    assert catalogo == {} and comercio == "merchant_1"
+
+
+async def test_catalogo_de_otro_comercio_no_se_usa(armar_proxy, config, merchant):
+    from proxy.tests.fake_world import (
+        CATALOG_HOST,
+        MERCHANT_HOST,
+        RuteoPorHost,
+        app_catalogo,
+    )
+
+    catalogo, comercio = await _evaluar_con(
+        armar_proxy, config,
+        RuteoPorHost({
+            MERCHANT_HOST: merchant.app,
+            CATALOG_HOST: app_catalogo(merchant_id="otro_comercio"),
+        }),
+    )
+    # El checkout lo firmó merchant_1: verificar contra el catálogo de otro
+    # comercio sería contrastar con datos ajenos.
+    assert catalogo == {}
+    assert comercio == "merchant_1"
 
 
 # ---------------------------------------------------------------------------

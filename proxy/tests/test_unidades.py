@@ -187,6 +187,15 @@ def test_config_desde_entorno(tmp_path):
     assert c.guard_key_path == REPO_ROOT / "otra" / "clave.pem"
 
 
+def test_config_catalogo_opcional_y_sin_respaldo_por_defecto():
+    # El catálogo público no siempre existe y no se asume un respaldo.
+    assert Config.desde_entorno({}).catalogo_respaldo_fixture is False
+    assert Config.desde_entorno({"CATALOGO_URL": ""}).catalogo_url is None
+    assert Config.desde_entorno({"CATALOGO_URL": "  "}).catalogo_url is None
+    c = Config.desde_entorno({"CATALOGO_RESPALDO_FIXTURE": "1"})
+    assert c.catalogo_respaldo_fixture is True
+
+
 @pytest.mark.parametrize("valor", ["quizas", ""])
 def test_config_guard_activo_invalido(valor):
     with pytest.raises(ValueError):

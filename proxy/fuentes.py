@@ -1,7 +1,9 @@
 """De dónde saca el proxy la ficha, el catálogo público y el chequeo de AP2.
 
-Todo con respaldo en `fixtures/` para que la demo no dependa de que esté
-levantado todo. `demo_world` se importa en solo lectura (no se modifica).
+El catálogo público no siempre existe: sin él, el Guard evalúa sin catálogo
+(todo queda "solo declarado" y escala). El respaldo en `fixtures/` es solo
+para la demo offline y hay que pedirlo (`CATALOGO_RESPALDO_FIXTURE=1`).
+`demo_world` se importa en solo lectura (no se modifica).
 """
 
 from __future__ import annotations
@@ -47,13 +49,19 @@ MAX_CATALOGO_BYTES = 2 * 1024 * 1024
 
 
 async def cargar_catalogo(
-    client: httpx.AsyncClient, catalogo_url: str
+    client: httpx.AsyncClient,
+    catalogo_url: str | None,
+    respaldo_fixture: bool = False,
 ) -> tuple[dict[str, dict], str | None, str]:
     """`GET <catalogo>/products` → (sku -> producto, merchant.id, fuente).
 
-    `fuente` es "http" o "fixture": si el catálogo no responde (o responde
-    algo ilegible), usa `fixtures/public_catalog.json` y lo dice.
+    `fuente` es "http", "fixture" o "ninguno":
+    - sin `catalogo_url` (el comercio no publica catálogo) no se consulta nada;
+    - si el catálogo no responde (o responde algo ilegible) se evalúa sin
+      catálogo, salvo que se pida el respaldo de `fixtures/` para la demo.
     """
+    if not catalogo_url:
+        return {}, None, "ninguno"
     try:
         resp = await client.get(f"{catalogo_url}/products", timeout=5.0)
         resp.raise_for_status()
@@ -65,7 +73,10 @@ async def cargar_catalogo(
         productos, comercio_id = _indexar(datos)
         return productos, comercio_id, "http"
     except (httpx.HTTPError, ValueError, RecursionError) as e:
-        logger.warning("Catálogo público no disponible (%s); uso fixtures/", e)
+        if not respaldo_fixture:
+            logger.warning("Catálogo público no disponible (%s); evalúo sin catálogo", e)
+            return {}, None, "ninguno"
+        logger.warning("Catálogo público no disponible (%s); uso fixtures/ (demo)", e)
         datos = json.loads((FIXTURES / "public_catalog.json").read_text("utf-8"))
         productos, comercio_id = _indexar(datos)
         return productos, comercio_id, "fixture"
