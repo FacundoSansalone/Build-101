@@ -371,7 +371,9 @@ Reglas que no dependen de la demo:
   proxy no arranca (salvo `PROXY_ALLOW_STUB=1`, marcado en todo).
 - Por el veredicto no le llega al agente texto del comercio (versión
   reducida); `id`/`event` del SSE se sanean.
-- Ningún header del comercio llega al cliente salvo `X-A2A-Extensions`.
+- Ningún header del comercio llega al cliente salvo `X-A2A-Extensions`. Al
+  revés, los headers de control propios (`X-Guard-Token`, `X-Compra-Id`)
+  nunca llegan al comercio, tampoco en el tráfico anónimo.
 - JSON estricto (sin `NaN`/`Infinity`), lectura con tope de bytes y SSE leído
   línea a línea con el mismo tope.
 - Los textos que el proxy manda al agente son plantillas fijas; los detalles
@@ -507,6 +509,14 @@ es de un integrador:
   identificador seguro también se corta.
 - Antes de reenviar se sacan `Authorization` y `X-Compra-Id`: la clave nunca
   llega al comercio. Tope de cuerpo: `GATEWAY_MAX_CUERPO_A2A_BYTES` (413).
+- **El tráfico anónimo no entra en una compra de integrador.** Un pedido sin
+  clave con un `contextId` atado a una compra de integrador (en memoria o,
+  con claves o un almacén durable, en el almacén) da 409 `contexto_ajeno` sin
+  reenviar ni emitir nada (503 `estado_no_disponible` si el almacén no
+  responde). Si el comercio contesta un pedido anónimo con ese contexto (JSON,
+  cada evento SSE, también un `tasks/get`), se corta; y un corte del filtro
+  en ese tráfico no bloquea la compra ajena. Antes, la demo la adoptaba:
+  evaluaba con su ficha, pisaba sus ofertas y la podía dejar `bloqueada`.
 - Los errores antes de reenviar son HTTP + error JSON-RPC (`code: -32001`,
   mensaje fijo `KaiAI: …` y `data.codigo`). `comercio_desconocido`
   (404), `comercio_no_permitido` (403) y `pedido_ilegible` (400) salen con
@@ -681,7 +691,9 @@ Con `GATEWAY_ESTADO=supabase` y sin las tablas, crear una compra da 503
 Si hay algo del gateway configurado (claves activas, más de un comercio, un
 almacén que no es memoria o webhooks), la respuesta suma
 `"gateway": {"integradores": int, "comercios": [id], "almacen": "memoria"|"supabase", "publico": bool}`.
-Sin configuración nueva, el `/guard/state` es el de siempre.
+Sin `X-Guard-Token` (el GET del dashboard publicado se reenvía sin
+autenticar) solo `{"almacen", "publico"}`: no se enumeran los comercios ni
+los integradores. Sin configuración nueva, el `/guard/state` es el de siempre.
 
 ### Probarlo en local
 

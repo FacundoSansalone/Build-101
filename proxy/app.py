@@ -142,7 +142,12 @@ _HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
-_NO_HACIA_COMERCIO = _HOP_BY_HOP | {"host", "content-length", "accept-encoding", "cookie"}
+# Tampoco los headers de control propios: el token de /guard/* (lo manda el
+# reenvío del dashboard) y la compra del gateway nunca llegan al comercio.
+_NO_HACIA_COMERCIO = _HOP_BY_HOP | {
+    "host", "content-length", "accept-encoding", "cookie",
+    HEADER_TOKEN.lower(), HEADER_COMPRA.lower(),
+}
 # Del comercio al cliente solo pasa esto (el Content-Type se normaliza). Nunca
 # Set-Cookie: las cookies no distinguen puerto y llegarían al dashboard.
 _DEL_COMERCIO_AL_CLIENTE = {"x-a2a-extensions"}
@@ -177,7 +182,9 @@ _SUFIJO_RETENIDO_API = (
     "la API del Guard y después reintentá create_checkout."
 )
 # Errores del tráfico A2A de integrador antes de reenviar (diseño §1.2): un
-# HTTP con status y un error JSON-RPC con código fijo. Mensajes fijos.
+# HTTP con status y un error JSON-RPC con código fijo. Mensajes fijos. El
+# tráfico anónimo usa `contexto_ajeno` y `estado_no_disponible` (un contexto
+# de una compra de integrador).
 _ERRORES_A2A: dict[str, tuple[int, str]] = {
     "falta_compra": (400, f"falta {HEADER_COMPRA} o no tiene el formato de una compra."),
     "comercio_no_permitido": (403, "el comercio no está permitido para esta clave."),
@@ -785,7 +792,7 @@ class ProxyGuard:
             or self.despachador is not None
         )
 
-    def estado(self) -> dict[str, Any]:
+    def estado(self, *, con_token: bool) -> dict[str, Any]:
         datos = {
             "guard_activo": self.guard_activo,
             "merchant_url": self.config.merchant_upstream_url,
@@ -796,12 +803,19 @@ class ProxyGuard:
         if self.gateway_configurado:
             # Solo con el gateway configurado: sin configuración nueva, el
             # /guard/state es el mismo de siempre (lo leen el dashboard y sus tests).
-            datos["gateway"] = {
-                "integradores": len(self.integradores.todos()),
-                "comercios": [c.id for c in self.comercios.todos()],
+            gateway: dict[str, Any] = {
                 "almacen": self.almacen.nombre,
                 "publico": self.integradores.hay_claves(),
             }
+            if con_token:
+                # Sin token (el GET del dashboard publicado se reenvía sin
+                # autenticar) no se enumeran los comercios ni los integradores.
+                gateway = {
+                    "integradores": len(self.integradores.todos()),
+                    "comercios": [c.id for c in self.comercios.todos()],
+                    **gateway,
+                }
+            datos["gateway"] = gateway
         return datos
 
     def ficha_de(self, contexto_id: str | None) -> Ficha:
@@ -928,6 +942,15 @@ class ProxyGuard:
             oyente=_oyente(request),
         )
         pedido = llamada.pedido
+        if integrador is None:
+            # Tráfico anónimo (la demo): nunca en el contexto de una compra de
+            # integrador. Lo adoptaría (su ficha, sus ofertas) y podría
+            # bloquearla. No se reenvía ni se emite nada.
+            ajeno = await self._contexto_es_de_integrador(pedido.contexto_id)
+            if ajeno is None:
+                return _error_a2a(pedido.rpc_id, "estado_no_disponible")
+            if ajeno:
+                return _error_a2a(pedido.rpc_id, "contexto_ajeno")
         if integrador is not None:
             error = await self._preparar_integrador(request, llamada)
             if error is not None:
@@ -1208,7 +1231,7 @@ class ProxyGuard:
                     etapa="seguridad", senales=corte[1],
                 ), 200
 
-        if llamada.de_integrador and not await self._contexto_respuesta_ok(llamada, result):
+        if not await self._contexto_respuesta_ok(llamada, result):
             # El comercio respondió con el contexto de otra compra (o uno
             # ilegible): no se reenvía nada de esa respuesta.
             return self._cortar(
@@ -1399,7 +1422,7 @@ class ProxyGuard:
             corte = await self._filtrar(result if isinstance(result, dict) else body, llamada)
             if corte is not None:
                 return self._sse_cortar_etapa2(llamada, est, corte[0], corte[1])
-        if llamada.de_integrador and not await self._contexto_respuesta_ok(llamada, result):
+        if not await self._contexto_respuesta_ok(llamada, result):
             return self._sse_cortar_etapa2(llamada, est, _MOTIVO_CONTEXTO_AJENO)
         if not isinstance(result, dict):
             if "error" in body:
@@ -1607,12 +1630,20 @@ class ProxyGuard:
         return True
 
     async def _contexto_respuesta_ok(self, llamada: Llamada, result: Any) -> bool:
-        """Tráfico de integrador: el `contextId` que trae la respuesta (JSON o
-        cada evento SSE) tiene que ser de la compra del pedido. Si no estaba
-        atado, se ata. Uno de otra compra, ilegible o una falla del almacén
-        → False (el llamador corta)."""
+        """El `contextId` que trae la respuesta (JSON o cada evento SSE).
+
+        - Tráfico de integrador: tiene que ser de la compra del pedido. Si no
+          estaba atado, se ata.
+        - Tráfico anónimo (la demo): no puede ser de una compra de integrador
+          (el comercio no la puede "mudar" ahí, ni con un `tasks/get` de una
+          tarea suya).
+
+        Uno de otra compra, ilegible o una falla del almacén → False (el
+        llamador corta)."""
         if not isinstance(result, dict) or result.get("contextId") is None:
             return True
+        if not llamada.de_integrador:
+            return await self._contexto_es_de_integrador(result["contextId"]) is False
         compra, comercio = llamada.compra, llamada.comercio
         if compra is None or comercio is None:
             return False
@@ -1938,7 +1969,9 @@ class ProxyGuard:
             compra = llamada.compra or self.compras.de_contexto(
                 contexto if isinstance(contexto, str) else llamada.pedido.contexto_id
             )
-            if compra is not None:
+            # El tráfico anónimo no bloquea una compra de integrador (el
+            # comercio puede contestar con el contexto de una ajena).
+            if compra is not None and (compra.origen != "api" or llamada.de_integrador):
                 compra.estado = "bloqueada"
                 compra.resuelta.set()
                 self.guardar_compra(compra)
@@ -2766,7 +2799,7 @@ class ProxyGuard:
     # -- API de control (dashboard) -------------------------------------------
 
     async def get_state(self, request: Request) -> Response:
-        return JSONResponse(self.estado())
+        return JSONResponse(self.estado(con_token=self._con_token(request)))
 
     async def post_state(self, request: Request) -> Response:
         body, error = a2a.parsear_json(await request.body())
@@ -2783,7 +2816,8 @@ class ProxyGuard:
             {"guard_activo": self.guard_activo},
             guard_activo=self.guard_activo,
         )
-        return JSONResponse(self.estado())
+        # El POST ya exige el token (ControlLocal).
+        return JSONResponse(self.estado(con_token=self._con_token(request)))
 
     async def get_aprobaciones(self, request: Request) -> Response:
         listado = self.aprobaciones.listar()
@@ -2801,6 +2835,25 @@ class ProxyGuard:
         if contexto_id in self._contextos_api:
             return True
         return self._compra_api(None, contexto_id) is not None
+
+    async def _contexto_es_de_integrador(self, contexto_id: Any) -> bool | None:
+        """¿El contexto es de una compra de integrador? Primero la memoria y,
+        si puede haber compras que no están en memoria (claves activas o un
+        almacén durable, después de un reinicio), el almacén. None si el
+        almacén falla: quien llama corta (fail-closed)."""
+        if not isinstance(contexto_id, str) or not contexto_id:
+            return False
+        if self._contexto_de_integrador(contexto_id):
+            return True
+        if not (self.integradores.hay_claves() or self.almacen.durable):
+            return False  # la demo sola: no hay compras de integrador
+        if not es_id(ID_SEGURO_RE, contexto_id):
+            return False  # uno así nunca se ata a una compra (`atar_contexto_api`)
+        try:
+            return await self.almacen.compra_de_contexto(contexto_id) is not None
+        except ErrorAlmacen as e:
+            logger.error("No se pudo saber de quién es el contexto %s: %s", contexto_id, e)
+            return None
 
     async def post_aprobacion(self, request: Request) -> Response:
         body, error = a2a.parsear_json(await request.body())

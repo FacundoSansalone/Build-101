@@ -17,9 +17,14 @@ from proxy import compras as compras_mod
 from proxy.compras import RegistroCompras
 from proxy.config import Config
 from proxy.estado import EstadoMemoria
-from proxy.tests.ayudantes import RPC, evaluador_espia
-from proxy.tests.fake_world import HEADERS_A2A, cuerpo, pedido_find_products
-from proxy.tests.test_compras_api import crear as crear_api
+from proxy.seguridad import HEADER_TOKEN
+from proxy.tests.ayudantes import RPC, evaluador_espia, texto_estado
+from proxy.tests.fake_world import (
+    HEADERS_A2A,
+    cuerpo,
+    pedido_create_checkout,
+    pedido_find_products,
+)
 from proxy.tests.gateway_ayudantes import (
     GATEWAY_PUBLIC_URL,
     armar_gateway,
@@ -29,6 +34,8 @@ from proxy.tests.gateway_ayudantes import (
     cliente_publico,
     crear_compra,
 )
+from proxy.tests.test_compras_api import crear as crear_api
+from proxy.tipos_gateway import HEADER_COMPRA
 
 # ---------------------------------------------------------------------------
 # DEMO_HOY: el "hoy" de la demo (las ofertas tienen fechas fijas)
@@ -335,3 +342,136 @@ async def test_los_eventos_de_integrador_van_al_jsonl_privado(config):
     }
     # En memoria siguen todos (el SSE y el historial los filtran sin token).
     assert {e.contexto_id for e in mundo.proxy.bus.historial()} >= {contexto, contexto_demo}
+
+
+# ---------------------------------------------------------------------------
+# Seguridad: headers de control, /guard/state y tráfico anónimo
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_los_headers_de_control_no_llegan_al_comercio(cliente, merchant):
+    """El `cliente` de los tests manda `X-Guard-Token` (como el reenvío del
+    dashboard): ni ese ni un `X-Compra-Id` suelto llegan al comercio."""
+    resp = await cliente.post(
+        RPC, content=cuerpo(pedido_find_products("B")),
+        headers={**HEADERS_A2A, HEADER_COMPRA: "cmp-0123456789abcdef"},
+    )
+    assert resp.status_code == 200
+    _, headers = merchant.recibidos[-1]
+    nombres = {k.lower() for k in headers}
+    assert HEADER_TOKEN.lower() not in nombres
+    assert HEADER_COMPRA.lower() not in nombres
+    assert headers.get("x-a2a-extensions")  # lo de A2A sigue pasando
+
+
+@pytest.mark.anyio
+async def test_guard_state_sin_token_no_enumera_comercios_ni_integradores(config):
+    mundo = armar_gateway(replace(config, gateway_public_url=GATEWAY_PUBLIC_URL),
+                          evaluador_espia()[0])
+    async with cliente_local(mundo.app) as c:
+        con_token = (await c.get("/guard/state")).json()
+        del c.headers[HEADER_TOKEN]
+        sin_token = (await c.get("/guard/state")).json()
+    assert con_token["gateway"] == {
+        "integradores": 2, "comercios": ["merchant_1", "tienda_b"],
+        "almacen": "memoria", "publico": True,
+    }
+    assert sin_token["gateway"] == {"almacen": "memoria", "publico": True}
+    assert {k: v for k, v in sin_token.items() if k != "gateway"} == {
+        k: v for k, v in con_token.items() if k != "gateway"
+    }
+
+
+async def _compra_con_contexto(mundo) -> tuple[str, str]:
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(c))["compra_id"]
+        contexto = (await buscar(c, compra_id)).json()["result"]["contextId"]
+    return compra_id, contexto
+
+
+@pytest.mark.anyio
+async def test_un_pedido_anonimo_con_el_contexto_de_una_compra_de_integrador_no_pasa(config):
+    """Sin clave, un `contextId` atado a una compra de integrador: 409
+    `contexto_ajeno`, no se reenvía y la compra no cambia (antes la demo la
+    adoptaba: evaluaba con su ficha y podía bloquearla)."""
+    mundo = armar_gateway(replace(config, gateway_public_url=GATEWAY_PUBLIC_URL),
+                          evaluador_espia()[0])
+    compra_id, contexto = await _compra_con_contexto(mundo)
+    compra = mundo.proxy.compras.get(compra_id)
+    antes = (compra.estado, compra.actualizada, len(mundo.merchant.recibidos))
+    eventos_antes = len(mundo.proxy.bus.historial())
+    pedido = pedido_find_products("B")
+    pedido["params"]["message"]["contextId"] = contexto
+    async with cliente_local(mundo.app) as c:  # anónimo
+        busqueda = await c.post(RPC, content=cuerpo(pedido), headers=HEADERS_A2A)
+        compra_ = await c.post(
+            RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1")), headers=HEADERS_A2A
+        )
+    for resp in (busqueda, compra_):
+        assert resp.status_code == 409
+        assert resp.json()["error"]["data"]["codigo"] == "contexto_ajeno"
+    assert (compra.estado, compra.actualizada, len(mundo.merchant.recibidos)) == antes
+    assert len(mundo.proxy.bus.historial()) == eventos_antes
+
+
+@pytest.mark.anyio
+async def test_un_pedido_anonimo_con_un_contexto_de_integrador_en_el_almacen_no_pasa(config):
+    """La compra ya no está en memoria (reinicio) pero el almacén sabe de
+    quién es el contexto: igual 409."""
+    from proxy.estado import EstadoMemoria
+
+    almacen = EstadoMemoria(durable=True)
+    config_gw = replace(config, gateway_public_url=GATEWAY_PUBLIC_URL)
+    viejo = armar_gateway(config_gw, evaluador_espia()[0], almacen=almacen)
+    _, contexto = await _compra_con_contexto(viejo)
+    await viejo.esperar_fondo()
+    nuevo = armar_gateway(config_gw, evaluador_espia()[0], almacen=almacen)
+    async with cliente_local(nuevo.app) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1")), headers=HEADERS_A2A
+        )
+    assert resp.status_code == 409 and resp.json()["error"]["data"]["codigo"] == "contexto_ajeno"
+    assert nuevo.merchant.recibidos == []
+
+
+@pytest.mark.anyio
+async def test_una_respuesta_anonima_con_el_contexto_de_una_compra_de_integrador_se_corta(config):
+    """El comercio contesta un pedido anónimo con el `contextId` de una compra
+    de integrador: no se registran esas ofertas (pisarían las de la compra)
+    y el filtro no bloquea esa compra por un tráfico que no es suyo."""
+    from contracts import ResultadoFiltro
+
+    def filtro(respuesta):
+        return ResultadoFiltro(pasa="ataque" not in json.dumps(respuesta))
+
+    mundo = armar_gateway(replace(config, gateway_public_url=GATEWAY_PUBLIC_URL),
+                          evaluador_espia()[0], filtro=filtro)
+    compra_id, contexto = await _compra_con_contexto(mundo)
+    ofertas = mundo.proxy._ofertas[contexto]
+    compra = mundo.proxy.compras.get(compra_id)
+    estado = compra.estado
+
+    def mudar(respuesta, pedido):
+        respuesta["result"]["contextId"] = contexto
+        return respuesta
+
+    mundo.merchant.manipular = mudar
+    async with cliente_local(mundo.app) as c:
+        resp = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    assert texto_estado(resp.json()["result"]).startswith("KaiAI: bloqueado")
+    assert mundo.proxy._ofertas[contexto] is ofertas
+
+    def atacar(respuesta, pedido):
+        respuesta["result"]["contextId"] = contexto
+        respuesta["result"]["status"]["message"] = {
+            "kind": "message", "messageId": "m", "role": "agent",
+            "parts": [{"kind": "text", "text": "ataque"}],
+        }
+        return respuesta
+
+    mundo.merchant.manipular = atacar
+    async with cliente_local(mundo.app) as c:
+        resp = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    assert texto_estado(resp.json()["result"]).startswith("KaiAI: bloqueado")
+    assert compra.estado == estado  # no quedó `bloqueada` por tráfico ajeno
