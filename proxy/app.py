@@ -936,13 +936,42 @@ class ProxyGuard:
             return JSONResponse(
                 {"error": "card_no_disponible", "status_comercio": status}, status_code=502
             )
-        card, _ = a2a.parsear_json(contenido)
+        card, _ = _leer_del_comercio(contenido)
         if not isinstance(card, dict):
             return JSONResponse({"error": "card_ilegible"}, status_code=502)
+        # Con un integrador el Guard está siempre prendido (como en `rpc`).
+        activo = True if integrador is not None else self.guard_activo
+        if activo and self.filtro is not None and not await self._card_pasa(
+            card, comercio, integrador
+        ):
+            return JSONResponse({"error": "card_bloqueada"}, status_code=502)
         publica = self._url_publica_card(request, comercio)
         logger.info("Agent Card: %s → %s", card.get("url"), publica)
         # Solo el JSON reescrito: ningún header del comercio (Set-Cookie, etc.).
         return JSONResponse(a2a.reescribir_card(card, publica))
+
+    async def _card_pasa(
+        self, card: dict[str, Any], comercio: Comercio, integrador: Integrador | None
+    ) -> bool:
+        """La Agent Card también es texto del comercio que lee el agente
+        (nombre, descripciones, skills): pasa por el filtro antes de llegarle.
+        Si el filtro la corta, falla o tarda de más, no se entrega (y queda un
+        evento `error` con un motivo fijo, nada de la card)."""
+        llamada = Llamada(
+            pedido=a2a.Pedido(), guard_activo=True, comercio=comercio, integrador=integrador
+        )
+        try:
+            if (await self._correr_filtro(card)).pasa:
+                return True
+            motivo = "La Agent Card del comercio no pasó el filtro de seguridad: no se entrega."
+        except Exception as e:  # noqa: BLE001 - fail-closed
+            logger.exception("El filtro de seguridad falló con la Agent Card")
+            motivo = (
+                f"El filtro de seguridad no pudo revisar la Agent Card ({type(e).__name__}): "
+                "no se entrega."
+            )
+        self._error(llamada, motivo)
+        return False
 
     # -- JSON-RPC ------------------------------------------------------------
 
@@ -2001,6 +2030,18 @@ class ProxyGuard:
             return JSONResponse({"error": "estado", "estado": e.estado}, status_code=409)
         return JSONResponse(self._compra_json(compra.a_json()))
 
+    async def _correr_filtro(self, objetivo: Any) -> ResultadoFiltro:
+        """El filtro sobre una copia de `objetivo`, en su pool y con tope de
+        tiempo. Lanza si falla, si tarda de más o si no devuelve un
+        `ResultadoFiltro`: quien llama falla cerrado."""
+        salida = await asyncio.wait_for(
+            self._en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(objetivo)),
+            _TIMEOUT_FILTRO_S,
+        )
+        if isinstance(salida, ResultadoFiltro):
+            return salida
+        return ResultadoFiltro.model_validate(salida)
+
     async def _filtrar(
         self, objetivo: dict[str, Any], llamada: Llamada
     ) -> tuple[str, list[str]] | None:
@@ -2014,15 +2055,7 @@ class ProxyGuard:
         # proveedor: no se le pasa al filtro (la respuesta reenviada no cambia).
         revisar = a2a.sin_eco_del_pedido(objetivo, llamada.pedido.mensaje)
         try:
-            salida = await asyncio.wait_for(
-                self._en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(revisar)),
-                _TIMEOUT_FILTRO_S,
-            )
-            veredicto = (
-                salida
-                if isinstance(salida, ResultadoFiltro)
-                else ResultadoFiltro.model_validate(salida)
-            )
+            veredicto = await self._correr_filtro(revisar)
             corte = None if veredicto.pasa else (_MOTIVO_FILTRO, list(veredicto.senales))
         except Exception as e:  # noqa: BLE001 - fail-closed
             logger.exception("El filtro de seguridad falló")
