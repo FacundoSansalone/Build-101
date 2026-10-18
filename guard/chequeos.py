@@ -36,6 +36,8 @@ from guard.normalizar import (
     EPSILON_MONTO,
     contiene,
     contiene_todos,
+    cubre_entregas,
+    entregas_validas,
     iguales,
     monto_valido,
     numero,
@@ -50,10 +52,18 @@ ATRIBUTO_POR_CAMPO: dict[str, str] = {
     "uso": "uso",
     "talle": "talles",
     "marca": "marca",
+    "cantidad": "cantidad",
+    "entregas": "entregas",
 }
 
 # Requisitos obligatorios que forman parte del mandato que firma el usuario.
 CAMPOS_MANDATO = frozenset({"precio", "moneda"})
+
+# Compromisos del comercio que no se pueden verificar antes de comprar
+# ("entrega" está en NO_VERIFICABLES y va al recibo como sin verificar). No
+# hay catálogo contra el cual escalarlos: lo que cuenta es que la oferta
+# cumpla los parámetros que autorizó el usuario (docs/FLUJO.md, paso 7).
+CAMPOS_COMPROMISO = frozenset({"cantidad", "entregas"})
 
 _NOMBRES = {
     "precio": "Precio",
@@ -66,6 +76,8 @@ _NOMBRES = {
     "titulo": "Título",
     "comercio": "Comercio",
     "sku": "SKU",
+    "cantidad": "Cantidad",
+    "entregas": "Entregas",
 }
 
 
@@ -108,6 +120,8 @@ def cumple(
         if not pedidos:
             return None  # un "incluye" vacío no se puede chequear
         return contiene_todos(elementos, pedidos)
+    if requisito.operador == "cubre":
+        return cubre_entregas(observado, requisito.valor)
     return iguales(observado, requisito.valor)
 
 
@@ -199,7 +213,11 @@ def respaldado(requisito: Requisito, oferta: Oferta) -> bool:
     llama: no aplican. Para el resto hace falta evidencia que no sea
     `solo_declarado` (una oferta sin verificar no tiene respaldo).
     """
-    if requisito.campo in CAMPOS_MANDATO or requisito.campo == "comercio":
+    if (
+        requisito.campo in CAMPOS_MANDATO
+        or requisito.campo in CAMPOS_COMPROMISO
+        or requisito.campo == "comercio"
+    ):
         return True
     evidencia = oferta.evidencia.get(ATRIBUTO_POR_CAMPO[requisito.campo])
     return evidencia is not None and evidencia.estado != "solo_declarado"
@@ -256,8 +274,8 @@ def _mostrable(campo: str, oferta: Oferta, observado: Any) -> Any:
     """
     if observado is None:
         return None
-    if campo in ("comercio", "precio", "talle"):
-        return observado
+    if campo in ("comercio", "precio", "talle", *CAMPOS_COMPROMISO):
+        return observado  # enteros y fechas ya validados por el extractor
     if campo == "moneda":
         return moneda_legible(observado) or None
     return observado if origen_del_campo(campo, oferta) == "catalogo_publico" else None
@@ -420,6 +438,12 @@ def formatear(valor: Any) -> str:
     """
     if valor is None:
         return "sin dato"
+    cronograma = entregas_validas(valor) if isinstance(valor, (list, tuple)) else None
+    if cronograma is not None:
+        return ", ".join(
+            f"{cantidad} a más tardar el {fecha.isoformat()}"
+            for fecha, cantidad in cronograma[:ELEMENTOS_MAXIMOS]
+        )
     if isinstance(valor, (list, tuple)):
         return ", ".join(formatear(v) for v in list(valor)[:ELEMENTOS_MAXIMOS]) or "ninguno"
     if isinstance(valor, float) and valor.is_integer():
@@ -470,6 +494,12 @@ def _detalle_requisito(
         if resultado_cumple:
             return f"{nombre} {pedido} disponible{ofrecidos}."
         return f"{nombre} {pedido} no disponible{ofrecidos}: no cumple {referencia}."
+
+    if requisito.operador == "cubre":
+        ofrecido = formatear(observado)
+        if resultado_cumple:
+            return f"{nombre} ofrecidas ({ofrecido}) cubren {referencia} ({pedido})."
+        return f"{nombre} ofrecidas ({ofrecido}) no cubren {referencia} ({pedido})."
 
     if observado is None:
         if resultado_cumple:

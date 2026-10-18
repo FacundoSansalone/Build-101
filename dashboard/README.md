@@ -2,7 +2,8 @@
 
 Panel de la demo del Pre-Sign Guard: el **escenario B lado a lado**, el flujo de
 cada compra, el veredicto con sus chequeos, el recibo firmado (verificado en el
-navegador), la ficha del pedido y el gráfico del benchmark "de X% a Y%".
+navegador), la ficha del pedido, el gráfico del benchmark "de X% a Y%" y, en la
+etapa 2, la conversación con **nuestro agente** (vista Agente).
 
 Sin paso de build ni CDN: Starlette + HTML, CSS y JS vanilla (módulos ES).
 Gráficos en SVG hecho a mano. Funciona sin internet.
@@ -24,8 +25,10 @@ PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m dashboard     # Linux/macOS: worl
 | `PROXY_URL` | `http://127.0.0.1:8010` | Proxy del Guard. `127.0.0.1` y no `localhost`: en Windows `localhost` prueba primero `::1`, donde el proxy no escucha, y cada intento fallido suma ~2 s (el panel mostraba "proxy desconectado"). El proxy acepta `Host` `127.0.0.1:8010` y `localhost:8010` |
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control del proxy (lo escribe el proxy en cada arranque). El servidor lo agrega en los POST que reenvía; tiene que ser el mismo archivo que usa el proxy |
 
-Atajos de teclado: `1`–`6` cambian de vista. El tema (auto, claro, oscuro) se
-cambia con el botón al lado del nombre.
+Atajos de teclado: `1`–`7` cambian de vista (no mientras se escribe en un
+campo). La vista Agente es la `7`, última, para no correr los atajos de la
+demo de la etapa 1; se puede abrir directo con `#agente`. El tema (auto, claro,
+oscuro) se cambia con el botón al lado del nombre.
 
 Con el proxy y el dashboard levantados juntos:
 
@@ -130,6 +133,50 @@ DevTools: el clic del interruptor manda el `POST`, **Aprobar igual** da 201,
 **Verificar la firma** y **Reproducir** responden, y los nodos siguen siendo
 los mismos después de varios sondeos.
 
+## Nuestro agente (vista 7, etapa 2)
+
+El chat de nuestro agente con el usuario ([`docs/FLUJO.md`](../docs/FLUJO.md)):
+el panel no decide nada, reenvía al proxy lo que contesta el usuario. Una
+conversación por compra (`compra_id`), la más nueva primero; si hay varias, un
+selector, y un aviso cuando otra compra espera respuesta. La pestaña muestra
+cuántas compras esperan al usuario (solo en vivo).
+
+1. **Pedido** del agente del cliente con sus parámetros autorizados
+   (`requisitos`; las entregas `cubre` son acumuladas: "10 para el lun 19/10 ·
+   20 en total para el mié 21/10") y la **pregunta** de nuestro agente.
+2. **`esperando_contexto`**: cuadro de respuesta (1 a 1000 caracteres,
+   Ctrl+Enter envía), **Enviar**, **Omitir** y la cuenta regresiva hasta
+   `vence`. Lo escrito no se pierde si la vista se redibuja, y escribir fija la
+   compra elegida (si llega otra, la vista no cambia).
+3. **Lo que entendí** (`contexto_registrado`): la necesidad, cuándo se necesita
+   (`necesidad_entregas`) y lo flexible, con cada flexibilidad marcada como
+   *lo dijiste* o *inferida*. Si se omitió, venció o el agente no pudo armar el
+   contexto: la negociación sigue con el pedido literal.
+4. **`esperando_decision`**: tarjeta **Posible punto de encuentro** con la
+   tabla de cambios (campo: pediste → ofrece, entregas como "10 el lun 19/10"),
+   la oferta (título, SKU, precio, cart), el por qué, los parámetros que
+   quedarían autorizados, la cuenta regresiva y **Aceptar** / **Rechazar**.
+5. **Final**: aceptada ("Parámetros nuevos enviados al agente del cliente" y
+   los `requisitos_autorizados`), rechazada ("Se mantiene el pedido original"),
+   vencida ("Sin respuesta: no se compra nada. El silencio no es
+   autorización"), sin oportunidad ("La negociación siguió con el pedido
+   original") o bloqueada por el filtro de seguridad.
+
+De dónde sale: los eventos `pedido_detectado`, `contexto_registrado`,
+`oportunidad` y `oportunidad_decidida` (SSE o replay, agrupados por
+`datos.compra_id`) y, en vivo, `GET /api/proxy/guard/compras` cada 4 s, como
+las aprobaciones. El proxy manda (trae `sin_oportunidad` y `bloqueada`, que no
+tienen evento propio) salvo que el SSE ya muestre un estado más avanzado que
+el último sondeo.
+
+Los botones solo andan en vivo con el proxy conectado; en replay la vista es de
+solo lectura. Al vencer el plazo se deshabilitan (el proxy lo cierra). Después
+de un OK del proxy quedan trabados hasta que la compra cambia de estado: el
+proxy contesta enseguida pero aplica la decisión después. Todo texto que llega
+del proxy (pedido, pregunta, título, por qué…) se dibuja como texto, nunca como
+HTML. Si `GET /guard/state` dice `intencion: null` o `filtro: false`, la vista
+avisa que esa capa está apagada.
+
 ## Qué se ve en cada vista
 
 1. **Momento clave.** Escenario B (se puede cambiar) en dos columnas con los
@@ -188,6 +235,9 @@ los mismos después de varios sondeos.
 | `GET/POST /api/proxy/guard/state`, `GET /api/proxy/guard/events` (SSE), `GET /api/proxy/guard/events/history` | Reenvío al proxy (el POST, con el token) |
 | `GET /api/proxy/guard/aprobaciones` | Reenvío de `GET :8010/guard/aprobaciones` (`{"pendientes", "usadas"}`) |
 | `POST /api/proxy/guard/aprobaciones` con `{"contexto_id": str, "cart_id": str}` | Valida (400 si no es exactamente eso) y reenvía al proxy con el token; devuelve su status (201, 200, 409). 503 `sin_token_del_proxy` si no está `.temp-db/guard_api_token` |
+| `GET /api/proxy/guard/compras` | Reenvío de `GET :8010/guard/compras` (`{"compras": [Compra]}`, la más nueva primero) |
+| `POST /api/proxy/guard/compras/contexto` con `{"compra_id": str, "respuesta": str}` o `{"compra_id": str, "omitir": true}` | La respuesta al porqué (1 a 1000 caracteres sin los espacios de los bordes; `compra_id` de 1 a 200). Valida (400 `se_espera` si no es exactamente eso) y reenvía con el token; devuelve el status del proxy: 200 con la `Compra`, 404 `compra_desconocida`, 409 `estado` |
+| `POST /api/proxy/guard/compras/decision` con `{"compra_id": str, "decision": "aceptar" \| "rechazar"}` | Igual: valida, reenvía con el token y devuelve 200, 404 o 409 |
 
 Los nombres de archivo se buscan en una lista blanca armada listando las
 carpetas: no hay path traversal.
@@ -199,7 +249,8 @@ aprobaciones), así que se protege igual que `/guard/*`:
 
 - `/api/*` solo atiende `Host` = `localhost:<DASHBOARD_PORT>` o
   `127.0.0.1:<DASHBOARD_PORT>` (403 si no): frena el DNS rebinding.
-- Los POST exigen el `Origin` del propio panel (403 `origen_requerido` si
+- Los POST (interruptor, aprobaciones y las dos rutas de nuestro agente)
+  exigen el `Origin` del propio panel (403 `origen_requerido` si
   falta, `origen_no_permitido` si es otro) y, si viene `Sec-Fetch-Site`, que
   sea `same-origin`; además `Content-Type: application/json` (415). El
   navegador siempre manda `Origin` en un POST: una página ajena no puede
@@ -220,7 +271,7 @@ aprobaciones), así que se protege igual que `/guard/*`:
 
 ```sh
 PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m pytest dashboard   # servidor + tests cruzados con node
-node --test "dashboard/tests/js/*.test.mjs"                        # lógica JS pura
+node --test "dashboard/tests/js/*.test.mjs"                        # lógica JS pura (con comillas: Node 22 no acepta la carpeta)
 ```
 
 Los datos de los tests son sintéticos y se escriben en `tmp_path`. Hay dos
@@ -239,6 +290,13 @@ con el decodificador SD-JWT del panel.
 - El estado de una compra sale del **último desenlace** de checkout
   (`bloqueado` o `reenviado` de `create_checkout`): una compra puede pasar de
   retenida a aprobada por humano en un reintento.
+- Etapa 2: un `bloqueado` con `datos.etapa` es un corte antes del checkout:
+  `seguridad` (el filtro cortó la conversación; trae `senales`) o `intencion`
+  (venció la consulta de nuestro agente). Flujo los muestra como "Corte de
+  seguridad" y "La consulta venció"; los de siempre (sin `etapa`) siguen siendo
+  "Bloqueado antes de la firma". Los eventos de nuestro agente que llegan sin
+  `contexto_id` (la pregunta se hace antes de reenviar la búsqueda) van a la
+  lista "Proxy" de Flujo; la vista Agente los agrupa por `compra_id`.
 - Los mandatos se leen de `reenviado.datos.mandatos` si el proxy los registra
   (un objeto `clave A2A → SD-JWT`, una lista o un string). Sin eso, la columna
   "Sin Guard" muestra que el checkout llegó intacto a la firma pero no puede

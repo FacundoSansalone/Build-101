@@ -1,6 +1,8 @@
 // Eventos del proxy (contrato `Evento`) → compras agrupadas por contexto_id.
 // Sin DOM: se testea con node --test.
 
+import { CAMPOS, TEXTO_FINAL, formatearValor } from "./agente.js";
+
 const TS_INVALIDO = Number.POSITIVE_INFINITY;
 
 function tiempo(evento) {
@@ -183,6 +185,8 @@ const esAprobacionHumana = (e) => e?.tipo === "reenviado" && e.datos?.aprobacion
 
 /**
  * En qué terminó la compra, desde el punto de vista de la firma:
+ * - corte_seguridad: el filtro cortó la conversación (bloqueado, etapa seguridad).
+ * - sin_autorizacion: venció la consulta de nuestro agente (bloqueado, etapa intencion).
  * - retenido: el Guard escaló y el proxy retuvo el checkout; decide un humano.
  * - bloqueado: el proxy cortó antes de que el usuario firme.
  * - firmado: el pago se reenvió con mandatos firmados por el usuario.
@@ -192,6 +196,13 @@ const esAprobacionHumana = (e) => e?.tipo === "reenviado" && e.datos?.aprobacion
 export function estadoCompra(compra) {
   const fin = compra.desenlace ?? desenlaceCheckout(compra.eventos);
   if (esRetencion(fin)) return { clave: "retenido", texto: "Retenido — esperando decisión humana" };
+  // Etapa 2: cortes antes del checkout (el filtro, o la consulta que venció).
+  if (fin?.tipo === "bloqueado" && fin.datos?.etapa === "seguridad") {
+    return { clave: "corte_seguridad", texto: "Bloqueado por seguridad: conversación cortada" };
+  }
+  if (fin?.tipo === "bloqueado" && fin.datos?.etapa === "intencion") {
+    return { clave: "sin_autorizacion", texto: "La consulta venció: no se compra nada" };
+  }
   if (fin?.tipo === "bloqueado") return { clave: "bloqueado", texto: "Bloqueado antes de la firma" };
   if (mandatosDe(compra).length > 0) return { clave: "firmado", texto: "El usuario firmó los mandatos" };
   const metodo = (r) => String(r.datos?.metodo ?? "");
@@ -343,7 +354,38 @@ const TITULOS = {
   bloqueado: "Bloqueado antes de la firma",
   guard_cambiado: "Interruptor del Guard",
   error: "Error",
+  pedido_detectado: "Nuestro agente pregunta el porqué",
+  contexto_registrado: "Contexto del pedido",
+  oportunidad: "Posible punto de encuentro: consulta al usuario",
+  oportunidad_decidida: "Decisión del usuario",
 };
+
+const DECISION = {
+  aceptada: `Aceptada: ${TEXTO_FINAL.aceptada.toLowerCase()}`,
+  rechazada: `Rechazada: ${TEXTO_FINAL.rechazada.toLowerCase()}`,
+  vencida: `Vencida: ${TEXTO_FINAL.vencida.replace(/^Sin respuesta: /, "")}`,
+};
+
+function resumenContexto(d) {
+  if (d.omitido) return "El usuario omitió la pregunta: la negociación sigue con el pedido literal";
+  if (d.vencido) return "Sin respuesta a tiempo: la negociación sigue con el pedido literal";
+  if (!d.contexto) return "Nuestro agente no pudo armar el contexto: la negociación sigue con el pedido literal";
+  const c = d.contexto;
+  const partes = [`Necesidad: ${c.necesidad || "—"}`];
+  const flex = Array.isArray(c.flexibilidades) ? c.flexibilidades : [];
+  if (flex.length) {
+    const inferidas = flex.filter((f) => f?.origen === "inferida").length;
+    partes.push(`${flex.length} ${flex.length === 1 ? "flexibilidad" : "flexibilidades"}${inferidas ? ` (${inferidas} inferida${inferidas === 1 ? "" : "s"})` : ""}`);
+  }
+  return partes.join(" · ");
+}
+
+function resumenOportunidad(d) {
+  const o = d.oportunidad || {};
+  const cambios = (Array.isArray(o.cambios) ? o.cambios : []).map((c) =>
+    `${CAMPOS[c?.campo] ?? c?.campo}: ${formatearValor(c?.campo, c?.pedido)} → ${formatearValor(c?.campo, c?.ofrecido)}`);
+  return [o.titulo, ...cambios].filter(Boolean).join(" · ");
+}
 
 /** Título y resumen de una línea para la línea de tiempo. */
 export function describirEvento(e) {
@@ -378,9 +420,21 @@ export function describirEvento(e) {
     case "bloqueado":
       resumen = d.motivo ?? "";
       if (d.requiere_aprobacion) return { titulo: "Retenido: requiere aprobación humana", resumen };
+      // Etapa 2: el corte puede venir de antes del checkout (`etapa`).
+      if (d.etapa === "seguridad") {
+        const senales = Array.isArray(d.senales) && d.senales.length ? ` (señales: ${d.senales.join(", ")})` : "";
+        return { titulo: "Corte de seguridad: conversación bloqueada", resumen: resumen + senales };
+      }
+      if (d.etapa === "intencion") return { titulo: "La consulta venció: no se compra nada", resumen };
       break;
     case "guard_cambiado": resumen = d.guard_activo ? "Guard activado" : "Guard apagado"; break;
     case "error": resumen = d.mensaje ?? ""; break;
+    case "pedido_detectado":
+      resumen = [d.pedido ? `«${d.pedido}»` : "", d.pregunta ?? ""].filter(Boolean).join(" · ");
+      break;
+    case "contexto_registrado": resumen = resumenContexto(d); break;
+    case "oportunidad": resumen = resumenOportunidad(d); break;
+    case "oportunidad_decidida": resumen = DECISION[d.decision] ?? String(d.decision ?? ""); break;
     default: resumen = "";
   }
   return { titulo, resumen };

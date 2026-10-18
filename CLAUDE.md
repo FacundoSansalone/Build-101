@@ -260,6 +260,37 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   - **Pendiente de revisar:** `docs/CONTEXTO.md` ("no es un detector de
     prompt injection") y `docs/PREGUNTAS_DEL_JURADO.md` todavía responden
     con el posicionamiento anterior.
+- **Etapa 2, implementación de la intención (rama `etapa2/intencion`, a
+  revisar entre los tres):**
+  - **Contrato (aditivo):**
+    - `CampoRequisito` suma `cantidad` y `entregas`, con el operador `cubre`
+      (cronograma acumulado); `Oferta` suma `cantidad` y `entregas`;
+    - modelos nuevos: `Entrega`, `Contexto`, `Flexibilidad`, `Cambio`,
+      `Oportunidad`, `ResultadoFiltro` y el protocolo `Filtro`;
+    - 4 tipos de `Evento` nuevos y la clave `guard.parametros_autorizados`.
+  - **Guard:** `cantidad` y `entregas` son compromisos del comercio que no se
+    pueden verificar antes de comprar. No escalan por "solo declarado"; lo
+    que cuenta es que cumplan los parámetros que autorizó el usuario.
+    `evaluar()` recibe la ficha de la compra (`proxy.ficha_de(contexto)`), y
+    si no hay compra, la de la demo.
+  - **Proxy:**
+    - retiene el `find_products` para el porqué y la respuesta para la
+      consulta (plazos `PROXY_ESPERA_*`, dentro de un presupuesto de 570 s
+      por llamada);
+    - el agente y el filtro los arma `python -m proxy` desde el entorno
+      (`GOOGLE_API_KEY`, `GUARD_FILTRO`); `create_app()` no lee el entorno;
+    - el benchmark y `smoke_checkout.py` corren con `INTENCION_ACTIVA=0`,
+      porque no hay un humano que conteste.
+  - **Ficha de la compra:** si el escenario de la demo tiene una ficha
+    confirmada, manda esa; la del LLM solo se usa si no hay ninguna (un
+    comercio real). Sin tope y moneda en la ficha, el detector no propone
+    nada.
+  - **`world/`:** cambio mínimo en `shopper/tools.py` para que el agente del
+    cliente reciba los parámetros autorizados (anotado en `NOTICE.md`; es
+    carpeta de Dev 1).
+  - **Datos:** `fixtures/etapa2/computadoras.json`, escrito a mano hasta que
+    `world/` tenga el escenario. Queda fuera de `fixtures/scenario_*`
+    porque el dashboard lista esos como la demo de zapatillas.
 
 Tests de las carpetas nuevas, desde la raíz:
 

@@ -22,8 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from contracts import Chequeo, Oferta, OfertasVistas
-from guard.normalizar import monto_valido
+from contracts import Chequeo, Entrega, Oferta, OfertasVistas
+from guard.normalizar import entregas_validas, monto_valido
 from guard.textos import acotar
 
 # Claves de texto libre que se descartan (se guardan aparte, no se leen).
@@ -138,8 +138,24 @@ def _oferta(cart_id: str, cart: dict, detalle: dict) -> Oferta:
         moneda=_texto(cart.get("currency")).upper(),
         stock=_entero(detalle.get("stock")),
         talles=_talles(detalle.get("sizes")),
+        cantidad=_cantidad(detalle.get("quantity")),
+        entregas=_entregas(detalle.get("deliveries")),
         texto_libre_descartado=_texto_libre(cart, detalle),
     )
+
+
+def _cantidad(valor: Any) -> int | None:
+    cantidad = _entero(valor)
+    return cantidad if cantidad is not None and cantidad > 0 else None
+
+
+def _entregas(valor: Any) -> list[Entrega]:
+    """Cronograma declarado [{"quantity", "date"}]. Si algún elemento no es
+    válido no se toma ninguno: sin dato, el chequeo escala (nunca se infiere)."""
+    cronograma = entregas_validas(valor)
+    if cronograma is None:
+        return []
+    return [Entrega(cantidad=cantidad, fecha=fecha) for fecha, cantidad in cronograma]
 
 
 def _texto_libre(cart: dict, detalle: dict) -> str | None:

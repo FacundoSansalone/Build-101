@@ -14,16 +14,23 @@ const ICONO_EVENTO = {
   bloqueado: "block",
   guard_cambiado: "shield",
   error: "alert",
+  pedido_detectado: "list",
+  contexto_registrado: "pen",
+  oportunidad: "up",
+  oportunidad_decidida: "check",
 };
+
+const TONO_DECISION = { aceptada: "ok", rechazada: "neutro", vencida: "warn" };
 
 const TONO_ESTADO = {
   bloqueado: "crit", retenido: "serious", aprobado_humano: "ok", firmado: "ok", para_firmar: "neutro",
-  escalar: "serious", error: "crit", en_curso: "neutro",
+  escalar: "serious", error: "crit", en_curso: "neutro", corte_seguridad: "crit", sin_autorizacion: "warn",
 };
 
 function tonoEvento(e) {
   if (e.tipo === "bloqueado" && e.datos?.requiere_aprobacion) return "serious";
   if (e.tipo === "reenviado" && e.datos?.aprobacion_humana) return "ok";
+  if (e.tipo === "bloqueado" && e.datos?.etapa === "intencion") return "warn";
   if (e.tipo === "bloqueado" || e.tipo === "error") return "crit";
   if (e.tipo === "veredicto") {
     return { aprobado: "ok", con_avisos: "warn", escalar: "serious", bloqueado: "crit" }[e.datos?.veredicto?.status] ?? "neutro";
@@ -31,6 +38,9 @@ function tonoEvento(e) {
   if (e.tipo === "checkout_recibido" && Array.isArray(e.datos?.ap2_violaciones)) {
     return e.datos.ap2_violaciones.length === 0 ? "ok" : "crit";
   }
+  // Nuestro agente: la consulta pausa la negociación hasta que decida el usuario.
+  if (e.tipo === "oportunidad") return "serious";
+  if (e.tipo === "oportunidad_decidida") return TONO_DECISION[e.datos?.decision] ?? "neutro";
   return "neutro";
 }
 

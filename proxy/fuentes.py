@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -31,6 +32,41 @@ def cargar_intent() -> dict[str, Any]:
         logger.warning("demo_world no disponible (%s); intent desde fixtures/", e)
         datos = json.loads((FIXTURES / "scenario_baseline.json").read_text("utf-8"))
         return datos["intent"]
+
+
+_NOMBRE_ESCENARIO = re.compile(r"[A-Za-z0-9_-]{1,40}")
+
+
+def intent_del_escenario(nombre: str | None) -> dict[str, Any] | None:
+    """La ficha confirmada de la demo para ese escenario, o None.
+
+    1. `demo_world`: el `intent` propio del escenario (si world/ lo define)
+       o, si el escenario existe, el `intent` global de scenarios.json.
+    2. Si no: `fixtures/scenario_<nombre>.json` y, mientras world/ no tenga
+       el escenario de computadoras, `fixtures/etapa2/<nombre>.json`.
+
+    None si el escenario no se conoce: con un comercio real no hay
+    `demo_scenario` y manda la ficha que armó el agente con el pedido.
+    El nombre viene en datos A2A: solo se acepta un identificador simple.
+    """
+    if not isinstance(nombre, str) or not _NOMBRE_ESCENARIO.fullmatch(nombre):
+        return None
+    try:
+        from demo_world import scenario
+
+        if nombre in scenario.scenario_names():
+            propio = scenario.get_scenario(nombre).get("intent")
+            return propio if isinstance(propio, dict) else scenario.intent()
+    except Exception as e:  # noqa: BLE001 - cualquier falla cae a los fixtures
+        logger.warning("demo_world no disponible (%s); intent desde fixtures/", e)
+    for ruta in (FIXTURES / f"scenario_{nombre}.json", FIXTURES / "etapa2" / f"{nombre}.json"):
+        if ruta.is_file():
+            try:
+                intent = json.loads(ruta.read_text("utf-8")).get("intent")
+            except (OSError, ValueError, AttributeError):
+                return None
+            return intent if isinstance(intent, dict) else None
+    return None
 
 
 def _indexar(catalogo: dict[str, Any]) -> tuple[dict[str, dict], str | None]:
