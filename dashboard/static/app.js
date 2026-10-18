@@ -1,6 +1,7 @@
 // Dashboard de la demo del Pre-Sign Guard. JS vanilla, sin build ni CDN.
 // Fuentes de eventos: "En vivo (proxy)" por SSE o "Replay (archivo)".
 
+import { interruptorHabilitado, registrarSondeo, unaALaVez } from "./lib/conexion.js";
 import {
   aJsonl, agruparCompras, cuerpoAprobacion, estadoAprobacion, fusionarEventos,
 } from "./lib/eventos.js";
@@ -39,7 +40,9 @@ const estado = {
   momentoSin: null,
   momentoCon: null,
   escenarioFicha: null,
-  proxy: { conectado: null, guard_activo: null, evaluador: null, merchant_url: null, cambiando: false },
+  // conectado: null = consultando; false solo después de varios sondeos
+  // fallidos seguidos (lib/conexion.js), no por uno.
+  proxy: { conectado: null, fallos: 0, guard_activo: null, evaluador: null, merchant_url: null, cambiando: false },
   // GET /guard/aprobaciones del proxy (solo en vivo).
   aprobaciones: { pendientes: [], usadas: [] },
   sse: "cerrado",
@@ -101,6 +104,23 @@ function anunciar(texto) {
   setTimeout(() => { region.textContent = texto; }, 30);
 }
 
+// Actualizar el DOM solo si cambia: los controles fijos (interruptor,
+// replay) no se tocan en cada sondeo, así no cambian bajo el puntero.
+function ponerTexto(el, texto) {
+  if (el && el.textContent !== texto) el.textContent = texto;
+}
+function ponerAtributo(el, nombre, valor) {
+  if (!el) return;
+  if (valor === null) {
+    if (el.hasAttribute(nombre)) el.removeAttribute(nombre);
+  } else if (el.getAttribute(nombre) !== valor) {
+    el.setAttribute(nombre, valor);
+  }
+}
+function ponerPropiedad(el, prop, valor) {
+  if (el && el[prop] !== valor) el[prop] = valor;
+}
+
 let renderPendiente = false;
 function programarRender() {
   if (renderPendiente) return;
@@ -114,6 +134,7 @@ function programarRender() {
 
 let derivados = { compras: [], sistema: [] };
 let observador = null;
+let usoObservador = false; // la vista de este render midió el ancho (benchmark)
 
 const tooltip = {
   mostrar(ev, valor, rotulo) {
@@ -179,6 +200,7 @@ function ctx() {
     descargarJsonl,
     cargarResultado,
     observarAncho(el, fn) {
+      usoObservador = true;
       if (!("ResizeObserver" in window)) return;
       let ultimo = el.clientWidth;
       observador = new ResizeObserver(() => {
@@ -317,6 +339,19 @@ function cerrarSse() {
   estado.sse = "cerrado";
 }
 
+/**
+ * Respaldo del SSE: los últimos eventos del proxy por GET. El SSE ya los
+ * reenvía al conectar, pero si tarda o se corta, la página igual arma las
+ * compras (fusionarEventos no duplica).
+ */
+const cargarHistorial = unaALaVez(async () => {
+  if (estado.fuente !== "vivo") return;
+  try {
+    const { datos } = await pedirJson("/api/proxy/guard/events/history?limit=200", { timeout: 5000 });
+    if (Array.isArray(datos) && estado.fuente === "vivo") ingerir(datos, { marcarNuevos: false });
+  } catch { /* proxy caído: el SSE reintenta solo */ }
+});
+
 function conectarSse() {
   cerrarSse();
   if (estado.fuente !== "vivo") return;
@@ -326,7 +361,8 @@ function conectarSse() {
   fuenteSse = es;
   // Ventana corta para tratar como "carga inicial" los 200 que reenvía el proxy.
   setTimeout(() => { primerLote = false; }, 1200);
-  es.onopen = () => { estado.sse = "abierto"; renderBarra(); };
+  cargarHistorial();
+  es.onopen = () => { estado.sse = "abierto"; renderBarra(); cargarHistorial(); };
   es.addEventListener("evento", (m) => {
     try { ingerir([JSON.parse(m.data)]); } catch { /* línea inválida */ }
   });
@@ -422,22 +458,27 @@ async function refrescarReplays() {
 // Proxy: estado e interruptor
 // ---------------------------------------------------------------------------
 
-async function refrescarProxy() {
+// Un solo sondeo en vuelo (no se apilan si el proxy tarda) y un fallo suelto
+// no desconecta: hacen falta varios seguidos (lib/conexion.js).
+const refrescarProxy = unaALaVez(async () => {
   try {
     const { datos } = await pedirJson("/api/proxy/guard/state", { timeout: 3500 });
-    estado.proxy = { ...estado.proxy, conectado: true, guard_activo: datos.guard_activo, evaluador: datos.evaluador, merchant_url: datos.merchant_url };
+    estado.proxy = {
+      ...registrarSondeo(estado.proxy, true),
+      guard_activo: datos.guard_activo, evaluador: datos.evaluador, merchant_url: datos.merchant_url,
+    };
   } catch {
-    estado.proxy = { ...estado.proxy, conectado: false };
+    estado.proxy = registrarSondeo(estado.proxy, false);
   }
   renderBarra();
   if (estado.proxy.conectado) refrescarAprobaciones();
-}
+});
 
 // ---------------------------------------------------------------------------
 // Aprobación humana de un checkout retenido (escalar)
 // ---------------------------------------------------------------------------
 
-async function refrescarAprobaciones() {
+const refrescarAprobaciones = unaALaVez(async () => {
   if (estado.fuente !== "vivo") return;
   try {
     const { datos } = await pedirJson("/api/proxy/guard/aprobaciones", { timeout: 3500 });
@@ -448,10 +489,12 @@ async function refrescarAprobaciones() {
       programarRender();
     }
   } catch { /* proxy caído: queda lo último que se vio */ }
-}
+});
 
 /** "Aprobar igual": POST /guard/aprobaciones (vía el servidor del panel). */
-async function aprobar(compra) {
+async function aprobar(compraVista) {
+  // La compra actual (no la que capturó el botón cuando se dibujó).
+  const compra = derivados.compras.find((c) => c.contextoId === compraVista?.contextoId) ?? compraVista;
   const cuerpo = cuerpoAprobacion(compra);
   if (!cuerpo || aprobando.has(compra.contextoId)) return;
   aprobando.add(compra.contextoId);
@@ -471,27 +514,37 @@ async function aprobar(compra) {
   } finally {
     aprobando.delete(compra.contextoId);
     await refrescarAprobaciones();
+    // Si había un sondeo en vuelo (de antes del POST), otro enseguida.
+    setTimeout(refrescarAprobaciones, 600);
     render();
   }
 }
 
 async function cambiarGuard() {
-  if (!estado.proxy.conectado || estado.proxy.cambiando) return;
+  // Mientras hay un POST en curso el interruptor no se deshabilita: se
+  // ignoran los clics (aria-busy).
+  if (estado.proxy.conectado !== true || estado.proxy.cambiando) return;
   const nuevo = !estado.proxy.guard_activo;
-  estado.proxy.cambiando = true;
+  estado.proxy = { ...estado.proxy, cambiando: true };
   renderBarra();
   try {
     const { datos } = await pedirJson("/api/proxy/guard/state", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guard_activo: nuevo }),
     });
-    estado.proxy.guard_activo = typeof datos?.guard_activo === "boolean" ? datos.guard_activo : nuevo;
+    estado.proxy = {
+      ...registrarSondeo(estado.proxy, true),
+      guard_activo: typeof datos?.guard_activo === "boolean" ? datos.guard_activo : nuevo,
+    };
     anunciar(estado.proxy.guard_activo ? "Guard activado en el proxy" : "Guard apagado en el proxy");
-  } catch {
-    estado.proxy.conectado = false;
-    anunciar("Proxy desconectado: no se pudo cambiar el Guard");
+  } catch (e) {
+    // Un error de red cuenta como un sondeo fallido; un rechazo del proxy
+    // (403/503: token, origen) no dice que esté caído.
+    if (!e?.status || e.status >= 502) estado.proxy = registrarSondeo(estado.proxy, false);
+    anunciar(`No se pudo cambiar el Guard: ${e?.datos?.error ?? e?.message ?? "error"}`);
   } finally {
-    estado.proxy.cambiando = false;
-    await refrescarProxy();
+    estado.proxy = { ...estado.proxy, cambiando: false };
+    renderBarra();
+    refrescarProxy();
   }
 }
 
@@ -516,49 +569,60 @@ async function cargarResultado(id) {
 // Render
 // ---------------------------------------------------------------------------
 
+// La barra son nodos fijos de index.html con sus listeners de enlazar(): acá
+// solo se actualizan atributos y texto, y solo si cambian.
 function renderBarra() {
   // Fuente
   for (const f of ["vivo", "replay"]) {
-    $(`#fuente-${f}`).setAttribute("aria-pressed", String(estado.fuente === f));
+    ponerAtributo($(`#fuente-${f}`), "aria-pressed", String(estado.fuente === f));
   }
-  const replayCtl = $("#replay-ctl");
-  replayCtl.hidden = estado.fuente !== "replay";
+  ponerPropiedad($("#replay-ctl"), "hidden", estado.fuente !== "replay");
   if (estado.fuente === "replay") {
     const sel = $("#replay-archivo");
     const lista = estado.replays ?? [];
-    const opciones = lista.length
-      ? lista.map((r) => h("option", { value: r.nombre, selected: r.nombre === estado.replaySel ? true : null,
-        text: `${r.nombre} · ${r.eventos} eventos · ${r.origen}` }))
-      : [h("option", { value: "", text: estado.replays === null ? "Cargando archivos…" : "No hay archivos .jsonl" })];
-    sel.replaceChildren(...opciones);
-    sel.disabled = lista.length === 0;
+    // Las opciones se rearman solo si cambia la lista o la elegida (rearmar
+    // un <select> abierto lo cierra).
+    const firma = JSON.stringify([estado.replays === null, lista.map((r) => [r.nombre, r.eventos, r.origen]), estado.replaySel]);
+    if (sel.dataset.firma !== firma) {
+      sel.replaceChildren(...(lista.length
+        ? lista.map((r) => h("option", { value: r.nombre, selected: r.nombre === estado.replaySel ? true : null,
+          text: `${r.nombre} · ${r.eventos} eventos · ${r.origen}` }))
+        : [h("option", { value: "", text: estado.replays === null ? "Cargando archivos…" : "No hay archivos .jsonl" })]));
+      sel.dataset.firma = firma;
+    }
+    ponerPropiedad(sel, "disabled", lista.length === 0);
     const play = $("#replay-play");
-    play.disabled = estado.replayTodos.length === 0;
-    play.replaceChildren(icono(estado.reproduciendo ? "stop" : "play"), estado.reproduciendo ? "Detener" : "Reproducir");
-    $("#replay-info").textContent = estado.replayInvalidas ? `${estado.replayInvalidas} líneas inválidas descartadas` : "";
+    ponerPropiedad(play, "disabled", estado.replayTodos.length === 0);
+    const modo = estado.reproduciendo ? "stop" : "play";
+    if (play.dataset.modo !== modo) {
+      play.replaceChildren(icono(modo), modo === "stop" ? "Detener" : "Reproducir");
+      play.dataset.modo = modo;
+    }
+    ponerTexto($("#replay-info"), estado.replayInvalidas ? `${estado.replayInvalidas} líneas inválidas descartadas` : "");
   }
 
   // Proxy
   const p = estado.proxy;
   const chipProxy = $("#proxy-estado");
-  chipProxy.className = `estado-proxy t-${p.conectado === true ? "ok" : p.conectado === false ? "crit" : "neutro"}`;
+  ponerAtributo(chipProxy, "class", `estado-proxy t-${p.conectado === true ? "ok" : p.conectado === false ? "crit" : "neutro"}`);
   const sse = estado.fuente === "vivo"
     ? ({ abierto: " · eventos en vivo", conectando: " · conectando eventos…", error: " · sin eventos" }[estado.sse] ?? "") : "";
-  chipProxy.replaceChildren(
-    h("span", { class: "punto", "aria-hidden": "true" }),
-    h("span", { text: p.conectado === true ? `Proxy conectado${p.evaluador ? ` · evaluador ${p.evaluador}` : ""}${sse}`
-      : p.conectado === false ? `proxy desconectado (${estado.config.proxy_url.replace(/^https?:\/\//, "")})` : "consultando proxy…" }));
+  ponerTexto(chipProxy.lastElementChild, p.conectado === true ? `Proxy conectado${p.evaluador ? ` · evaluador ${p.evaluador}` : ""}${sse}`
+    : p.conectado === false ? `proxy desconectado (${estado.config.proxy_url.replace(/^https?:\/\//, "")})` : "consultando proxy…");
 
   const sw = $("#guard-switch");
   const activo = p.guard_activo === true;
-  sw.setAttribute("aria-checked", String(activo));
-  sw.disabled = p.conectado !== true || p.cambiando;
-  sw.querySelector(".switch-texto").textContent = p.conectado !== true ? "Guard: sin proxy"
-    : p.cambiando ? "Guard: cambiando…" : activo ? "Guard activo" : "Guard apagado";
-  sw.title = p.conectado === true ? `POST ${estado.config.proxy_url}/guard/state` : "El proxy no responde";
+  ponerAtributo(sw, "aria-checked", String(activo));
+  // Solo sin proxy (varios sondeos fallidos): nunca por un sondeo suelto ni
+  // mientras cambia (un control que se deshabilita bajo el puntero no se
+  // puede clickear). Durante el POST, aria-busy y cambiarGuard() ignora clics.
+  ponerPropiedad(sw, "disabled", !interruptorHabilitado(p));
+  ponerAtributo(sw, "aria-busy", p.cambiando ? "true" : null);
+  ponerTexto(sw.querySelector(".switch-texto"), p.conectado !== true ? "Guard: sin proxy"
+    : p.cambiando ? "Guard: cambiando…" : activo ? "Guard activo" : "Guard apagado");
+  ponerAtributo(sw, "title", p.conectado === true ? `POST ${estado.config.proxy_url}/guard/state` : "El proxy no responde");
 
-  const avisoStub = $("#aviso-stub");
-  avisoStub.hidden = !(p.conectado === true && p.evaluador === "stub");
+  ponerPropiedad($("#aviso-stub"), "hidden", !(p.conectado === true && p.evaluador === "stub"));
 }
 
 function claveFoco(panel) {
@@ -581,19 +645,30 @@ function render() {
   for (const id of ORDEN_VISTAS) {
     const activa = id === estado.vista;
     const tab = $(`#tab-${id}`);
-    tab.setAttribute("aria-selected", String(activa));
-    tab.tabIndex = activa ? 0 : -1;
-    $(`#panel-${id}`).hidden = !activa;
+    ponerAtributo(tab, "aria-selected", String(activa));
+    ponerPropiedad(tab, "tabIndex", activa ? 0 : -1);
+    ponerPropiedad($(`#panel-${id}`), "hidden", !activa);
   }
   const panel = $(`#panel-${estado.vista}`);
   const foco = claveFoco(panel);
+  const previos = [...panel.childNodes];
+  const htmlPrevio = panel.innerHTML;
   if (observador) { observador.disconnect(); observador = null; }
+  usoObservador = false;
   tooltip.ocultar();
   try {
     VISTAS[estado.vista](panel, ctx());
   } catch (e) {
     console.error(e);
     panel.replaceChildren(h("div", { class: "vacio" }, h("p", { class: "vacio-titulo", text: "Error al dibujar esta vista" }), h("pre", { class: "json", text: String(e?.stack ?? e) })));
+  }
+  // Si la vista dibujó exactamente lo mismo, vuelven los nodos de antes (en
+  // la misma tarea, sin pintar en el medio): los botones ("Verificar la
+  // firma", "Aprobar igual"…) no cambian bajo el puntero, un clic en curso no
+  // se pierde y se conserva el estado de cada nodo. La vista del benchmark
+  // mide el ancho con un ResizeObserver sobre sus nodos nuevos: esa no.
+  if (!usoObservador && previos.length > 0 && panel.innerHTML === htmlPrevio) {
+    panel.replaceChildren(...previos);
   }
   restaurarFoco(panel, foco);
 }
@@ -662,6 +737,12 @@ function enlazar() {
   window.addEventListener("hashchange", () => {
     const id = location.hash.slice(1);
     if (VISTAS[id] && id !== estado.vista) irAVista(id);
+  });
+  // Al recargar o salir, cerrar el SSE enseguida: el navegador tiene pocas
+  // conexiones por host y un SSE colgado compite con los sondeos.
+  window.addEventListener("pagehide", () => cerrarSse());
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted && estado.fuente === "vivo") conectarSse();
   });
 }
 
