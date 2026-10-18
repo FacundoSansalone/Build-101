@@ -314,7 +314,8 @@ async def test_la_compra_ajena_sigue_creciendo_y_el_proceso_tambien(reloj_quieto
         marcas_ajena.append(ajena.actualizada)
         propia.tocar()
         marcas_propia.append(propia.actualizada)
-    assert marcas_ajena == sorted(set(marcas_ajena)) and marcas_ajena[0] > _INSTANTE + timedelta(hours=1)
+    assert marcas_ajena == sorted(set(marcas_ajena))
+    assert marcas_ajena[0] > _INSTANTE + timedelta(hours=1)
     assert marcas_propia == sorted(set(marcas_propia))
     assert marcas_propia[0] > propia.creada and marcas_propia[-1] < _INSTANTE + timedelta(seconds=1)
 

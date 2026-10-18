@@ -88,10 +88,10 @@ async def en_hilo(ejecutor: Executor | None, funcion: Callable[..., _T], *args: 
 
     Con `ejecutor` (los pools propios del proxy, `ejecutor_filtro` y
     `ejecutor_llm`: los usan `ProxyGuard` y, por la integración, estos
-    servicios), en ese; con None, `asyncio.to_thread` como siempre. El contexto va copiado, igual que
-    en `to_thread`. Si la espera se cancela antes de que tome un hilo, no
-    corre. Un ejecutor cerrado lanza al programar: quien llama lo trata como
-    cualquier falla (falla cerrado).
+    servicios), en ese; con None, `asyncio.to_thread` como siempre. El
+    contexto va copiado, igual que en `to_thread`. Si la espera se cancela
+    antes de que tome un hilo, no corre. Un ejecutor cerrado lanza al
+    programar: quien llama lo trata como cualquier falla (falla cerrado).
     """
     if ejecutor is None:
         return await asyncio.to_thread(funcion, *args)
