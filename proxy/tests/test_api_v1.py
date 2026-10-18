@@ -260,6 +260,33 @@ async def test_json_con_charset_sirve(cliente):
     assert r.status_code == 201
 
 
+def _anidado(niveles: int) -> Any:
+    valor: Any = 1
+    for _ in range(niveles):
+        valor = [valor]
+    return valor
+
+
+async def test_cuerpo_anidado_de_mas_da_400(cliente, nucleo):
+    """Más de `MAX_PROFUNDIDAD_JSON` niveles es `json_invalido`, en todas las
+    rutas: pydantic no vuelve a serializar ~100 niveles y `deepcopy` revienta
+    en ~300 (la compra no se podía guardar ni mostrar)."""
+    ficha = {"requisitos": [
+        *FICHA_OK["requisitos"][:2],
+        {"campo": "marca", "operador": "incluye", "valor": _anidado(120), "obligatorio": False},
+    ]}
+    _error(await cliente.post("/v1/compras", json={"pedido": "x", "ficha": ficha}),
+           400, "json_invalido")
+    _error(await cliente.post("/v1/filtrar", json={"contenido": _anidado(300)}),
+           400, "json_invalido")
+    _error(await cliente.post("/v1/evaluar", json={"x": {"y": _anidado(api_v1.MAX_PROFUNDIDAD_JSON)}}),
+           400, "json_invalido")
+    assert nucleo.llamadas == []
+    # Justo en el límite pasa (el cuerpo es el primer nivel).
+    r = await cliente.post("/v1/filtrar", json={"contenido": _anidado(api_v1.MAX_PROFUNDIDAD_JSON - 1)})
+    assert r.status_code == 200, r.text
+
+
 async def test_cuerpo_grande_da_413(nucleo):
     transporte = httpx.ASGITransport(app=_app(nucleo, max_cuerpo_bytes=100))
     async with httpx.AsyncClient(transport=transporte, base_url="http://gw.test:8030") as c:

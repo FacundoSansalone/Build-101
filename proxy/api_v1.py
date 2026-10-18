@@ -66,6 +66,11 @@ MAX_REQUISITOS = 50
 MAX_CARTS = 200
 LIMITE_POR_DEFECTO = 50
 LIMITE_MAXIMO = 200
+# Niveles de objetos y listas en un cuerpo (el cuerpo es el primero). La API
+# usa como mucho 6 (un cronograma `cubre`); pydantic no vuelve a serializar
+# ~100 y `copy.deepcopy` revienta en ~300: una compra así validaba pero no se
+# podía guardar ni mostrar.
+MAX_PROFUNDIDAD_JSON = 32
 
 CATEGORIA_RE = re.compile(r"[0-9]{1,12}")
 MONEDA_RE = re.compile(r"[A-Z]{3}")
@@ -187,7 +192,8 @@ def integrador_de(request: Request) -> Integrador:
 async def leer_json(request: Request, max_bytes: int) -> Any:
     """El cuerpo JSON de un POST: 415 sin `application/json`, 413 si supera
     el tope (se corta al leer, no se confía en `Content-Length`) y 400 si
-    no es JSON estricto (sin NaN, Infinity ni números que desbordan)."""
+    no es JSON estricto (sin NaN, Infinity ni números que desbordan) o si
+    está anidado a más de `MAX_PROFUNDIDAD_JSON` niveles."""
     tipo = request.headers.get("content-type", "")
     if tipo.split(";", 1)[0].strip().lower() != "application/json":
         raise ErrorApi(415, "se_espera_json", "El cuerpo tiene que ser application/json.")
@@ -207,7 +213,30 @@ async def leer_json(request: Request, max_bytes: int) -> Any:
     datos, motivo = a2a.parsear_json(crudo)
     if motivo is not None:
         raise ErrorApi(400, "json_invalido", "El cuerpo no es JSON válido.")
+    if _anidado_de_mas(datos, MAX_PROFUNDIDAD_JSON):
+        raise ErrorApi(
+            400, "json_invalido",
+            f"El cuerpo tiene más de {MAX_PROFUNDIDAD_JSON} niveles de anidamiento.",
+        )
     return datos
+
+
+def _anidado_de_mas(datos: Any, maximo: int) -> bool:
+    """¿Hay objetos o listas a más de `maximo` niveles? Iterativo: no depende
+    del límite de recursión (que es justo lo que se quiere evitar)."""
+    pila: list[tuple[Any, int]] = [(datos, 1)]
+    while pila:
+        actual, nivel = pila.pop()
+        if isinstance(actual, dict):
+            hijos: Any = actual.values()
+        elif isinstance(actual, list):
+            hijos = actual
+        else:
+            continue
+        if nivel > maximo:
+            return True
+        pila.extend((hijo, nivel + 1) for hijo in hijos)
+    return False
 
 
 # -- ficha -------------------------------------------------------------------

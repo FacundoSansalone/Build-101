@@ -162,6 +162,13 @@ class NucleoProxy:
             proxy.compras.quitar(compra.id)
             logger.error("No se pudo guardar la compra nueva de %s: %s", integrador.id, e)
             raise _no_disponible() from None
+        except BaseException:
+            # Cualquier otra falla (una fila que no se puede armar, la llamada
+            # cancelada): sin la fila no existe para nadie. Si quedara en
+            # memoria, sería una compra huérfana que no cuenta para el límite
+            # de activas (se cuenta en el almacén) y nunca sale (está viva).
+            proxy.compras.quitar(compra.id)
+            raise
         logger.info(
             "Compra %s creada por el integrador %s (comercio %s)",
             compra.id, integrador.id, comercio.id,
