@@ -15,17 +15,18 @@
 """An agent responsible for helping the user shop for products.
 
 The agent gathers the user's purchase intent, sends it to the merchant
-to find products, and lets the user select one.
+to find products, and selects one (HACKATHON: without asking the user).
 """
 
 from common.retrying_llm_agent import RetryingLlmAgent
-from common.system_utils import DEBUG_MODE_INSTRUCTIONS, SHOPPING_AGENT_MODEL
+from common.system_utils import DEBUG_MODE_INSTRUCTIONS, SHOPPING_AGENT_CONFIG, SHOPPING_AGENT_MODEL
 
 from . import tools
 
 
 shopper = RetryingLlmAgent(
     model=SHOPPING_AGENT_MODEL,  # HACKATHON (Pre-Sign Guard)
+    generate_content_config=SHOPPING_AGENT_CONFIG,  # HACKATHON
     name="shopper",
     max_retries=5,
     instruction="""

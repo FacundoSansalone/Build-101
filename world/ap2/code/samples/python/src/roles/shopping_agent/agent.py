@@ -23,7 +23,7 @@ efficiency in developing robust LLM agents.
 """
 
 from common.retrying_llm_agent import RetryingLlmAgent
-from common.system_utils import DEBUG_MODE_INSTRUCTIONS, SHOPPING_AGENT_MODEL
+from common.system_utils import DEBUG_MODE_INSTRUCTIONS, SHOPPING_AGENT_CONFIG, SHOPPING_AGENT_MODEL
 
 from . import tools
 from .subagents.payment_method_collector.agent import payment_method_collector
@@ -36,6 +36,7 @@ from .subagents.shopper.agent import shopper
 root_agent = RetryingLlmAgent(
     max_retries=5,
     model=SHOPPING_AGENT_MODEL,  # HACKATHON (Pre-Sign Guard)
+    generate_content_config=SHOPPING_AGENT_CONFIG,  # HACKATHON
     name="root_agent",
     instruction="""
           You are a shopping agent responsible for helping users find and

@@ -18,6 +18,7 @@ import os
 
 from google.adk.models.google_llm import Gemini
 from google.adk.models.registry import LLMRegistry
+from google.genai import types
 
 # HACKATHON (Pre-Sign Guard): el modelo de los agentes se puede cambiar con
 # AP2_MODEL (por defecto, el del sample). El preview satura (503) y comparte
@@ -25,11 +26,24 @@ from google.adk.models.registry import LLMRegistry
 AP2_MODEL = os.environ.get("AP2_MODEL") or "gemini-3.1-flash-lite-preview"
 
 # HACKATHON (Pre-Sign Guard): el agente de compras (root y sus 3 sub-agentes)
-# usa un modelo más chico que el del sample, SHOPPING_AGENT_MODEL. Los
-# servidores (comercio, credenciales, pagos) siguen con AP2_MODEL para elegir
-# su herramienta.
+# usa SHOPPING_AGENT_MODEL y, si es un Gemini, razona lo mínimo
+# (SHOPPING_AGENT_THINKING, vacío para el del modelo): un agente más burro que
+# el del sample. Los servidores (comercio, credenciales, pagos) siguen con
+# AP2_MODEL para elegir su herramienta. Gemma 4 sirve con
+# SHOPPING_AGENT_MODEL=gemma-4-26b-a4b-it, pero su cupo (16.000 tokens de
+# entrada por minuto) no alcanza para un flujo.
 SHOPPING_AGENT_MODEL = (
-    os.environ.get("SHOPPING_AGENT_MODEL") or "gemma-4-26b-a4b-it"
+    os.environ.get("SHOPPING_AGENT_MODEL") or "gemini-3.1-flash-lite"
+)
+_SHOPPING_AGENT_THINKING = os.environ.get("SHOPPING_AGENT_THINKING", "minimal")
+SHOPPING_AGENT_CONFIG = (
+    types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(
+            thinking_level=_SHOPPING_AGENT_THINKING
+        )
+    )
+    if _SHOPPING_AGENT_THINKING and SHOPPING_AGENT_MODEL.startswith("gemini-")
+    else None
 )
 
 
