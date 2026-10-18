@@ -41,6 +41,99 @@ Si se reinicia el proxy, el token cambia y el panel toma el nuevo solo (lo lee
 en cada POST). Conviene una sola pestaña del panel abierta: cada una tiene su
 SSE y el navegador limita las conexiones por host.
 
+## `/demo`: la demo en una pantalla
+
+`http://localhost:8020/demo` reemplaza a la UI de ADK para la demo: arriba el
+diagrama (Vos → tu agente de compras → **Pre-Sign Guard** con sus etapas
+filtro · intención · verificación → comercio, más fabricante/catálogo y AP2),
+al medio el relato en lenguaje natural (plantillas en código, nunca un LLM;
+`role="log"` con `aria-live`) y abajo **un solo input**. El panel de siempre
+queda como "Detalle técnico" (`/`).
+
+- **Input único.** `POST /api/demo/mensaje {"texto"}`: si nuestro agente (el
+  intake del proxy) tiene una pregunta pendiente **de esta corrida**, la
+  respuesta va al proxy con el token (`/guard/compras/contexto`: respuesta,
+  `confirmar` si es el turno de confirmar la ficha y dice "sí", u `omitir`;
+  o `/guard/compras/decision`: "sí" acepta, "no" rechaza, otra cosa da 422).
+  Si no, va al agente de compras por la API de `adk web` (`ADK_URL`): una
+  sesión por compra (`POST /apps/shopping_agent/users/demo/sessions`) y
+  `POST /run_sse`, en segundo plano (202). Con el agente trabajando, 409.
+- **Modo demo** (`DEMO_AUTO=1` por defecto; botón "Respuestas automáticas"):
+  contesta solos billetera y permiso (Google Wallet, "sí"), la tarjeta
+  terminada en 4444 (de la lista que devolvió `get_payment_methods`), la
+  confirmación del resumen y el OTP `123`. Decide con el **estado de la
+  sesión de ADK y las herramientas que se llamaron** (nunca con texto del
+  comercio): nada antes de que el usuario elija el producto, nada después de
+  un bloqueo del Guard, confirma solo con `checkout_data` en el estado y
+  manda el OTP solo si la última respuesta del pago es el desafío. Topes por
+  paso y 12 en total. El relato lo resume en una línea ("Dirección y tarjeta
+  de la billetera ✓"). `DEMO_PAUSA_AUTO_S` espacia las respuestas (con el
+  plan gratuito de Gemini, 15 pedidos/min, usar 6–8).
+- **Selector de comercio** visible, por categoría (zapatillas, notebook,
+  auriculares, computadoras): `POST /api/demo/escenario {"escenario"}` escribe
+  `demo_scenario` donde lo lee el comercio (`WORLD_TEMP_DB_DIR`, por defecto
+  `world/ap2/.temp-db`, el `TEMP_DB_DIR` de `run_world.sh`), valida contra
+  `demo_world.scenario` (solo lectura) y empieza una compra nueva.
+- **Interruptor "Intermediario: activado/desactivado"**: `POST
+  /api/proxy/guard/state` (el reenvío con token de siempre) después de una
+  compra nueva. Apagado, el proxy deja fuera filtro, intake, oportunidades y
+  Guard (verificado en `proxy/app.py`: todo depende de `guard_activo`); el
+  diagrama baja al Guard atenuado y los mensajes van directo agente ↔
+  comercio; el relato lo dice en una línea.
+- **Con y sin intermediario**: al terminar una corrida (pagada, frenada,
+  cortada, retenida, vencida) se guarda su resultado **por escenario y lado**
+  en `localStorage` (`psg.demo.comparacion`) y se muestra lado a lado para el
+  comercio elegido ("Se compró Zento Slim 14, con 8 GB de memoria RAM
+  (pediste 16 GB)" / "Frenada antes de la firma: no se pagó nada").
+- **Replay (plan B)**: el selector "Grabación…" reproduce un `.jsonl` de
+  `dashboard/demo/` o `.logs/` con el mismo diagrama y relato.
+
+| Variable | Default | Para qué |
+|---|---|---|
+| `ADK_URL` | `http://127.0.0.1:8000` | La API de `adk web` (Shopping Agent) |
+| `WORLD_TEMP_DB_DIR` | `world/ap2/.temp-db` | Carpeta donde el comercio lee `demo_scenario` |
+| `DEMO_AUTO` | `1` | `0` apaga las respuestas automáticas |
+| `DEMO_PAUSA_AUTO_S` | `0` | Segundos entre respuestas automáticas (0–60) |
+
+### API de `/demo` (para rehacer la vista sin romper la lógica)
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /demo` | La página (`static/demo.html`) |
+| `GET /api/demo/estado` | `{sesion: {id, creada}, ocupado, auto, fin, escenario, mensajes: [...]}`. Mensajes: `usuario {texto, destino}`, `agente {texto, autor, oculto}`, `herramienta {nombre, args}` (solo `find_products.catalog_search` y `select_cart.cart_id`), `auto {paso, texto, detalle}`, `pago {cart_id}`, `error_agente {guard}` (sin texto crudo), `error {codigo}` |
+| `GET /api/demo/escenarios` | `{activo, grupos: [{categoria, opciones: [{id, etiqueta, pedido}]}]}` (`pedido` = el `user_request` del fixture) |
+| `POST /api/demo/mensaje` `{"texto"}` | 202 `{destino: "agente"}`; 200/404/409 del proxy `{destino: contexto\|confirmar\|omitir\|decision}`; 422 `se_espera_si_o_no`; 409 `agente_ocupado`; 400 |
+| `POST /api/demo/escenario` `{"escenario"}` | `{activo}`; 400 si no está en la lista blanca ni en `demo_world` |
+| `POST /api/demo/nueva` `{}` | Compra nueva (otra sesión de ADK; cancela la que corría) |
+| `POST /api/demo/auto` `{"auto": bool}` | Prende o apaga el modo demo |
+
+Los cuatro POST tienen las mismas protecciones que el resto (`Host`,
+`Origin`, `Sec-Fetch-Site`, JSON); el token del proxy no sale del servidor.
+
+Lógica sin DOM (la vista solo la pinta; testeada con `node --test`):
+
+- `lib/demo.js`: `lineaDeTiempo(eventos, mensajes, desde)` (eventos del proxy
+  + mensajes de la conversación, desde el inicio de la corrida),
+  `modoDelInput({compras, ocupado, desde, ahora, replay})` → `{modo,
+  etiqueta, placeholder, enviar, compraId}`, `desenlace(items)`,
+  `resultadoCorrida(items, {escenario, guardActivo})`,
+  `resumenComparacion(sin, con)`, `guardarResultado(mapa, resultado)`.
+- `lib/relato.js`: `armarRelato(items, {filtro})` → `[{id, ts, hora, texto,
+  tono, actor}]` (tono: `neutro|tenue|ok|aviso|crit|usuario|agente`; actor:
+  `usuario|agente|guard|comercio|sistema|ap2`), `resumirAgente`,
+  `limpiarTexto`, `humanizarAtributo`, `formatearMedida`.
+- `lib/diagrama.js`: `geometria("horizontal"|"vertical")` (nodos, paths de
+  las aristas, cuánto se corre el Guard apagado), `estadoInicial`,
+  `paso(estado, item)` → `{estado, flujos: [{de, a, tono, clave,
+  invertida}]}`, `recorrer(items)`. Estado: `guard`
+  (`inactivo|trabajando|ok|aviso|bloqueado|apagado`), `etapas.{filtro,
+  intencion, verificacion}`, `nodos.{fuentes, ap2}`.
+- `demo.js` (controlador): sondea `/api/demo/estado` (0,9 s),
+  `/api/proxy/guard/compras` (1,5 s) y `/api/proxy/guard/state` (4 s), escucha
+  el SSE del proxy, y pinta en `#diagrama`, `#relato`, `#contraste`,
+  `#escenarios`, `#intermediario`, `#formulario/#entrada`, `#nueva`, `#auto`,
+  `#grabacion/#reproducir`.
+
 ## Fuentes de datos
 
 Arriba a la derecha se elige la fuente de eventos:
@@ -270,7 +363,7 @@ aprobaciones), así que se protege igual que `/guard/*`:
 ## Tests
 
 ```sh
-PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m pytest dashboard   # servidor + tests cruzados con node
+PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m pytest dashboard   # servidor (incluye /demo con un ADK falso) + tests cruzados con node
 node --test "dashboard/tests/js/*.test.mjs"                        # lógica JS pura (con comillas: Node 22 no acepta la carpeta)
 ```
 

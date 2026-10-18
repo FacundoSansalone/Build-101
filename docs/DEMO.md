@@ -74,6 +74,59 @@ Cambiar de escenario en vivo, sin reiniciar:
 cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.set_scenario B
 ```
 
+## La demo en una pantalla: `/demo` (2026-10-18)
+
+En lugar de la UI de ADK, la demo se hace en `http://localhost:8020/demo`:
+un input para hablarle al agente de compras, el diagrama de quién le habla a
+quién (con el Pre-Sign Guard en el medio) y el relato en lenguaje natural.
+Detalle y API en [`dashboard/README.md`](../dashboard/README.md#demo-la-demo-en-una-pantalla).
+
+**Levantar** (desde la raíz; las claves en `.env`):
+
+```sh
+MERCHANT_AGENT_URL=http://localhost:8010/a2a/merchant_agent bash world/run_world.sh notebook_honesto
+GUARD_FILTRO=filtro:filtrar PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy
+DEMO_PAUSA_AUTO_S=8 PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m dashboard   # → http://localhost:8020/demo
+```
+
+(El proxy no lee `.env` solo: `set -a; source .env; set +a` antes, sin las
+variables de Supabase si no se quiere registrar la demo. Con el plan gratuito
+de Gemini, `DEMO_PAUSA_AUTO_S=8` espacia las respuestas automáticas.)
+
+**Guion corto** (el pedido de ejemplo de cada comercio está en "Usar el pedido
+de ejemplo"):
+
+1. **Notebook · honesto**, intermediario activado: pedido → nuestro agente
+   pregunta el porqué y pide confirmar la ficha → el comercio responde, el
+   filtro la revisa → el usuario elige → billetera, tarjeta, confirmación y
+   OTP se contestan solos → el Guard verifica → **✓ Pagado**.
+2. **Notebook · miente un dato**, intermediario **desactivado**: el usuario
+   elige la Zento Slim 14 (declarada con 16 GB) → **se paga**. Mismo comercio,
+   intermediario **activado**: "Memoria RAM: el fabricante dice 8 GB; el
+   comercio declaró 16 GB" → **✕ Compra frenada antes de la firma**. Arriba
+   quedan lado a lado: "Se compró Zento Slim 14, con 8 GB de memoria RAM
+   (pediste 16 GB)" / "Frenada antes de la firma: no se pagó nada".
+3. **Notebook · inyección**: **✕ Nuestro filtro cortó la conversación**
+   (señales de las heurísticas): nada del comercio llega al agente.
+
+Probado de punta a punta el 2026-10-18 con agentes reales (capturas en el
+reporte de la rama `etapa2/demo-ui`). Lo que apareció:
+
+- **Falso positivo del filtro con el comercio honesto**: con el modelo
+  (`filtro:filtrar` completo), la respuesta al pago (el desafío OTP del
+  procesador del sample: "please enter it below… the code is 123") se cortó
+  como `modelo:anula_instrucciones` dos veces de dos. Con
+  `FILTRO_SOLO_HEURISTICAS=1` pasa y la notebook honesta llega al pago (las
+  heurísticas igual cortan las inyecciones de notebook, auriculares y B).
+  Pendiente de Dev 1 (`filtro/`).
+- **Cuota de Gemini**: con el plan gratuito (15 pedidos/min por modelo) el
+  procesador de pagos devolvió 429 a mitad del pago y el agente "dijo" que
+  pagó; la pantalla no muestra "Pagado" sin el recibo en el estado de la
+  sesión. Se reintenta pidiéndole al agente que inicie el pago de nuevo.
+- Después de un corte del filtro, el agente de compras del sample reintenta
+  la búsqueda (nuestro agente vuelve a preguntar) y a veces inventa
+  productos: ninguno vino del comercio.
+
 ## 3. Guion de la demo
 
 1. **Contexto (UI de ADK, `:8000/dev-ui`, escenario `baseline`).** Se hace el
