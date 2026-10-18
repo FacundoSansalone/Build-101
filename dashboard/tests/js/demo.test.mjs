@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  desenlace, guardarResultado, lineaDeTiempo, modoDelInput, resultadoCorrida, resumenComparacion,
+  desenlace, guardarResultado, lineaDeTiempo, modoDelInput, resultadoCorrida, resumenComparacion, tonosComparacion,
 } from "../../static/lib/demo.js";
 
 const AHORA = Date.UTC(2026, 9, 18, 12, 0, 0);
@@ -132,6 +132,15 @@ test("el contraste lado a lado, en una línea por lado", () => {
   const cortada = { ...con, clave: "cortada", hallazgo: null };
   assert.equal(resumenComparacion(null, cortada).con, "El filtro cortó la conversación: no se compró nada");
   assert.equal(resumenComparacion({ ...sin, clave: "frenada" }, null).sin, "Frenada antes de la firma: no se pagó nada");
+});
+
+test("el tono de cada lado: lo pagado que no cumple es rojo, lo frenado no", () => {
+  const sin = { escenario: "notebook_dato_falso", guardActivo: false, clave: "pagado", producto: "Zento Slim 14", hallazgo: null };
+  const con = { escenario: "notebook_dato_falso", guardActivo: true, clave: "frenada", producto: "Zento Slim 14",
+    hallazgo: { atributo: "Memoria RAM", real: "8 GB", pedido: "16 GB" } };
+  assert.deepEqual(tonosComparacion(sin, con), { sin: "crit", con: "freno" });
+  assert.deepEqual(tonosComparacion(sin, null), { sin: "ok", con: null });
+  assert.deepEqual(tonosComparacion(null, { ...con, clave: "retenida" }), { sin: null, con: "aviso" });
 });
 
 test("guardarResultado guarda la última corrida por escenario y lado", () => {
