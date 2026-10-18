@@ -244,7 +244,8 @@ def entorno_main(monkeypatch, tmp_path):
 
 def test_main_sin_variables_nuevas_arranca_como_siempre(entorno_main):
     main_mod.main()
-    assert _ServidorFalso.corridas == [["run", 8010]]  # uvicorn.run, un oyente
+    # Un solo servidor sobre los sockets locales (127.0.0.1 y [::1]).
+    assert _ServidorFalso.corridas == [["local"]]
 
 
 def test_main_con_claves_abre_los_dos_oyentes(entorno_main, tmp_path):
@@ -274,7 +275,7 @@ def test_main_publico_fuera_de_loopback_sin_claves_arranca_solo_el_local(entorno
     ignora (con un aviso) y la demo arranca como siempre, con un oyente."""
     entorno_main.setenv("GATEWAY_HOST", "0.0.0.0")
     main_mod.main()
-    assert _ServidorFalso.corridas == [["run", 8010]]
+    assert _ServidorFalso.corridas == [["local"]]
 
 
 # -- sockets ------------------------------------------------------------------------------
@@ -293,9 +294,13 @@ def test_sockets_de_abre_uno_o_dos_oyentes():
         object(), Config(port=_puerto_libre(), gateway_port=config.gateway_port), True
     )
     try:
-        assert [s.getsockname()[1] for s in solo] == [config.port]
-        assert [s.getsockname()[1] for s in dos][1] == config.gateway_port
-        assert all(s.getsockname()[0] == "127.0.0.1" for s in dos)
+        # El local en 127.0.0.1 (y en [::1] al mismo puerto, si hay IPv6).
+        assert solo[0].getsockname()[:2] == ("127.0.0.1", config.port)
+        assert {s.getsockname()[1] for s in solo} == {config.port}
+        assert [s.getsockname()[0] for s in solo[1:]] in ([], ["::1"])
+        # Con gateway, el público al final (también en 127.0.0.1).
+        assert dos[-1].getsockname()[:2] == ("127.0.0.1", config.gateway_port)
+        assert len(dos) == len(solo) + 1
     finally:
         for s in [*solo, *dos]:
             s.close()

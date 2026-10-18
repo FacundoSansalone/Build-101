@@ -2,15 +2,21 @@
 
 Con claves de API activas (`GATEWAY_CLAVES_ARCHIVO`), el mismo proceso abre
 además el oyente público del gateway (default `127.0.0.1:8030`): una sola
-app y un solo servidor sobre dos sockets, así comparten el estado de las
-compras, las ofertas y las aprobaciones (diseño del gateway, §1.1).
+app y un solo servidor sobre varios sockets, así comparten el estado de las
+compras, las ofertas y las aprobaciones (diseño del gateway, §1.1). Con
+`PROXY_HOST=127.0.0.1` (el default) el oyente local escucha además en
+`[::1]`: el Shopping Agent habla con `localhost`, que en Windows prueba
+primero IPv6.
 """
 
 from __future__ import annotations
 
+import errno
 import importlib
 import logging
 import os
+import socket
+import sys
 from typing import Any
 
 import uvicorn
@@ -251,16 +257,99 @@ def cargar_gateway(
     return integradores, comercios, almacen
 
 
-def sockets_de(app: Any, config: Config, gateway: bool) -> list[Any]:
-    """Los sockets del servidor: el local siempre y, con el gateway activo,
-    el público. Se abren acá (no en uvicorn) para que un solo servidor
-    atienda los dos; el middleware los distingue por el puerto local."""
-    sockets = [uvicorn.Config(app, host=config.host, port=config.port).bind_socket()]
-    if gateway:
-        sockets.append(
-            uvicorn.Config(app, host=config.gateway_host, port=config.gateway_port).bind_socket()
+# IPv6 que no está (sin pila o sin `::1`): el proxy sigue solo con IPv4.
+_SIN_IPV6 = {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT}
+
+
+def abrir_socket(host: str, puerto: int) -> socket.socket:
+    """Un socket TCP atado a `host:puerto` (uvicorn lo pone a escuchar).
+
+    En Windows con `SO_EXCLUSIVEADDRUSE`: con `SO_REUSEADDR` (lo que usa
+    uvicorn) otro proceso se puede atar al mismo puerto y quedarse con
+    conexiones que eran del proxy. En el resto, `SO_REUSEADDR` (rearrancar sin
+    esperar TIME_WAIT; ahí no deja compartir un puerto que escucha).
+    """
+    familia = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(familia, socket.SOCK_STREAM)
+    try:
+        if sys.platform == "win32":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if familia == socket.AF_INET6:
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        sock.bind((host.strip("[]"), puerto))
+    except BaseException:
+        sock.close()
+        raise
+    sock.set_inheritable(True)
+    return sock
+
+
+def _abrir_o_salir(host: str, puerto: int) -> socket.socket:
+    try:
+        return abrir_socket(host, puerto)
+    except OSError as e:
+        raise SystemExit(
+            f"El proxy del Guard no arranca: no se pudo escuchar en {host}:{puerto} ({e})."
+        ) from e
+
+
+def _ipv6_local(puerto: int) -> socket.socket | None:
+    """`[::1]` al mismo puerto que `127.0.0.1`, o None (con un aviso) si no hay
+    IPv6. Si el puerto lo tiene otro proceso, no arranca: un cliente de
+    `localhost` (que prueba primero `::1`) le hablaría a ese y no al proxy."""
+    try:
+        return abrir_socket("::1", puerto)
+    except OSError as e:
+        if e.errno not in _SIN_IPV6:
+            raise SystemExit(
+                f"El proxy del Guard no arranca: no se pudo escuchar en [::1]:{puerto} ({e}). "
+                "Si otro proceso tiene ese puerto, los clientes de localhost le hablarían a "
+                "ese y no al proxy."
+            ) from e
+        logger.warning(
+            "Sin IPv6 en [::1] (%s): el proxy escucha solo en 127.0.0.1. En Windows, cada "
+            "conexión nueva a localhost tarda ~2 s más (prueba primero ::1).",
+            e,
         )
+        return None
+
+
+def sockets_de(app: Any, config: Config, gateway: bool) -> list[socket.socket]:
+    """Los sockets del servidor: el local siempre (y `[::1]` al mismo puerto
+    si el host es `127.0.0.1`) y, con el gateway activo, el público. Se abren
+    acá (no en uvicorn) para que un solo servidor atienda todos; el
+    middleware los distingue por el puerto local. Si uno no se puede abrir,
+    no arranca (y cierra los que ya abrió)."""
+    sockets = [_abrir_o_salir(config.host, config.port)]
+    try:
+        if config.host == "127.0.0.1":
+            # El puerto real del primero (con PROXY_PORT=0 lo elige el sistema).
+            extra = _ipv6_local(sockets[0].getsockname()[1])
+            if extra is not None:
+                sockets.append(extra)
+        if gateway:
+            sockets.append(_abrir_o_salir(config.gateway_host, config.gateway_port))
+    except BaseException:
+        for sock in sockets:
+            sock.close()
+        raise
+    for sock in sockets:
+        host, puerto = sock.getsockname()[:2]
+        logger.info("Escuchando en http://%s:%d", f"[{host}]" if ":" in host else host, puerto)
     return sockets
+
+
+def servir(app: Any, sockets: list[socket.socket]) -> None:
+    """Un solo servidor uvicorn sobre todos los sockets (comparten el estado)."""
+    servidor = uvicorn.Server(
+        uvicorn.Config(app, log_level="info", timeout_keep_alive=120, timeout_graceful_shutdown=3)
+    )
+    try:
+        servidor.run(sockets=sockets)
+    except KeyboardInterrupt:  # como uvicorn.run: Ctrl+C cierra limpio
+        pass
 
 
 def _nombre_fabricante(fuente: Any) -> str:
@@ -341,26 +430,9 @@ def main() -> None:
         ", ".join(c.id for c in comercios.todos()),
         almacen.nombre,
     )
-    if not gateway:
-        # Sin gateway, el arranque de siempre (un oyente).
-        uvicorn.run(
-            app,
-            host=config.host,
-            port=config.port,
-            log_level="info",
-            timeout_keep_alive=120,
-            timeout_graceful_shutdown=3,
-        )
-        return
-    # Con gateway: un solo servidor sobre los dos sockets (comparten el estado).
-    sockets = sockets_de(app, config, gateway)
-    servidor = uvicorn.Server(
-        uvicorn.Config(app, log_level="info", timeout_keep_alive=120, timeout_graceful_shutdown=3)
-    )
-    try:
-        servidor.run(sockets=sockets)
-    except KeyboardInterrupt:  # como uvicorn.run: Ctrl+C cierra limpio
-        pass
+    # Un solo servidor sobre los sockets: el local (127.0.0.1 y [::1]) y, con
+    # gateway, el público. Todos comparten el estado.
+    servir(app, sockets_de(app, config, gateway))
 
 
 if __name__ == "__main__":

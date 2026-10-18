@@ -3,12 +3,15 @@ marcas de tiempo, eventos privados, seguridad y robustez."""
 
 from __future__ import annotations
 
+import errno
 import logging
+import socket
 from dataclasses import replace
 from datetime import date
 
 import pytest
 
+import proxy.__main__ as main_mod
 from proxy.config import Config
 from proxy.tests.ayudantes import RPC
 from proxy.tests.fake_world import HEADERS_A2A, cuerpo, pedido_find_products
@@ -67,3 +70,110 @@ async def test_el_agente_de_intencion_recibe_demo_hoy(armar_proxy, config):
         resp = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
     assert resp.status_code == 200
     assert agente.hoy == [date(2026, 10, 18)]
+
+
+# ---------------------------------------------------------------------------
+# Oyentes: también [::1] (en Windows, localhost prueba primero IPv6)
+# ---------------------------------------------------------------------------
+
+
+def _hay_ipv6_local() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6) as s:
+            s.bind(("::1", 0))
+    except OSError:
+        return False
+    return True
+
+
+def _cerrar(sockets: list[socket.socket]) -> None:
+    for s in sockets:
+        s.close()
+
+
+def test_con_host_127_tambien_escucha_en_ipv6_local_al_mismo_puerto():
+    if not _hay_ipv6_local():
+        pytest.skip("sin IPv6 local en esta máquina")
+    sockets = main_mod.sockets_de(object(), Config(port=0), False)  # puerto libre cualquiera
+    try:
+        assert [s.family for s in sockets] == [socket.AF_INET, socket.AF_INET6]
+        assert sockets[0].getsockname()[0] == "127.0.0.1"
+        assert sockets[1].getsockname()[0] == "::1"
+        assert sockets[0].getsockname()[1] == sockets[1].getsockname()[1]
+    finally:
+        _cerrar(sockets)
+
+
+def test_con_otro_host_no_suma_ipv6():
+    sockets = main_mod.sockets_de(object(), Config(host="localhost", port=0), False)
+    try:
+        assert [s.family for s in sockets] == [socket.AF_INET]
+    finally:
+        _cerrar(sockets)
+
+
+def _sin_ipv6(monkeypatch, error: int) -> list[socket.socket]:
+    """`abrir_socket` real para IPv4 y `OSError(error)` para IPv6. Devuelve
+    los sockets IPv4 que abrió (para ver que no queden abiertos)."""
+    real = main_mod.abrir_socket
+    abiertos: list[socket.socket] = []
+
+    def abrir(host: str, puerto: int) -> socket.socket:
+        if ":" in host:
+            raise OSError(error, "IPv6 de prueba")
+        sock = real(host, puerto)
+        abiertos.append(sock)
+        return sock
+
+    monkeypatch.setattr(main_mod, "abrir_socket", abrir)
+    return abiertos
+
+
+@pytest.mark.parametrize("error", [errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT])
+def test_sin_ipv6_sigue_solo_con_ipv4_y_lo_avisa(monkeypatch, caplog, error):
+    _sin_ipv6(monkeypatch, error)
+    with caplog.at_level(logging.WARNING, logger="proxy"):
+        sockets = main_mod.sockets_de(object(), Config(port=0), False)
+    try:
+        assert [s.family for s in sockets] == [socket.AF_INET]
+        assert any("IPv6" in r.getMessage() for r in caplog.records)
+    finally:
+        _cerrar(sockets)
+
+
+@pytest.mark.parametrize("error", [errno.EADDRINUSE, errno.EACCES])
+def test_ipv6_tomado_por_otro_proceso_no_arranca(monkeypatch, error):
+    """Si otro proceso tiene [::1]:<puerto>, el agente que habla con
+    localhost le hablaría a ese y no al proxy: no se arranca."""
+    abiertos = _sin_ipv6(monkeypatch, error)
+    with pytest.raises(SystemExit, match=r"\[::1\]"):
+        main_mod.sockets_de(object(), Config(port=0), False)
+    assert abiertos and all(s.fileno() == -1 for s in abiertos)  # el IPv4 se cerró
+
+
+def test_un_puerto_del_proxy_no_lo_puede_tomar_otro_proceso():
+    """En Windows, con SO_REUSEADDR (lo que usa uvicorn) otro socket se puede
+    colgar del mismo puerto y robar conexiones: el proxy usa
+    SO_EXCLUSIVEADDRUSE. En el resto, un puerto escuchando no se comparte."""
+    sock = main_mod.abrir_socket("127.0.0.1", 0)
+    sock.listen()
+    otro = socket.socket()
+    try:
+        otro.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        with pytest.raises(OSError):
+            otro.bind(("127.0.0.1", sock.getsockname()[1]))
+    finally:
+        otro.close()
+        sock.close()
+
+
+def test_un_puerto_tomado_no_arranca_con_un_mensaje_claro():
+    ocupado = main_mod.abrir_socket("127.0.0.1", 0)
+    ocupado.listen()
+    try:
+        with pytest.raises(SystemExit, match="no arranca"):
+            main_mod.sockets_de(
+                object(), Config(host="localhost", port=ocupado.getsockname()[1]), False
+            )
+    finally:
+        ocupado.close()

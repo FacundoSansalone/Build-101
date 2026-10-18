@@ -58,6 +58,15 @@ Los servicios locales van por `127.0.0.1` y no por `localhost`: en Windows
 `localhost` prueba primero `::1`, donde el comercio y el catálogo no
 escuchan, y cada intento fallido suma ~2 s.
 
+Al revés, el Shopping Agent habla con el proxy por `localhost:8010`
+(`MERCHANT_AGENT_URL`): con `PROXY_HOST=127.0.0.1` (el default) el proxy
+escucha además en `[::1]` al mismo puerto (medido en Windows: ~2,1 s menos
+por conexión nueva). Si la máquina no tiene IPv6, sigue solo con IPv4 y lo
+avisa en el log; si otro proceso tiene ese puerto en `[::1]`, **no arranca**
+(los clientes de `localhost` le hablarían a ese). En Windows los sockets se
+abren con `SO_EXCLUSIVEADDRUSE`, así ningún otro proceso se ata al mismo
+puerto (con el `SO_REUSEADDR` de uvicorn, Windows lo dejaba).
+
 ## Apuntar el flujo al proxy
 
 - **Shopping Agent:** `MERCHANT_AGENT_URL=http://localhost:8010/a2a/merchant_agent bash world/run_world.sh B`
