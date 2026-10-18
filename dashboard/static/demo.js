@@ -360,10 +360,18 @@ function actualizarLinea(li, l) {
   li.dataset.actor = l.actor;
 }
 
+// El relato queda pegado al final mientras el usuario no suba a leer.
+let pegado = true;
+const esScrollable = () => relato.scrollHeight > relato.clientHeight + 4;
+relato.addEventListener("scroll", () => {
+  pegado = relato.scrollHeight - relato.scrollTop - relato.clientHeight < 40;
+}, { passive: true });
+new ResizeObserver(() => { if (pegado && esScrollable()) relato.scrollTop = relato.scrollHeight; }).observe(relato);
+
 function renderRelato(items) {
   const lineas = armarRelato(items, { filtro: estado.proxy.filtro || Boolean(estado.replay) });
   const fin = desenlace(items);
-  const cercaDelFinal = relato.scrollHeight - relato.scrollTop - relato.clientHeight < 80;
+  const cercaDelFinal = pegado || !esScrollable();
   const ids = new Set(lineas.map((l) => l.id));
   for (const li of [...relato.children]) if (!ids.has(li.dataset.id)) li.remove();
   let ultimaNueva = null;
@@ -384,10 +392,12 @@ function renderRelato(items) {
   });
   $("#relato-vacio").hidden = lineas.length > 0;
   if (ultimaNueva && cercaDelFinal) {
-    if (relato.scrollHeight > relato.clientHeight + 4) {
-      relato.scrollTo({ top: relato.scrollHeight, behavior: reducido() ? "auto" : "smooth" });
+    const suave = reducido() || enArranque() ? "auto" : "smooth";
+    if (esScrollable()) {
+      relato.scrollTo({ top: relato.scrollHeight, behavior: suave });
+      pegado = true;
     } else {
-      ultimaNueva.scrollIntoView({ block: "nearest", behavior: reducido() ? "auto" : "smooth" });
+      ultimaNueva.scrollIntoView({ block: "nearest", behavior: suave });
     }
   }
 }

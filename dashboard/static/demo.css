@@ -19,7 +19,7 @@
   --sombra: 0 1px 2px rgba(18, 18, 17, 0.05), 0 8px 24px rgba(18, 18, 17, 0.06);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
-  --ancho: 920px;
+  --ancho: 1040px;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -150,8 +150,8 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 /* Selector de comercio */
-.selector { display: flex; flex-direction: column; gap: 8px; }
-.escenarios { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.selector { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.escenarios { display: flex; flex-wrap: wrap; gap: 4px 20px; }
 .grupo { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .grupo-nombre { color: var(--ink-2); font-size: 0.86rem; font-weight: 600; margin-right: 4px; }
 .opcion {
@@ -165,7 +165,7 @@ button, input, select { font: inherit; color: inherit; }
 
 /* Diagrama */
 .escena { flex: none; display: flex; justify-content: center; }
-.diagrama { width: 100%; height: auto; max-height: 34vh; overflow: visible; }
+.diagrama { width: 100%; height: auto; max-height: 30vh; overflow: visible; }
 .diagrama text { font-family: var(--font); fill: var(--ink); }
 .diagrama .sub { fill: var(--muted); font-size: 13px; }
 .diagrama .etiqueta { font-size: 16px; font-weight: 650; }
@@ -207,6 +207,7 @@ button, input, select { font: inherit; color: inherit; }
 
 /* Contraste con y sin intermediario */
 .contraste {
+  flex: none;
   display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
   background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
 }
@@ -225,7 +226,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .linea {
   display: grid; grid-template-columns: 4.6rem 10px 1fr; align-items: baseline; gap: 10px;
-  padding: 6px 4px; border-radius: 8px; font-size: 1rem; text-wrap: pretty;
+  padding: 5px 4px; border-radius: 8px; font-size: 0.95rem; text-wrap: pretty;
 }
 .linea.entra { animation: entrar 260ms var(--ease) both; }
 @keyframes entrar { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
