@@ -78,16 +78,28 @@ const RECOMIENDA = /recomiend|recomendaci[oó]n|recommend|mejor opci[oó]n|best 
 export function resumirAgente(texto, max = 260) {
   const completo = limpiarTexto(texto, Number.POSITIVE_INFINITY);
   if (completo.length <= max) return completo;
-  const frases = String(texto ?? "").split(/\n+/)
-    .flatMap((parrafo) => limpiarTexto(parrafo, Number.POSITIVE_INFINITY).split(/(?<=[.!?…])\s+/))
-    .map((f) => f.trim())
-    .filter((f) => f && !(f.endsWith(":") && f.length < 40)); // títulos como "Mi recomendación:"
-  const principal = frases.find((f) => RECOMIENDA.test(f)) ?? frases[0] ?? completo;
+  const sinFin = Number.POSITIVE_INFINITY;
+  const lineas = String(texto ?? "").split(/\n/);
+  // Las opciones de una lista numerada: el primer renglón de cada una.
+  const opciones = lineas.map((l) => /^\s*\d+[.)]\s+(.+)$/.exec(l)?.[1])
+    .filter(Boolean).map((o) => recortar(limpiarTexto(o, sinFin), 40)).slice(0, 4);
+  const parrafos = lineas.map((l) => limpiarTexto(l, sinFin)).filter(Boolean);
+  const esTitulo = (p) => p.endsWith(":") && p.length < 40; // "Mi recomendación:"
+  const frases = parrafos.filter((p) => !esTitulo(p)).flatMap((p) => p.split(/(?<=[.!?…])\s+/));
+  let recomendacion = null;
+  const i = parrafos.findIndex((p) => RECOMIENDA.test(p));
+  if (i >= 0) {
+    recomendacion = esTitulo(parrafos[i]) ? parrafos.slice(i + 1).find((p) => !esTitulo(p)) ?? null
+      : parrafos[i].split(/(?<=[.!?…])\s+/).find((f) => RECOMIENDA.test(f)) ?? parrafos[i];
+  }
   const pregunta = [...frases].reverse().find((f) => f.includes("?"));
-  const partes = [recortar(principal, 170)];
-  if (pregunta && pregunta !== principal) partes.push(recortar(pregunta, 120));
+  const partes = [];
+  if (opciones.length > 1) partes.push(`Opciones: ${opciones.join(", ")}.`);
+  const principal = recomendacion ?? (opciones.length > 1 ? null : frases[0] ?? completo);
+  if (principal && principal !== pregunta) partes.push(recortar(principal, 170));
+  if (pregunta) partes.push(recortar(pregunta, 110));
   const resumen = partes.join(" ");
-  return partes.length === 1 && !resumen.endsWith("…") ? `${resumen} …` : resumen;
+  return partes.length === 1 && !resumen.endsWith("…") && !pregunta ? `${resumen} …` : resumen;
 }
 
 /** En una línea y recortado (sin tocar el contenido). */

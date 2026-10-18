@@ -469,8 +469,13 @@ function avisar(textoAviso, tono = "") {
 async function enviar(ev) {
   ev.preventDefault();
   const valor = entrada.value.trim();
-  const m = modoActual();
   if (!valor) return;
+  let m = modoActual();
+  if (m.modo === "ocupado") {
+    // Puede que nuestro agente acabe de preguntar y el sondeo todavía no llegó.
+    await refrescarCompras();
+    m = modoActual();
+  }
   if (!m.enviar) { avisar(m.modo === "ocupado" ? "Tu agente todavía está trabajando: esperá su respuesta." : m.etiqueta); return; }
   estado.enviando = true;
   avisar("");

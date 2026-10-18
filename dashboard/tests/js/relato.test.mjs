@@ -200,9 +200,14 @@ test("una respuesta larga del agente se resume en su recomendación y su pregunt
     "¿Cuál de estas opciones prefieres comprar? Por favor, indícame el ID del producto.",
   ].join("\n");
   const [l] = relato([], [mensaje("agente", { texto: largo, autor: "shopper", oculto: false })]);
-  assert.match(l.texto, /^Tu agente: Considero que la Lumen Book 14 Pro \(cart_1\) es la mejor opción/);
+  assert.match(l.texto, /^Tu agente: Opciones: Lumen Book 14 Pro, Orion Book 15\. Considero que la Lumen Book 14 Pro \(cart_1\) es la mejor opción/);
   assert.match(l.texto, /¿Cuál de estas opciones prefieres comprar\?$/);
-  assert.ok(l.texto.length <= 360, l.texto.length);
+  assert.ok(l.texto.length <= 400, l.texto.length);
+
+  // "Mi recomendación:" como título y la recomendación en el párrafo siguiente.
+  const conTitulo = largo.replace("Considero que la", "Si priorizas portabilidad, la").replace("es la mejor opción para ti", "te conviene");
+  const [t] = relato([], [mensaje("agente", { texto: conTitulo, autor: "shopper", oculto: false })]);
+  assert.match(t.texto, /Orion Book 15\. Si priorizas portabilidad, la Lumen Book 14 Pro \(cart_1\) te conviene/);
 
   const charla = "Hola, soy el agente **shopper**. Mi función es ayudarte a encontrar el producto ideal. " +
     "Voy a buscar opciones que se ajusten a tus especificaciones, con todo el detalle que haga falta. ".repeat(4) +
