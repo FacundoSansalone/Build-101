@@ -293,6 +293,11 @@ class ModeloNotebook:
         from decisiones import Rechazo, RespuestaPredicado
 
         self.llamadas += 1
+        if "producto" in estado:  # taxonomia.clasificar: Electronics > Computers > Laptops
+            (q,) = qs
+            opcion = next((i for i in ("222", "278", "328") if i in q.opciones), "ninguna")
+            self.taxonomia = getattr(self, "taxonomia", 0) + 1
+            return {q.nombre: _e(opcion, 0.95)}
         texto = " ".join([estado["pedido"], *(t["respuesta"] for t in estado["conversacion"])])
         r: dict[str, Any] = {
             "categoria": _e("fuera_de_catalogo", 0.95),
@@ -334,9 +339,10 @@ async def test_los_atributos_confirmados_llegan_al_guard_y_bloquea_la_ram_falsa(
     bloquea la notebook que declara 16 GB y según el fabricante tiene 8."""
     from intencion.agente_decisiones import AgenteDecisiones
 
+    modelo = ModeloNotebook()
     app = armar_proxy(
         config=replace(config_rapida, ficha_demo=False),
-        agente=AgenteDecisiones(ModeloNotebook()),
+        agente=AgenteDecisiones(modelo),
         evaluador=guard_real,
         fabricante=FixtureFabricante(),
     )
@@ -377,6 +383,34 @@ async def test_los_atributos_confirmados_llegan_al_guard_y_bloquea_la_ram_falsa(
     assert veredictos(task)[0]["status"] == "bloqueado" and not checkouts(task)
     bloqueos = [q for q in datos["veredicto"]["chequeos"] if q["resultado"] == "bloquea"]
     assert [q["campo"] for q in bloqueos] == ["atributo:memoria_ram"]
+    # 5. La categoría de la taxonomía de Google, clasificada al cerrar el
+    # intake (un nivel por llamada), va en la ficha.
+    assert final["categoria_taxonomia"] == "328"
+    assert ficha["categoria_taxonomia"] == "328"
+    assert modelo.taxonomia == 3 and modelo.llamadas == 6  # 3 turnos + 3 niveles
+
+
+async def test_sin_cliente_de_decisiones_la_taxonomia_queda_vacia(armar_proxy, config_rapida):
+    """Un agente sin `clasificar_taxonomia` (Gemini, o sin cliente): la ficha
+    queda sin categoría de la taxonomía y la compra sigue igual."""
+    evaluador, llamadas = evaluador_espia()
+    app = armar_proxy(
+        config=replace(config_rapida, ficha_demo=False), agente=AgenteMinimo(
+            [Requisito(campo="precio", operador="maximo", valor=1200.0, obligatorio=True)]
+        ), evaluador=evaluador,
+    )
+    async with cliente_de(app) as c:
+        pedido = pedido_find_products("notebook_honesto")
+        busqueda = asyncio.create_task(c.post(RPC, content=cuerpo(pedido), headers=HEADERS_A2A))
+        compra = await _compra(c, "esperando_contexto")
+        await c.post(
+            "/guard/compras/contexto", json={"compra_id": compra["compra_id"], "omitir": True}
+        )
+        contexto = (await busqueda).json()["result"]["contextId"]
+        await checkout(c, contexto, "cart_1")
+    (llamada,) = llamadas
+    assert llamada["ficha"].categoria_taxonomia is None
+    assert [r.campo for r in llamada["ficha"].requisitos] == ["precio"]
 
 
 async def test_sin_ficha_de_la_demo_y_sin_compra_el_guard_escala(armar_proxy, config, guard_real):
