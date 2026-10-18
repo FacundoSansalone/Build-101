@@ -42,8 +42,9 @@ from guard.chequeos import (
 from guard.extractor import extraer
 from guard.ranking import chequeo_integridad, rankear
 from guard.recibo import armar_recibo
+from guard.fuentes import ORDEN_FUENTES, nombre_fuente
 from guard.textos import acotar, sin_control
-from guard.verificador import verificar_todas
+from guard.verificador import verificar_con_rotulos
 
 _STATUS_POR_RESULTADO: dict[str, Status] = {
     "bloquea": "bloqueado",
@@ -68,20 +69,23 @@ def agregar(chequeos: Iterable[Chequeo]) -> Status:
     return "aprobado"
 
 
-def redactar_motivo(status: Status, chequeos: list[Chequeo]) -> str:
+def redactar_motivo(
+    status: Status, chequeos: list[Chequeo], fixtures: frozenset[str] = frozenset()
+) -> str:
     """Una frase para el dashboard (y el agente): por qué este veredicto.
 
     Plantilla fija: solo dice lo que efectivamente se chequeó. Los `detalle`
     que junta no interpolan texto del comercio (ver `guard.textos`).
+    `fixtures`: orígenes cuyos datos fueron de prueba (se rotulan).
     """
     if status == "aprobado":
-        return _motivo_aprobado(chequeos)
+        return _motivo_aprobado(chequeos, fixtures)
     resultado = next(r for r, s in _STATUS_POR_RESULTADO.items() if s == status)
     detalles = [c.detalle for c in chequeos if c.resultado == resultado]
     return sin_control(f"{_PREFIJO[status]}: " + " ".join(detalles))
 
 
-def _motivo_aprobado(chequeos: list[Chequeo]) -> str:
+def _motivo_aprobado(chequeos: list[Chequeo], fixtures: frozenset[str] = frozenset()) -> str:
     ok = [c for c in chequeos if c.resultado == "ok"]
     mandato = {c.campo for c in ok if c.tipo == "mandato" and c.origen != "checkout_firmado"}
     partes: list[str] = []
@@ -95,8 +99,12 @@ def _motivo_aprobado(chequeos: list[Chequeo]) -> str:
     if cumplidos:
         plural = "s" if cumplidos != 1 else ""
         partes.append(f"{cumplidos} requisito{plural} del pedido cumplido{plural}")
-    if any(c.tipo == "evidencia" for c in ok):
-        partes.append("los datos coinciden con el catálogo público")
+    origenes = {c.origen for c in ok if c.tipo == "evidencia"}
+    if origenes:
+        fuentes = [nombre_fuente(o, o in fixtures) for o in ORDEN_FUENTES if o in origenes]
+        if len(fuentes) > 1:
+            fuentes = [", ".join(fuentes[:-1]) + " y " + fuentes[-1]]
+        partes.append(f"los datos coinciden con {fuentes[0] if fuentes else 'el catálogo público'}")
     if any(c.tipo == "politica" and c.origen != "checkout_firmado" for c in ok):
         partes.append("la política de compras se cumple")
     if any(c.tipo == "integridad" and c.origen is None for c in ok):
@@ -129,7 +137,10 @@ def evaluar(
         politica = Politica()
     comercio_id = ofertas_vistas.comercio_id
     extraccion = extraer(ofertas_vistas)
-    ofertas = verificar_todas(extraccion.ofertas, catalogo)
+    nombres = [r.atributo for r in ficha.requisitos if r.campo == "atributo" and r.atributo]
+    verificadas = [verificar_con_rotulos(o, catalogo, nombres) for o in extraccion.ofertas]
+    ofertas = [oferta for oferta, _ in verificadas]
+    fixtures = {oferta.cart_id: rotulos for oferta, rotulos in verificadas}
     puntajes = rankear(ficha, ofertas, comercio_id)
     ranking = [p.cart_id for p in puntajes]
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
@@ -151,7 +162,7 @@ def evaluar(
         puntaje_elegido = next(p for p in puntajes if p.cart_id == cart_id_elegido)
         chequeos += [
             *requisitos_por_oferta[elegida.cart_id],
-            *chequeos_evidencia(elegida),
+            *chequeos_evidencia(elegida, fixtures[elegida.cart_id]),
             chequeo_integridad(puntajes, puntaje_elegido, elegida.moneda),
             *chequeos_politica(politica, elegida, comercio_id),
         ]
@@ -171,6 +182,10 @@ def evaluar(
         chequeos += del_checkout
 
     status = agregar(chequeos)
+    origenes_fixture = frozenset(
+        elegida.evidencia[clave].origen_usado
+        for clave in (fixtures[elegida.cart_id] if elegida is not None else ())
+    )
     recibo = armar_recibo(
         ficha=ficha,
         ofertas=ofertas,
@@ -190,7 +205,7 @@ def evaluar(
         cart_id_recomendado=ranking[0] if ranking else None,
         ranking=ranking,
         chequeos=chequeos,
-        motivo=redactar_motivo(status, chequeos),
+        motivo=redactar_motivo(status, chequeos, origenes_fixture),
         recibo=recibo,
     )
 

@@ -12,6 +12,9 @@ Fuentes de cada campo:
 - `sku`, `titulo`, `marca`, `categoria`, `uso`, `stock` y `talles`: de
   demo.offer_details, tal como los **declara** el comercio. El verificador
   después los contrasta con el catálogo público.
+- Categorías variadas (si vienen): `gtin` (validado y como GTIN-14),
+  `categoria_taxonomia` (ID de la taxonomía de Google) y `atributos`
+  (nombre -> `{valor, unidad}`, como schema.org; ver `guard.atributos`).
 
 Si un cart no tiene offer_details, sus campos quedan vacíos (`""`, `[]`,
 `None`): nunca se infieren del texto libre.
@@ -23,7 +26,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from contracts import Chequeo, Entrega, Oferta, OfertasVistas
-from guard.normalizar import entregas_validas, monto_valido
+from guard.atributos import atributos_validos
+from guard.normalizar import entregas_validas, gtin_valido, monto_valido
 from guard.textos import acotar
 
 # Claves de texto libre que se descartan (se guardan aparte, no se leen).
@@ -140,8 +144,19 @@ def _oferta(cart_id: str, cart: dict, detalle: dict) -> Oferta:
         talles=_talles(detalle.get("sizes")),
         cantidad=_cantidad(detalle.get("quantity")),
         entregas=_entregas(detalle.get("deliveries")),
+        gtin=gtin_valido(detalle.get("gtin")),
+        categoria_taxonomia=_categoria_taxonomia(detalle.get("categoria_taxonomia")),
+        atributos=atributos_validos(detalle.get("atributos")),
         texto_libre_descartado=_texto_libre(cart, detalle),
     )
+
+
+def _categoria_taxonomia(valor: Any) -> str | None:
+    """ID de la taxonomía de Google (dígitos). Una ruta en texto u otra cosa: sin dato."""
+    if isinstance(valor, bool) or not isinstance(valor, (str, int)):
+        return None
+    texto = str(valor).strip()
+    return texto if texto.isascii() and texto.isdigit() and len(texto) <= 10 else None
 
 
 def _cantidad(valor: Any) -> int | None:

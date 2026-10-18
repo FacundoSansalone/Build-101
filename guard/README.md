@@ -17,8 +17,11 @@ el recibo referencia). **Ningún texto del comercio llega a `motivo` ni a
 | Archivo | Qué hace |
 |---|---|
 | `veredicto.py` | `evaluar()`, la agregación de chequeos en un `status` y el `motivo` |
-| `extractor.py` | `ap2.cart` + `demo.offer_details` → `Oferta[]` y descartes (cart sin `cart_id`, `cart_id` repetido). El texto libre solo queda en `texto_libre_descartado` |
-| `verificador.py` | Cada campo (y el SKU) de cada oferta: `verificado` / `solo_declarado` / `contradicho` contra el catálogo; calidad, entrega y reputación `no_verificable`. Los chequeos usan el dato público cuando el comercio declaró el campo |
+| `extractor.py` | `ap2.cart` + `demo.offer_details` → `Oferta[]` y descartes (cart sin `cart_id`, `cart_id` repetido). Lee también `gtin`, `categoria_taxonomia` y `atributos` si vienen. El texto libre solo queda en `texto_libre_descartado` |
+| `verificador.py` | Cada campo (y el SKU) de cada oferta: `verificado` / `solo_declarado` / `contradicho` contra la primera fuente independiente que tiene el dato; calidad, entrega y reputación `no_verificable`. Los chequeos usan el dato de la fuente cuando el comercio declaró el campo |
+| `fuentes.py` | Orden de las fuentes de verdad y `DatoExterno` (fabricante, página pública, comprador) dentro del `catalogo`; `desde_jsonld()` para la página pública |
+| `atributos.py` | Atributos genéricos: nombres canónicos (sinónimos, incluye Icecat), valores `{valor, unidad}` y cumplimiento por tipo con unidades |
+| `ficha.py` | `ficha_desde_intent()`: `Ficha.desde_intent()` + `intent.attributes` + `google_product_category` |
 | `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, evidencia y política |
 | `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección |
 | `checkout.py` | `ap2.checkout` firmado: decodifica el payload del JWT (sin verificar la firma), recalcula `checkout_hash`, lo ata al cart evaluado y exige que sea coherente consigo mismo (`line_items`, `exp`, `iat`) |
@@ -50,6 +53,13 @@ leer_checkout(checkout_jwt) -> CheckoutFirmado        # lanza CheckoutIlegible
 # guard.benchmark_hook
 evaluate(intent, offers_seen, chosen_cart_id) -> dict  # Veredicto.model_dump(mode="json")
 cargar_catalogo(url=..., timeout=1.0, forzar=False) -> CatalogoPublico  # comercio_id, productos, fuente
+fichas_del_fabricante(offer_details, productos, fuente) -> list[DatoExterno]  # I/O afuera de evaluar()
+
+# guard.ficha / guard.fuentes
+ficha_desde_intent(intent, confirmada=True) -> Ficha   # + attributes y google_product_category
+con_fuentes(catalogo, externos) -> dict                # el catálogo + las fuentes externas
+dato_externo(origen, datos=..., gtin=... | sku=..., fixture=False) -> DatoExterno
+desde_jsonld(jsonld, sku=...) -> DatoExterno | None    # página pública (schema.org Product)
 
 # guard.ficha_llm
 ficha_desde_pedido(pedido, cliente=None, modelo="gemini-3.1-flash-lite-preview",
@@ -127,6 +137,65 @@ checkout coherente firmado con ES256 como `_create_jwt()`:
 Elegir VL-OUT-03 (`cart_3`) en baseline da `con_avisos` (preferido marca),
 no `escalar`.
 
+### Categorías variadas (sin mapear categorías)
+
+Un requisito `campo="atributo"` nombra un atributo (schema.org, como
+`weight` o `color`, o el de `additionalProperty`, como `memoria_ram`) y se
+cumple por tipo, en forma determinística (`guard/atributos.py`):
+
+| Tipo | Operadores | Ejemplo |
+|---|---|---|
+| número con unidad | `igual`, `maximo`, `minimo` | `memoria_ram minimo 16 GB` contra `1 TB`, `35.6 cm` contra `14 in`, `1300 g` contra `1.5 kg` |
+| enumerado | `igual` | `color igual "space gray"` (sin mayúsculas ni acentos) |
+| conjunto | `incluye` | `conectividad incluye "bluetooth"` |
+| booleano | `igual` | `cancelacion_ruido igual true` (acepta `Y`/`N`, sí/no) |
+
+Unidades: MB/GB/TB (decimales) y MiB/GiB/TiB, mm/cm/m/in, g/kg/lb/oz, s/min/h
+y sus códigos UN/CEFACT (`E34`, `CMT`, `KGM`...). Si hay que convertir, la
+tolerancia es 0,5% (35,6 cm publicados = 14"). Una unidad desconocida solo se
+compara con la misma; si no se puede comparar (unidad de un solo lado,
+dimensiones distintas, texto que no es número) no hay dato y el obligatorio
+escala. Los nombres se canonicalizan con un vocabulario chico de sinónimos
+de características (no un esquema por categoría); dos nombres que caen en el
+mismo con valores distintos son ambiguos y se descartan.
+
+**Fuentes de verdad, en orden** (`guard/fuentes.py`): datos del comprador
+(`ficha`) > fabricante por GTIN (`fabricante`) > página pública del vendedor,
+JSON-LD (`pagina_publica`) > catálogo público > solo declarado. Manda la
+primera que tiene el dato; `Evidencia.origen_usado` dice cuál. Las fuentes
+externas se consultan **afuera** (proxy, adaptador del benchmark) y entran
+dentro del mismo `catalogo` como `DatoExterno` (subclase de dict con una
+clave reservada, p. ej. `fabricante:gtin:<gtin14>`), con
+`con_fuentes(catalogo, externos)`. **El contrato `Evaluador` no cambia** y
+`evaluar()` sigue sin I/O. JSON nunca produce un `DatoExterno`: el catálogo
+del comercio no puede hacerse pasar por el fabricante, y un catálogo que
+pasa por JSON pierde las fuentes externas (falla cerrado: todo vuelve a
+solo declarado).
+
+- El GTIN se valida (dígito verificador) y se normaliza a 14 dígitos. Lo
+  verifican solo las fuentes por SKU (página, catálogo, comprador): el
+  fabricante se busca por GTIN y no puede verificarlo. Si una fuente por SKU
+  dice otro GTIN, `contradicho` (escala) y el fabricante se busca con el de
+  la fuente. Sin fuente por SKU, el GTIN queda como aviso: es la declaración
+  del comercio que ata la oferta al producto.
+- Se verifican los atributos que pide la ficha (por nombre; los nombres que
+  inventa el comercio no llegan a ningún texto).
+- Un campo que no declara el comercio ni tiene ninguna fuente (talles de una
+  notebook) no aplica: no tiene evidencia.
+- Requisito obligatorio sin fuente independiente → `escalar` (regla vigente).
+- Una fuente rotulada como fixture (`fabricante/` por defecto) lo dice en el
+  `detalle` y en el `motivo` ("la ficha del fabricante (fixture de prueba)").
+- `Ficha.categoria_taxonomia` se registra (sale de
+  `intent.google_product_category`) y la `categoria_taxonomia` de la oferta
+  se verifica contra las fuentes; todavía no hay un chequeo "la categoría de
+  la oferta está en la rama del pedido" (necesita el árbol como dato).
+
+Escenarios de `world/` (`fixtures/etapa2/`), con la ficha del fabricante y
+sin catálogo público para esos productos: la honesta da `con_avisos` (SKU y
+precio sin catálogo), el ataque `bloqueado` (`memoria_ram 8 GB no cumple el
+obligatorio (mínimo 16 GB)`; `cancelacion_ruido (no) no cumple el
+obligatorio (sí)`). Sin ninguna fuente, lo obligatorio escala.
+
 ### Textos
 
 El proxy le manda `Veredicto.motivo` al agente comprador, así que `motivo` y
@@ -173,7 +242,12 @@ El adaptador busca el catálogo en `GET http://localhost:8011/products`
 (timeout 1 s, o `GUARD_CATALOG_URL`) y, si no responde,
 `fixtures/public_catalog.json`; lo carga una vez por proceso. El
 `comercio_id` es `merchant.id` del catálogo. No firma el recibo ni recibe
-checkout.
+checkout. La ficha sale de `ficha_desde_intent()` y la ficha del fabricante
+de `fabricante/` (por defecto los fixtures rotulados; `FABRICANTE_FUENTE`).
+
+Con los escenarios de otras categorías (`--decider target`, sin LLM): el
+ataque de `notebook_malicioso` y `auriculares_malicioso` llega a la firma
+con AP2 solo (está dentro del tope) y "éxito con Guard" es 0%.
 
 ## Uso desde el proxy (Dev 3)
 

@@ -36,6 +36,34 @@ def numero(valor: Any) -> float | None:
     return None
 
 
+_LARGOS_GTIN = (8, 12, 13, 14)
+
+
+def gtin_valido(valor: Any) -> str | None:
+    """GTIN-8/12/13/14 con dígito verificador correcto, como GTIN-14 (con ceros
+    adelante); si no, None. Acepta espacios y guiones; no acepta `bool`."""
+    if isinstance(valor, bool):
+        return None
+    if isinstance(valor, int):
+        # Un entero pierde los ceros de adelante (un UPC 0xxxxxxxxxxx queda
+        # con 11 dígitos): vale si entra en 14 dígitos.
+        digitos = str(valor)
+        if valor <= 0 or not 7 <= len(digitos) <= 14:
+            return None
+    elif isinstance(valor, str):
+        digitos = re.sub(r"[\s-]", "", valor)
+        if not (digitos.isascii() and digitos.isdigit() and len(digitos) in _LARGOS_GTIN):
+            return None
+    else:
+        return None
+    gtin = digitos.zfill(14)
+    if not gtin.strip("0"):
+        return None
+    cuerpo, verificador = gtin[:-1], int(gtin[-1])
+    total = sum(int(c) * (3 if i % 2 == 0 else 1) for i, c in enumerate(reversed(cuerpo)))
+    return gtin if (10 - total % 10) % 10 == verificador else None
+
+
 def monto_valido(valor: Any) -> float | None:
     """Monto (amount, price, tope) como float finito y > 0; si no, None.
 
