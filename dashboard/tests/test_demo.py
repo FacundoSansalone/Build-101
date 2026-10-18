@@ -611,6 +611,44 @@ def test_la_pagina_demo_se_sirve_sin_cache_y_sin_cdn(tmp_path):
         assert c.get("/lib/demo.js").status_code == 200
 
 
+def test_el_interruptor_del_intermediario_va_al_proxy_con_token_y_empieza_otra_compra(tmp_path):
+    """La página apaga el intermediario con el reenvío del panel (con el
+    token, sin que el navegador lo vea) y empieza una compra nueva, para que
+    la corrida sin intermediario no se mezcle con la anterior."""
+    _escribir_token(tmp_path)
+    recibidos: list[httpx.Request] = []
+
+    def proxy(request: httpx.Request) -> httpx.Response:
+        recibidos.append(request)
+        if request.url.path == "/guard/state":
+            return httpx.Response(200, json={"guard_activo": json.loads(request.content)["guard_activo"]})
+        return httpx.Response(200, json={"compras": []})
+
+    cfg = Config(repo_root=tmp_path, proxy_url=PROXY, adk_url=ADK,
+                 proxy_transport=httpx.MockTransport(proxy),
+                 adk_transport=httpx.MockTransport(FakeADK().handler),
+                 world_temp_dir=tmp_path / "world-temp")
+    with TestClient(create_app(cfg), base_url=BASE) as c:
+        _post(c, "/api/demo/mensaje", {"texto": "uno"})
+        antes = _esperar(c)
+        assert _post(c, "/api/demo/nueva", {}).status_code == 200
+        r = _post(c, "/api/proxy/guard/state", {"guard_activo": False})
+        assert r.status_code == 200 and r.json() == {"guard_activo": False}
+        despues = c.get("/api/demo/estado").json()
+    (estado,) = [p for p in recibidos if p.url.path == "/guard/state"]
+    assert estado.headers["x-guard-token"] == TOKEN and "origin" not in estado.headers
+    assert TOKEN not in r.text
+    assert despues["mensajes"] == [] and despues["sesion"]["creada"] >= antes["sesion"]["creada"]
+
+
+def test_la_pagina_tiene_el_interruptor_visible(tmp_path):
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        html = c.get("/demo").text
+    assert 'id="intermediario"' in html and 'role="switch"' in html
+    assert "Intermediario:" in html
+    assert 'id="contraste"' in html  # con y sin intermediario, lado a lado
+
+
 def test_el_estado_no_expone_secretos(tmp_path):
     _escribir_token(tmp_path)
     with TestClient(_app(tmp_path), base_url=BASE) as c:
