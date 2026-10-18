@@ -369,7 +369,8 @@ relato.addEventListener("scroll", () => {
 new ResizeObserver(() => { if (pegado && esScrollable()) relato.scrollTop = relato.scrollHeight; }).observe(relato);
 
 function renderRelato(items) {
-  const lineas = armarRelato(items, { filtro: estado.proxy.filtro || Boolean(estado.replay) });
+  // En una grabación no se sabe si el proxy tenía filtro: no se afirma.
+  const lineas = armarRelato(items, { filtro: !estado.replay && estado.proxy.filtro });
   const fin = desenlace(items);
   const cercaDelFinal = pegado || !esScrollable();
   const ids = new Set(lineas.map((l) => l.id));
