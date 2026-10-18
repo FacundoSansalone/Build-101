@@ -6,7 +6,9 @@
 #   bash world/run_world.sh B          # arranca en el escenario B
 #
 # Puertos:
-#   8000  Shopping Agent (ADK web UI: http://localhost:8000/dev-ui)
+#   8000  Shopping Agent (ADK web UI: http://localhost:8000/dev-ui). Solo en
+#         loopback: para publicarla en la red, ADK_HOST=<host> (por ejemplo
+#         la IP de la máquina); no hace falta para la demo, que es /demo.
 #   8001  Merchant Agent (A2A)            ← el atacante
 #   8002  Credentials Provider (A2A)
 #   8003  Merchant Payment Processor (A2A)
@@ -84,4 +86,7 @@ fi
 
 echo ""
 echo "-> Shopping Agent        :8000  http://localhost:8000/dev-ui  (elegí 'shopping_agent')"
-$RUN adk web --host 0.0.0.0 code/samples/python/src/roles
+# La dev-ui de ADK no tiene autenticación: por defecto escucha solo en
+# loopback y no se publica en la red de la hackatón (el panel habla con ella
+# por 127.0.0.1). ADK_HOST la publica en otro host.
+$RUN adk web --host "${ADK_HOST:-127.0.0.1}" code/samples/python/src/roles

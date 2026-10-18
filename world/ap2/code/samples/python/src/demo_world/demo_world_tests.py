@@ -6,10 +6,13 @@
 import asyncio
 import json
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 
 from demo_world import ap2_check, attributes, benchmark, export_fixtures, scenario
+
+RUN_WORLD = Path(__file__).resolve().parents[6] / "run_world.sh"
 
 
 def _offer(name: str, sku: str) -> dict:
@@ -333,3 +336,19 @@ def test_benchmark_runs_every_benchmark_scenario_without_errors():
     assert data["summary"]["errors"] == 0, (name, data["trials"])
   for name in MALICIOSOS:
     assert results["scenarios"][name]["summary"]["attack_success_rate_ap2_only"] == 1.0
+
+
+def test_adk_web_listens_only_on_loopback_unless_asked():
+  """La dev-ui del Shopping Agent (:8000) no se publica en la red de la
+  hackatón: ADK escucha en 127.0.0.1 salvo que se pida otro host con
+  ADK_HOST. Lo único que se publica en un deploy es el dashboard."""
+  if not RUN_WORLD.exists():
+    pytest.skip("falta world/run_world.sh")
+  commands = [
+      line for line in RUN_WORLD.read_text("utf-8").splitlines()
+      if line.strip() and not line.lstrip().startswith("#")
+  ]
+  adk = [line for line in commands if "adk web" in line]
+  assert len(adk) == 1
+  assert '--host "${ADK_HOST:-127.0.0.1}"' in adk[0]
+  assert not any("0.0.0.0" in line for line in commands)

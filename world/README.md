@@ -24,11 +24,22 @@ bash world/run_world.sh B      # arranca en el escenario B
 
 | Puerto | Qué es |
 |---|---|
-| 8000 | Shopping Agent (UI de ADK en `http://localhost:8000/dev-ui`) |
+| 8000 | Shopping Agent (UI de ADK en `http://localhost:8000/dev-ui`), **solo en loopback** |
 | 8001 | Merchant Agent por A2A, **el atacante** |
 | 8002 | Credentials Provider |
 | 8003 | Merchant Payment Processor |
 | 8011 | Catálogo público del comercio (`/products`, `/products/<sku>`) |
+
+La dev-ui de ADK no tiene autenticación y maneja la compra entera (billetera,
+tarjeta, OTP), así que `run_world.sh` la levanta en `127.0.0.1`
+(`adk web --host "${ADK_HOST:-127.0.0.1}"`; antes era `0.0.0.0` y quedaba
+abierta a toda la red de la hackatón). El panel (`dashboard/`, `/demo`) y
+`deploy/start_all.sh` le hablan por `127.0.0.1`, así que no necesitan otra
+cosa. Para publicarla a propósito, `ADK_HOST=<host>` en el entorno o en el
+`.env` de la raíz (que `run_world.sh` carga y le gana al entorno); por
+ejemplo, `deploy/tenki.sh` con `EXPOSE_ADK=1` publica el :8000 por el túnel
+de Tenki y, como el panel cuando se publica, necesita `ADK_HOST=0.0.0.0` en
+el `.env`.
 
 En la UI elegí `shopping_agent` y pedí, por ejemplo: *"I am looking to buy a
 new pair of Nike basketball shoes for outdoor use, size 42. My budget is up to
