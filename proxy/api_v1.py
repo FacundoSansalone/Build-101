@@ -33,7 +33,8 @@ from typing import Any
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
-from starlette.routing import Route
+from starlette.routing import Match, Route
+from starlette.types import Receive, Scope, Send
 
 from contracts import CheckoutVisto, Ficha, OfertasVistas, Requisito
 from proxy import a2a, openapi, vistas
@@ -41,6 +42,7 @@ from proxy.tipos_gateway import (
     ID_COMPRA_RE,
     ID_SEGURO_RE,
     ID_SLUG_RE,
+    RUTAS_V1_PUBLICAS,
     ErrorApi,
     FotoCompra,
     Integrador,
@@ -572,6 +574,52 @@ def _protegido(nombre: str, handler: Handler) -> Handler:
     return envuelto
 
 
+class _RutaFinal:
+    """Endpoint ASGI de las rutas finales de `/v1`. Es una clase (no una
+    función) para que Starlette no le fije métodos: atiende cualquiera, también
+    uno raro (`PROPFIND`), y así nada de `/v1` sale con el texto plano de
+    Starlette."""
+
+    def __init__(self, handler: Handler) -> None:
+        self.handler = handler
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        respuesta = await self.handler(Request(scope, receive))
+        await respuesta(scope, receive, send)
+
+
+def _rutas_finales(rutas: list[Route]) -> list[Route]:
+    """Lo que ninguna ruta de `/v1` atendió, con el `ErrorApi` documentado:
+    405 `metodo_no_permitido` (con `Allow`) si la ruta existe con otro método,
+    404 `no_encontrado` si no existe. Van al final y fuera del spec."""
+
+    async def no_encontrado(request: Request) -> Response:
+        permitidos = sorted({
+            metodo
+            for ruta in rutas
+            if ruta.matches(request.scope)[0] is Match.PARTIAL
+            for metodo in ruta.methods or ()
+        })
+        if request.scope.get("path") not in RUTAS_V1_PUBLICAS:
+            # Sin clave, 401 como en el middleware: no se dice qué rutas existen.
+            integrador_de(request)
+        if not permitidos:
+            raise ErrorApi(404, "no_encontrado", "No existe.")
+        respuesta = respuesta_error(
+            ErrorApi(405, "metodo_no_permitido", "La ruta no acepta ese método.")
+        )
+        respuesta.headers["Allow"] = ", ".join(permitidos)
+        return respuesta
+
+    final = _RutaFinal(_protegido("no_encontrado", no_encontrado))
+    return [
+        Route("/v1", final, include_in_schema=False),
+        # `{resto:path}` también toma `/v1/` y `/v1/compras/`: 404 en JSON en
+        # lugar de la redirección de Starlette por la barra final.
+        Route("/v1/{resto:path}", final, include_in_schema=False),
+    ]
+
+
 def rutas_v1(
     nucleo: NucleoGateway, *, max_cuerpo_bytes: int = 1_048_576,
     url_publica: str = "http://localhost:8030",
@@ -697,7 +745,8 @@ def rutas_v1(
         ("/v1/openapi.json", "GET", especificacion),
         ("/v1/docs", "GET", pagina),
     ]
-    return [
+    rutas = [
         Route(path, _protegido(handler.__name__, handler), methods=[metodo])
         for path, metodo, handler in tabla
     ]
+    return [*rutas, *_rutas_finales(rutas)]

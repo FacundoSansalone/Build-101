@@ -50,6 +50,9 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
     "Error": {
         "type": "object",
         "required": ["error"],
+        "description": "Todo error de `/v1` tiene esta forma, también una ruta que no "
+        "existe (404 `no_encontrado`) o un método que la ruta no acepta (405 "
+        "`metodo_no_permitido`, con los que acepta en `Allow`).",
         "properties": {
             "error": {
                 "type": "object",

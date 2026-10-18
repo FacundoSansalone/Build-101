@@ -371,6 +371,23 @@ async def test_otro_integrador_no_ve_la_compra_y_un_comercio_no_permitido_da_403
         assert [x["compra_id"] for x in listado] == [compra_id]
 
 
+async def test_rutas_v1_inexistentes_dan_el_error_en_json(config_gw):
+    """Con la app entera (middleware incluido): 404/405 de `/v1` con la forma
+    de §11, y sin clave el 401 de siempre."""
+    mundo = armar_gateway(config_gw, evaluador_espia()[0])
+    async with cliente_publico(mundo.app) as c:
+        nada = await c.get("/v1/nada")
+        assert nada.status_code == 404
+        assert nada.json()["error"]["codigo"] == "no_encontrado"
+        borrar = await c.delete("/v1/compras")
+        assert borrar.status_code == 405
+        assert borrar.json()["error"]["codigo"] == "metodo_no_permitido"
+        assert "POST" in borrar.headers["allow"]
+    async with cliente_publico(mundo.app, clave=None) as anonimo:
+        assert (await anonimo.get("/v1/nada")).json()["error"]["codigo"] == "no_autenticado"
+    assert mundo.merchant.recibidos == []
+
+
 async def test_limite_de_compras_activas(config_gw):
     from proxy.tests.gateway_ayudantes import datos_integradores
     from proxy.claves import RegistroIntegradores

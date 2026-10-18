@@ -668,9 +668,10 @@ async def test_openapi_lista_todas_las_rutas(cliente, nucleo):
     assert spec["servers"] == [{"url": URL_PUBLICA}]
     assert spec["components"]["securitySchemes"]["bearerAuth"]["scheme"] == "bearer"
 
+    # Las rutas finales (404/405 en JSON) no son operaciones: no van al spec.
     rutas = {
         (metodo.lower(), ruta.path)
-        for ruta in api_v1.rutas_v1(nucleo) if isinstance(ruta, Route)
+        for ruta in api_v1.rutas_v1(nucleo) if isinstance(ruta, Route) and ruta.include_in_schema
         for metodo in ruta.methods if metodo != "HEAD"
     }
     en_spec = {(m, p) for p, ops in spec["paths"].items() for m in ops}
@@ -692,6 +693,47 @@ async def test_openapi_lista_todas_las_rutas(cliente, nucleo):
         elif isinstance(actual, list):
             pila.extend(actual)
     assert refs <= set(spec["components"]["schemas"])
+
+
+# -- rutas que no existen -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ruta", ["/v1/nada", "/v1", "/v1/", "/v1/compras/", f"/v1/compras/{COMPRA_ID}/nada"],
+)
+async def test_ruta_inexistente_da_404_en_json(cliente, nucleo, ruta):
+    """docs/INTEGRACION.md §11 y el spec prometen `no_encontrado` en JSON, no
+    el `Not Found` en texto de Starlette (ni una redirección por la barra)."""
+    for metodo in ("GET", "POST", "PUT"):
+        r = await cliente.request(metodo, ruta, json={})
+        _error(r, 404, "no_encontrado")
+    assert nucleo.llamadas == []
+
+
+async def test_metodo_que_la_ruta_no_acepta_da_405_en_json(cliente, nucleo):
+    casos = [
+        ("DELETE", "/v1/compras", {"GET", "HEAD", "POST"}),
+        ("PUT", f"/v1/compras/{COMPRA_ID}", {"GET", "HEAD"}),
+        ("GET", f"/v1/compras/{COMPRA_ID}/decision", {"POST"}),
+        ("PATCH", "/v1/evaluar", {"POST"}),
+        ("PROPFIND", "/v1/comercios", {"GET", "HEAD"}),  # un método raro, también JSON
+    ]
+    for metodo, ruta, permitidos in casos:
+        r = await cliente.request(metodo, ruta)
+        _error(r, 405, "metodo_no_permitido")
+        assert {m.strip() for m in r.headers["allow"].split(",")} == permitidos, ruta
+    assert nucleo.llamadas == []
+
+
+async def test_sin_clave_la_ruta_inexistente_da_401(cliente, nucleo):
+    """Como el middleware: sin clave no se dice qué rutas existen. Una ruta
+    pública con otro método sí da 405 (no pide clave)."""
+    _error(await cliente.get("/v1/nada", headers={"x-anonimo": "1"}), 401, "no_autenticado")
+    _error(await cliente.delete("/v1/compras", headers={"x-anonimo": "1"}), 401, "no_autenticado")
+    r = await cliente.post("/v1/public-key", json={}, headers={"x-anonimo": "1"})
+    _error(r, 405, "metodo_no_permitido")
+    assert r.headers["allow"] == "GET, HEAD"
+    assert nucleo.llamadas == []
 
 
 async def test_docs_es_html_y_escapa(nucleo):

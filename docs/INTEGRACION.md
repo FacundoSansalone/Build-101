@@ -522,6 +522,7 @@ reabrirías el canal que el gateway cierra.
 | 401 | `no_autenticado`, `clave_invalida` | Falta la clave o no vale |
 | 403 | `comercio_no_permitido` | El comercio no existe o no está habilitado para tu clave |
 | 404 | `compra_desconocida`, `no_encontrado` | La compra no existe (o no es tuya); la ruta no existe |
+| 405 | `metodo_no_permitido` | La ruta existe pero no acepta ese método (los que acepta van en `Allow`) |
 | 409 | `estado` | La compra no está esperando eso (`detalle.estado`) |
 | 409 | `oportunidad_distinta` | Esa no es la propuesta vigente |
 | 409 | `sin_escalar` | No hay un checkout retenido para aprobar |
