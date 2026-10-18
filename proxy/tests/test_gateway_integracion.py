@@ -391,6 +391,23 @@ async def test_evaluar_y_filtrar_de_punta_a_punta(config_gw):
         assert vistos[-1]["origen"] == "pagina"
 
 
+async def test_filtrar_de_v1_usa_el_pool_del_filtro(config_gw):
+    """`/v1/filtrar` corre en el pool propio del filtro (`proxy.ejecutor_filtro`),
+    no en el executor por defecto que comparten el LLM y el fabricante."""
+    import threading
+
+    hilos: list[str] = []
+
+    def filtro(mensaje: Any) -> ResultadoFiltro:
+        hilos.append(threading.current_thread().name)
+        return ResultadoFiltro(pasa=True)
+
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], filtro=filtro)
+    async with cliente_publico(mundo.app) as c:
+        assert (await c.post("/v1/filtrar", json={"contenido": "hola"})).json()["pasa"] is True
+    assert hilos and hilos[0].startswith("kaiai-filtro")
+
+
 async def test_filtrar_sin_filtro_falla_cerrado(config_gw):
     mundo = armar_gateway(config_gw, evaluador_espia()[0])
     async with cliente_publico(mundo.app) as c:

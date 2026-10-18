@@ -205,7 +205,8 @@ class NucleoProxy:
                     # compras en curso.
                     compra = Compra.desde_fila(fila)
                     if compra.estado != fila.get("estado"):
-                        proxy.guardar_compra(compra)  # la fila, con la espera cerrada
+                        # La fila, con la espera cerrada; un listado no mueve `actualizada`.
+                        proxy.guardar_compra(compra, tocar=False)
                 if compra.integrador_id != integrador.id:
                     continue
                 if estado is not None and compra.estado != estado:
@@ -214,7 +215,7 @@ class NucleoProxy:
         except ErrorAlmacen as e:
             logger.error("No se pudieron listar las compras de %s: %s", integrador.id, e)
             raise _no_disponible() from None
-        compras.sort(key=lambda c: c.creada, reverse=True)
+        compras.sort(key=lambda c: (c.creada, c.id), reverse=True)  # mismo orden que el almacén
         return [proxy.foto(c) for c in compras[:limite]]
 
     async def responder_porque(
@@ -378,6 +379,7 @@ class NucleoProxy:
             comercio=comercio,
             politica=politica,
             fabricante=proxy.fabricante,
+            ejecutor=proxy.ejecutor_llm,  # las consultas al fabricante
         )
         if proxy.persistencia is not None:
             # Registro (sin bus: no es tráfico de la demo). Solo la vista
@@ -414,7 +416,9 @@ class NucleoProxy:
         return resultado
 
     async def filtrar(self, integrador: Integrador, solicitud: SolicitudFiltrar) -> dict[str, Any]:
-        resultado = await sin_estado.filtrar_contenido(self.proxy.filtro, solicitud)
+        resultado = await sin_estado.filtrar_contenido(
+            self.proxy.filtro, solicitud, ejecutor=self.proxy.ejecutor_filtro
+        )
         logger.info(
             "/v1/filtrar del integrador %s (%s): %s",
             integrador.id, solicitud.origen, resultado.get("status"),
