@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import sys
 import types
 from datetime import datetime, timezone
@@ -71,15 +70,6 @@ def test_stub_sin_carts_bloquea():
 # ---------------------------------------------------------------------------
 
 
-def test_sin_guard_evaluar_usa_stub_y_avisa(monkeypatch, caplog):
-    monkeypatch.setitem(sys.modules, "guard", types.ModuleType("guard"))
-    with caplog.at_level(logging.WARNING):
-        cargado = cargar_evaluador()
-    assert cargado.nombre == "stub"
-    assert cargado.evaluar is guard_stub.evaluar
-    assert "usando stub" in caplog.text
-
-
 def test_con_guard_evaluar_usa_el_real(monkeypatch):
     modulo = types.ModuleType("guard")
 
@@ -92,13 +82,7 @@ def test_con_guard_evaluar_usa_el_real(monkeypatch):
     assert cargado.nombre == "guard"
     assert cargado.evaluar is evaluar
 
-
-def test_guard_que_no_importa_usa_stub(monkeypatch, caplog):
-    monkeypatch.setitem(sys.modules, "guard", None)  # import guard -> ImportError
-    with caplog.at_level(logging.WARNING):
-        cargado = cargar_evaluador()
-    assert cargado.nombre == "stub"
-    assert "usando stub" in caplog.text
+# (sin guard real: ver test_evaluador_fail_closed.py)
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from proxy.evaluador import cargar_evaluador
+from proxy.evaluador import EvaluadorNoDisponible, cargar_evaluador
 from proxy.tests.ayudantes import (
     buscar,
     checkout,
@@ -25,9 +25,11 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture
 def guard_real():
-    cargado = cargar_evaluador()
-    if cargado.nombre != "guard" or not cargado.acepta_checkout:
+    try:
+        cargado = cargar_evaluador()
+    except EvaluadorNoDisponible:
         pytest.skip("guard.evaluar() con checkout= no está disponible")
+    assert cargado.nombre == "guard" and cargado.acepta_checkout
     return cargado
 
 
