@@ -1308,9 +1308,12 @@ class ProxyGuard:
         el filtro falla o tarda de más, tampoco pasa (fail-closed). Corre en
         un hilo: un filtro lento no frena al resto del proxy.
         """
+        # El eco exacto de nuestro propio pedido en el history no es texto del
+        # proveedor: no se le pasa al filtro (la respuesta reenviada no cambia).
+        revisar = a2a.sin_eco_del_pedido(objetivo, llamada.pedido.mensaje)
         try:
             salida = await asyncio.wait_for(
-                asyncio.to_thread(self.filtro, copy.deepcopy(objetivo)), _TIMEOUT_FILTRO_S
+                asyncio.to_thread(self.filtro, copy.deepcopy(revisar)), _TIMEOUT_FILTRO_S
             )
             veredicto = (
                 salida

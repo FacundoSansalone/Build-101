@@ -245,6 +245,8 @@ class Pedido:
     escenario: str | None = None
     mandatos: dict[str, Any] = field(default_factory=dict)
     task_id: str | None = None  # params.id de tasks/get y tasks/resubscribe
+    # El mensaje tal cual (para reconocer su eco en el history: ver sin_eco_del_pedido)
+    mensaje: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
     @property
     def es_de_tarea(self) -> bool:
@@ -281,7 +283,53 @@ def leer_pedido(raw: bytes) -> Pedido:
         escenario=str(escenario) if escenario else None,
         mandatos={k: v for k in MANDATO_KEYS if (v := buscar(k, datos)) is not None},
         task_id=str(task_id) if task_id else None,
+        mensaje=message or None,
     )
+
+
+def _partes_canonicas(partes: Any) -> list[Any] | None:
+    """Las partes de un mensaje con lo que importa (tipo, texto, datos)."""
+    if not isinstance(partes, list):
+        return None
+    salida = []
+    for parte in partes:
+        if not isinstance(parte, dict):
+            return None
+        salida.append({k: parte.get(k) for k in ("kind", "text", "data") if k in parte})
+    return salida
+
+
+def sin_eco_del_pedido(result: Any, mensaje: dict[str, Any] | None) -> Any:
+    """`result` sin los mensajes del `history` que son el eco exacto del
+    pedido del comprador: mismo `messageId` y mismas partes que `mensaje`.
+
+    Es para el filtro de seguridad: ese eco es texto nuestro (el pedido del
+    usuario, "Find products…"), no del proveedor. El agente del cliente del
+    sample manda `role: agent`, así que el rol no alcanza para reconocerlo. Un
+    mensaje que el comercio alteró (aunque use el mismo `messageId`) no es el
+    eco y se sigue revisando. Devuelve una copia; el original no cambia.
+    """
+    if not isinstance(result, dict) or not isinstance(mensaje, dict):
+        return result
+    historial = result.get("history")
+    mensaje_id = mensaje.get("messageId")
+    partes = _partes_canonicas(mensaje.get("parts"))
+    if not isinstance(historial, list) or not mensaje_id or partes is None:
+        return result
+
+    def es_eco(m: Any) -> bool:
+        return (
+            isinstance(m, dict)
+            and m.get("messageId") == mensaje_id
+            and m.get("role") == mensaje.get("role")
+            and _partes_canonicas(m.get("parts")) == partes
+        )
+
+    if not any(es_eco(m) for m in historial):
+        return result
+    copia = dict(result)
+    copia["history"] = [m for m in historial if not es_eco(m)]
+    return copia
 
 
 # ---------------------------------------------------------------------------
