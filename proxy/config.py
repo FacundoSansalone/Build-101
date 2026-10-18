@@ -182,6 +182,10 @@ class Config:
             max_respuesta_bytes=int(
                 env.get("PROXY_MAX_RESPUESTA_BYTES", base.max_respuesta_bytes)
             ),
+            max_suscriptores_sse=_entero_positivo(
+                env.get("PROXY_MAX_SUSCRIPTORES_SSE"), base.max_suscriptores_sse,
+                "PROXY_MAX_SUSCRIPTORES_SSE",
+            ),
             permitir_remoto=_bool(
                 env.get("PROXY_ALLOW_REMOTE", "0"), "PROXY_ALLOW_REMOTE"
             ),

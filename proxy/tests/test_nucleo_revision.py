@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 import pytest
 
 import proxy.__main__ as main_mod
@@ -89,8 +90,6 @@ class _AgenteQueAnotaHoy:
 
 @pytest.mark.anyio
 async def test_el_agente_de_intencion_recibe_demo_hoy(armar_proxy, config):
-    import httpx
-
     agente = _AgenteQueAnotaHoy()
     app = armar_proxy(
         config=replace(config, demo_hoy=date(2026, 10, 18), espera_contexto_s=0.05),
@@ -613,7 +612,6 @@ def test_profundidad_de_mas_es_iterativa():
 
 @pytest.mark.anyio
 async def test_con_el_pool_del_llm_lleno_el_filtro_sigue_respondiendo(armar_proxy):
-    import httpx
     from contracts import ResultadoFiltro
 
     filtrados: list[int] = []
@@ -754,3 +752,123 @@ async def test_una_busqueda_paralela_no_se_saltea_la_pausa_con_resuelta_puesta(c
         respuestas = await asyncio.gather(primera, segunda)
     assert [r.status_code for r in respuestas] == [200, 200]
     assert compra.estado == "rechazada"
+
+
+# ---------------------------------------------------------------------------
+# Suscriptores SSE, cierre del stream del comercio y un solo `ahora`
+# ---------------------------------------------------------------------------
+
+
+def test_max_suscriptores_sse_desde_el_entorno():
+    assert Config.desde_entorno({}).max_suscriptores_sse == 20
+    assert Config.desde_entorno({"PROXY_MAX_SUSCRIPTORES_SSE": " 3 "}).max_suscriptores_sse == 3
+    for malo in ("0", "-1", "muchos"):
+        with pytest.raises(ValueError, match="PROXY_MAX_SUSCRIPTORES_SSE"):
+            Config.desde_entorno({"PROXY_MAX_SUSCRIPTORES_SSE": malo})
+
+
+class _StreamDelComercio(httpx.AsyncByteStream):
+    """Un SSE del comercio que manda un evento y después no termina nunca;
+    anota si alguien lo cerró."""
+
+    def __init__(self) -> None:
+        self.cerrado = False
+        self._nunca = asyncio.Event()
+
+    async def __aiter__(self):
+        evento = {"jsonrpc": "2.0", "id": 1, "result": {
+            "kind": "task", "id": "task-1", "contextId": "ctx-1", "status": {"state": "working"},
+        }}
+        yield f"data: {json.dumps(evento)}\n\n".encode()
+        await self._nunca.wait()
+
+    async def aclose(self) -> None:
+        self.cerrado = True
+
+
+@pytest.mark.anyio
+async def test_si_el_cliente_se_va_a_mitad_del_stream_se_cierra_el_del_comercio(config, stub):
+    """Starlette cancela el envío y el generador queda a medias (su `finally`
+    recién corre cuando lo junta el GC): la respuesta del comercio la cierra
+    la tarea de fondo de la `StreamingResponse`."""
+    from proxy.app import create_app
+
+    stream = _StreamDelComercio()
+
+    def comercio(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+
+    app = create_app(config, transport=httpx.MockTransport(comercio), evaluador=stub)
+    pendientes = [{
+        "type": "http.request",
+        "body": cuerpo(pedido_find_products("B", metodo="message/stream")),
+        "more_body": False,
+    }]
+    se_fue = asyncio.Event()
+
+    async def receive():
+        if pendientes:
+            return pendientes.pop()
+        await se_fue.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(mensaje):
+        if mensaje["type"] == "http.response.body" and mensaje.get("body"):
+            se_fue.set()  # el cliente se va después del primer evento
+            await asyncio.sleep(0.05)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.0"},
+        "http_version": "1.1", "method": "POST", "scheme": "http", "path": RPC,
+        "raw_path": RPC.encode(), "query_string": b"", "root_path": "",
+        "headers": [(b"host", b"localhost:8010"), (b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 50000), "server": ("127.0.0.1", 8010),
+    }
+    await asyncio.wait_for(app(scope, receive, send), 5)
+    assert stream.cerrado
+
+
+@pytest.mark.anyio
+async def test_una_evaluacion_usa_un_solo_ahora(config):
+    """El Guard (vigencia del JWT y fecha del recibo), la vista del veredicto
+    de la compra y su fila usan el mismo instante."""
+    from proxy import guard_stub
+    from proxy.evaluador import EvaluadorCargado
+
+    vistos: list[datetime | None] = []
+
+    def evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
+                checkout_hash=None, ahora=None, checkout=None):
+        vistos.append(ahora)
+        return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo,
+                                  politica, checkout_hash, ahora, checkout=checkout)
+
+    mundo = armar_gateway(replace(config, gateway_public_url=GATEWAY_PUBLIC_URL),
+                          EvaluadorCargado(evaluar=evaluar, nombre="guard"))
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(c))["compra_id"]
+        contexto = (await buscar(c, compra_id)).json()["result"]["contextId"]
+        await checkout(c, compra_id, contexto, "cart_1")
+    await mundo.esperar_fondo()
+    assert len(vistos) == 1 and vistos[0] is not None and vistos[0].tzinfo is not None
+    assert mundo.proxy.compras.get(compra_id).veredictos[-1]["ts"] == vistos[0].isoformat()
+
+
+@pytest.mark.anyio
+async def test_un_evaluador_sin_ahora_sigue_andando(cliente, merchant, proxy_app):
+    from proxy import guard_stub
+    from proxy.evaluador import EvaluadorCargado
+
+    def evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
+                checkout_hash=None, checkout=None):
+        return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo,
+                                  politica, checkout_hash, checkout=checkout)
+
+    proxy_app.state.proxy.evaluador = EvaluadorCargado(evaluar=evaluar, nombre="guard")
+    contexto = (
+        await cliente.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    ).json()["result"]["contextId"]
+    resp = await cliente.post(
+        RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1")), headers=HEADERS_A2A
+    )
+    assert "No se pudo evaluar" not in veredictos(resp.json()["result"])[0]["motivo"]

@@ -52,6 +52,7 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control, nuevo en cada arranque (modo 0600 donde aplica). Lo lee el servidor del dashboard |
 | `PROXY_ALLOW_STUB` | `0` | `1` para arrancar con el stub si no hay `guard.evaluar()` real (solo pruebas) |
 | `PROXY_MAX_RESPUESTA_BYTES` | `5242880` | Tope por respuesta del comercio (5 MB) |
+| `PROXY_MAX_SUSCRIPTORES_SSE` | `20` | Suscriptores de `GET /guard/events` a la vez (503 después). Cada uno guarda hasta 1000 eventos en su cola: el tope acota la memoria. Un entero mayor que 0 (si no, no arranca) |
 | `SUPABASE_URL` | — | Proyecto de Supabase (`https://<ref>.supabase.co`). Con la clave, activa el registro en Supabase |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Clave de servicio de Supabase (`sb_secret_…` o la `service_role` legacy). También se acepta como `SUPABASE_SECRET_KEY`, el nombre que usa hoy el dashboard. **Secreta**: va en el entorno o en un `.env` ignorado por git, nunca en el repo. El proxy no lee `.env` solo: `set -a; source .env; set +a` antes de `python -m proxy` |
 
@@ -99,7 +100,7 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
 | Llamada | Qué hace el proxy |
 |---|---|
 | `GET /a2a/merchant_agent/.well-known/agent-card.json` (o `agent.json`) | Pide la card al comercio y reescribe `url` y `additionalInterfaces[].url` con `PROXY_PUBLIC_URL`. Sin esto, el cliente del sample manda el JSON-RPC directo a `:8001`. Devuelve solo el JSON (`Content-Type: application/json`), **sin ningún header del comercio** (nunca `Set-Cookie`). Cualquier otra ruta bajo `/a2a/merchant_agent/` da 404 y no se pide al comercio. |
-| `POST /a2a/merchant_agent` | Reenvía el JSON-RPC (bytes del pedido tal cual, con `X-A2A-Extensions`). Respuesta JSON (`message/send`, lo que usa el sample) o SSE (`message/stream`, `tasks/resubscribe`), detectada con `"text/event-stream" in content-type.lower()`. Del comercio al cliente solo pasa `X-A2A-Extensions`; el `Content-Type` se normaliza. |
+| `POST /a2a/merchant_agent` | Reenvía el JSON-RPC (bytes del pedido tal cual, con `X-A2A-Extensions`). Respuesta JSON (`message/send`, lo que usa el sample) o SSE (`message/stream`, `tasks/resubscribe`), detectada con `"text/event-stream" in content-type.lower()`. Del comercio al cliente solo pasa `X-A2A-Extensions`; el `Content-Type` se normaliza. Si el cliente se va a mitad de un SSE, la respuesta del comercio se cierra igual (tarea de fondo de la `StreamingResponse`). |
 | `find_products` (pedido con `catalog_search`) | Pasa sin cambios. **Solo de estas respuestas** salen las ofertas: carts, offer_details y escenario, guardados (copiados) por el `context_id` de la respuesta. Una búsqueda nueva del cliente en el mismo contexto las reemplaza; ninguna otra respuesta las toca. |
 | `create_checkout` (pedido con `cart_id`) | Exige **un solo** `ap2.checkout`, en los artefactos de una tarea, con `cart_id` = el del pedido y `contextId` = el del pedido. Evalúa con las ofertas del contexto del pedido: `evaluar(ficha, OfertasVistas(...), cart_id_del_pedido, catalogo, politica=None, checkout_hash=..., checkout=CheckoutVisto.model_validate(ap2.checkout))` (siempre con `checkout=`). |
 | `tasks/get`, `tasks/resubscribe` | Con checkout: usa la decisión guardada por `(task_id, sha256 del data part ap2.checkout completo en JSON canónico, cart_id)`. Si cambia cualquier campo del data part (el JWT, `checkout_hash`, `amount`, `amount_cents`, `currency`, `item_label`…), se reevalúa; el orden de las claves no cuenta. Si la tarea fue bloqueada o retenida, **nunca** devuelve el checkout (aunque se apague el Guard). Si el proxy no evaluó esa tarea, bloquea. |
@@ -211,7 +212,7 @@ ve todo. La demo (tráfico anónimo) se ve igual que siempre.
 | `POST /guard/state` con `{"guard_activo": bool}` y `X-Guard-Token` | Mismo formato. Emite `guard_cambiado`. 400 si el cuerpo no es eso. |
 | `POST /guard/aprobaciones` con `{"contexto_id": str, "cart_id": str}` y `X-Guard-Token` | 409 `compra_de_integrador` si el contexto es de una compra de integrador (en memoria, en el almacén o marcado al registrar su veredicto); 503 si el almacén no responde. Si no, registra una **aprobación humana de un solo uso** para ese contexto y cart, atada al **total firmado exacto** del último veredicto `escalar` de ese contexto/cart: el `totals[type=total].amount` del payload del `checkout_jwt` (un entero, en centavos) y su `currency`, sin fallbacks a `line_items` ni al data part. 201 con la aprobación; 200 si ya había una pendiente igual; 409 si el último veredicto no es `escalar` o si el checkout escalado no tiene un total firmado entero exacto (falta, es float, hay dos, claves duplicadas…): queda retenido; 400 si el cuerpo no es exactamente eso. |
 | `GET /guard/aprobaciones` | `{"pendientes": [...], "usadas": [...]}`; cada una con `id`, `contexto_id`, `cart_id`, `centavos`, `monto`, `moneda`, `creada`, `estado`, `usada`, `task_id`. |
-| `GET /guard/events` | SSE. Cada mensaje: `event: evento` + `data: <Evento JSON>`. Al conectar reenvía los últimos eventos en memoria (hasta 200). `: ping` cada 15 s. Hasta 20 suscriptores (503 después). |
+| `GET /guard/events` | SSE. Cada mensaje: `event: evento` + `data: <Evento JSON>`. Al conectar reenvía los últimos eventos en memoria (hasta 200). `: ping` cada 15 s. Hasta `PROXY_MAX_SUSCRIPTORES_SSE` suscriptores (20; 503 después). |
 | `GET /guard/events/history?limit=200` | Lista JSON de `Evento` (los más viejos primero, máximo 200). |
 | `GET /guard/public-key` | `{"kid": "...", "jwk": {...}}` si hay Guard real con `guard.recibo`; 404 si no. |
 
@@ -767,7 +768,7 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `seguridad.py` | Middleware de la API de control (`Host`, `Origin`, `Content-Type`, `X-Guard-Token`) y el token por arranque |
 | `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo` |
 | `guard_stub.py` | Stub con la firma de `contracts.Evaluador`: bloquea si el elegido es el último cart |
-| `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta 20) y JSONL (los de compras de integrador, en el privado) |
+| `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta `PROXY_MAX_SUSCRIPTORES_SSE`) y JSONL (los de compras de integrador, en el privado) |
 | `fuentes.py` | Intent y ficha de la demo (`ficha_del_intent`, con atributos), catálogo público (con su fuente), `intent_ap2(ficha)` y `ap2_check` con el tope de la compra |
 | `config.py` | Variables de entorno (también las `GATEWAY_*`), chequeo de loopback y `verificar_gateway` |
 | `persistencia.py` | Registro opcional en Supabase (veredictos y aprobaciones), en segundo plano y sin cortar el flujo si falla |

@@ -44,6 +44,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -1022,6 +1023,10 @@ class ProxyGuard:
                 status_code=resp.status_code,
                 headers={**headers, "Cache-Control": "no-cache"},
                 media_type="text/event-stream",
+                # Si el cliente se va a mitad del stream, Starlette cancela el
+                # envío y el `finally` de `_sse` recién corre cuando el GC junta
+                # el generador: la respuesta del comercio se cierra igual acá.
+                background=BackgroundTask(resp.aclose),
             )
         try:
             contenido = await a2a.leer_acotado(
@@ -2524,6 +2529,11 @@ class ProxyGuard:
                 "no se encontraron los parámetros que autorizó el integrador", clave=clave,
             )
         catalogo, fabricante = await self._con_fabricante(catalogo, guardadas.offer_details)
+        # Un solo instante por evaluación: la vigencia del JWT y la fecha del
+        # recibo (en el Guard) y la vista y la fila del veredicto. Es el reloj
+        # de verdad, nunca DEMO_HOY.
+        ahora = datetime.now(timezone.utc)
+        con_ahora = {"ahora": ahora} if self.evaluador.acepta_ahora else {}
         try:
             resultado = self.evaluador.evaluar(
                 ficha,  # parámetros autorizados de la compra
@@ -2539,6 +2549,7 @@ class ProxyGuard:
                 politica=politica_de([comercio]),
                 checkout_hash=checkout.get("checkout_hash"),
                 checkout=visto,  # siempre: el Guard ata lo firmado al cart
+                **con_ahora,
             )
             veredicto = (
                 resultado
@@ -2591,7 +2602,6 @@ class ProxyGuard:
         if compra_api is not None:
             # Antes del evento: el webhook `compra.veredicto` lleva la foto
             # con este veredicto (vista reducida, sin texto del comercio).
-            ahora = datetime.now(timezone.utc)
             compra_api.registrar_veredicto(
                 vista_veredicto(
                     veredicto, contexto_id=contexto_id, ts=ahora, evaluador=self.evaluador.nombre
