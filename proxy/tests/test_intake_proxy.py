@@ -187,8 +187,11 @@ async def test_repregunta_hasta_tener_todo_y_confirma_la_ficha(armar_proxy, conf
         assert autorizada["precio"]["valor"] == 150.0
         assert autorizada["moneda"]["valor"] == "USD"
         assert autorizada["marca"]["valor"] == "Nike" and autorizada["talle"]["valor"] == 42
-        # El color (campo atributo) el Guard todavía no lo chequea: se informa aparte.
-        assert [r["atributo"] for r in final["sin_verificar_guard"]] == ["color"]
+        # El color (campo atributo) el Guard ya lo chequea: va a la ficha autorizada.
+        assert final["sin_verificar_guard"] == []
+        assert [r["atributo"] for r in final["ficha_autorizada"] if r["campo"] == "atributo"] == [
+            "color"
+        ]
         # El contexto acumula las respuestas.
         assert [t["respuesta"] for t in final["contexto"]["historial"]] == [
             "Hasta 150 dólares, y para el viernes."
@@ -197,7 +200,7 @@ async def test_repregunta_hasta_tener_todo_y_confirma_la_ficha(armar_proxy, conf
         ficha = _ficha_llm(app, tercera["compra_id"])
         assert ficha[("precio", None)].valor == 150.0
         assert ficha[("moneda", None)].valor == "USD"
-        assert ("atributo", "color") not in ficha
+        assert ficha[("atributo", "color")].valor == "negro"
         # Una llamada por turno: el pedido y las dos respuestas (la confirmación no llama).
         assert modelo.llamadas == 3
 

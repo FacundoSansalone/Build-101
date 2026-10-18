@@ -251,18 +251,31 @@ def test_la_oportunidad_se_delega_con_todas_las_respuestas_y_la_ficha_verificabl
     assert agente.detectar_oportunidad(_contexto(), ficha, ["o"]) == "oportunidad"
     ((contexto, ficha_vista, ofertas),) = detector.vistos
     assert contexto.respuesta == f"{RESPUESTA} / Hasta 20000 USD"
-    assert [r.campo for r in ficha_vista.requisitos] == ["precio"]
+    # El Guard chequea atributos y `minimo`: al detector le llega la ficha entera.
+    assert [r.campo for r in ficha_vista.requisitos] == ["precio", "atributo"]
     assert ofertas == ["o"]
 
 
-def test_requisitos_verificables_separa_lo_que_el_guard_no_chequea():
-    reqs = [
-        Requisito(campo="precio", operador="maximo", valor=100.0, obligatorio=True),
-        Requisito(campo="talle", operador="incluye", valor=42, obligatorio=True),
-        Requisito(campo="atributo", atributo="color", operador="igual", valor="negro", obligatorio=True),
-        Requisito(campo="talle", operador="minimo", valor=40, obligatorio=False),
-    ]
-    si, no = requisitos_verificables(reqs)
+_REQS = [
+    Requisito(campo="precio", operador="maximo", valor=100.0, obligatorio=True),
+    Requisito(campo="talle", operador="incluye", valor=42, obligatorio=True),
+    Requisito(campo="atributo", atributo="color", operador="igual", valor="negro", obligatorio=True),
+    Requisito(campo="talle", operador="minimo", valor=40, obligatorio=False),
+]
+
+
+def test_requisitos_verificables_el_guard_chequea_atributos_y_minimo():
+    si, no = requisitos_verificables(_REQS)
+    assert si == _REQS and no == []
+
+
+def test_requisitos_verificables_lee_lo_que_publica_el_guard(monkeypatch):
+    """Si el Guard no supiera chequear algo, no va a los parámetros autorizados."""
+    from guard import chequeos
+
+    monkeypatch.setattr(chequeos, "CAMPOS_SOPORTADOS", frozenset({"precio", "talle"}))
+    monkeypatch.setattr(chequeos, "OPERADORES_SOPORTADOS", frozenset({"maximo", "incluye"}))
+    si, no = requisitos_verificables(_REQS)
     assert [r.campo for r in si] == ["precio", "talle"]
     assert [(r.campo, r.operador) for r in no] == [("atributo", "igual"), ("talle", "minimo")]
 

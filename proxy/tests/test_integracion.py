@@ -269,6 +269,134 @@ def test_sin_intent_no_se_corre_ap2():
     assert violaciones_ap2({"cart_id": "c", "amount": 10.0, "currency": "USD"}, None) is None
 
 
+# -- 4. intake con atributos, de punta a punta ---------------------------------------
+
+PEDIDO_NOTEBOOK = "Quiero una notebook para programar con 16 GB de RAM"
+
+
+def _e(opcion: str, p: float) -> Any:
+    from decisiones import RespuestaEleccion
+
+    return RespuestaEleccion("x", opcion, {opcion: p}, p)
+
+
+class ModeloNotebook:
+    """Decisions falso: contesta según lo que dijo el usuario hasta ese turno."""
+
+    nombre = "falso"
+    modelo = "falso-1"
+
+    def __init__(self) -> None:
+        self.llamadas = 0
+
+    def decidir(self, estado: dict[str, Any], qs: list) -> dict[str, Any]:
+        from decisiones import Rechazo, RespuestaPredicado
+
+        self.llamadas += 1
+        texto = " ".join([estado["pedido"], *(t["respuesta"] for t in estado["conversacion"])])
+        r: dict[str, Any] = {
+            "categoria": _e("fuera_de_catalogo", 0.95),
+            "cantidad": _e("una", 0.95),
+            "precio": _e("no_dicho", 0.9),
+            "moneda": _e("no_dicha", 0.9),
+            "plazo": _e("no_dicho", 0.9),
+        }
+        if "1200" in texto:
+            q = next(q for q in qs if q.nombre == "precio")
+            r["precio"] = _e(next(k for k, d in q.opciones.items() if "1200" in (d or "")), 0.95)
+            r["precio_alcance"] = _e("total", 0.95)
+            r["moneda"] = _e("USD", 0.95)
+            r["plazo"] = _e("sin_apuro", 0.9)
+        for q in qs:
+            if q.nombre.startswith("pide_"):
+                r[q.nombre] = RespuestaPredicado(q.nombre, 0.95)
+            elif q.nombre.startswith("firmeza_"):
+                r[q.nombre] = _e("exige", 0.95)
+        return {q.nombre: r.get(q.nombre, Rechazo(q.nombre)) for q in qs}
+
+
+async def _turno(c: httpx.AsyncClient, turno: int, intentos: int = 400) -> dict[str, Any]:
+    compras: list[dict[str, Any]] = []
+    for _ in range(intentos):
+        compras = (await c.get("/guard/compras")).json()["compras"]
+        for compra in compras:
+            if compra["estado"] == "esperando_contexto" and (compra.get("intake") or {}).get("turno") == turno:
+                return compra
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"Ninguna compra llegó al turno {turno}: {compras}")
+
+
+async def test_los_atributos_confirmados_llegan_al_guard_y_bloquea_la_ram_falsa(
+    armar_proxy, config_rapida, guard_real
+):
+    """Un comercio real (sin ficha de la demo): el pedido no dice el tope, se
+    repregunta, el usuario confirma la ficha con la memoria y el Guard
+    bloquea la notebook que declara 16 GB y según el fabricante tiene 8."""
+    from intencion.agente_decisiones import AgenteDecisiones
+
+    app = armar_proxy(
+        config=replace(config_rapida, ficha_demo=False),
+        agente=AgenteDecisiones(ModeloNotebook()),
+        evaluador=guard_real,
+        fabricante=FixtureFabricante(),
+    )
+    async with cliente_de(app) as c:
+        pedido = pedido_find_products("notebook_malicioso")
+        for parte in pedido["params"]["message"]["parts"]:
+            if "catalog_search" in (parte.get("data") or {}):
+                parte["data"]["catalog_search"] = PEDIDO_NOTEBOOK
+        busqueda = asyncio.create_task(c.post(RPC, content=cuerpo(pedido), headers=HEADERS_A2A))
+
+        primera = await _turno(c, 0)
+        assert "el tope de precio y la moneda" in primera["pregunta"]
+        await c.post("/guard/compras/contexto",
+                     json={"compra_id": primera["compra_id"], "respuesta": "Para programar."})
+        segunda = await _turno(c, 1)  # repregunta: falta el tope
+        await c.post("/guard/compras/contexto",
+                     json={"compra_id": segunda["compra_id"], "respuesta": "Hasta 1200 dólares."})
+        tercera = await _turno(c, 2)
+        assert tercera["intake"]["confirmar"] is True
+        resp = await c.post("/guard/compras/contexto",
+                            json={"compra_id": tercera["compra_id"], "confirmar": True})
+        assert resp.status_code == 200, resp.text
+        contexto = (await busqueda).json()["result"]["contextId"]
+        final = [e for e in await eventos(c) if e["tipo"] == "contexto_registrado"][-1]["datos"]
+
+        task = (await checkout(c, contexto, "cart_4")).json()["result"]
+        datos = await _veredicto(c)
+
+    # La memoria confirmada está en los parámetros autorizados (nada queda afuera).
+    (ram,) = [r for r in final["ficha_autorizada"] if r["campo"] == "atributo"]
+    assert (ram["atributo"], ram["operador"], ram["valor"], ram["unidad"]) == (
+        "memoria_ram", "minimo", 16, "GB"
+    )
+    assert final["sin_verificar_guard"] == []
+    # El Guard evaluó con esa ficha (la del intake) y bloqueó por la memoria.
+    ficha = datos["veredicto"]["recibo"]["ficha"]
+    assert ficha["pedido_original"] == PEDIDO_NOTEBOOK
+    assert veredictos(task)[0]["status"] == "bloqueado" and not checkouts(task)
+    bloqueos = [q for q in datos["veredicto"]["chequeos"] if q["resultado"] == "bloquea"]
+    assert [q["campo"] for q in bloqueos] == ["atributo:memoria_ram"]
+
+
+async def test_sin_ficha_de_la_demo_y_sin_compra_el_guard_escala(armar_proxy, config, guard_real):
+    """PROXY_FICHA_DEMO=0, como con un comercio real: sin parámetros autorizados
+    no hay contra qué aprobar."""
+    app = armar_proxy(config=replace(config, ficha_demo=False), evaluador=guard_real)
+    async with cliente_de(app) as c:
+        contexto = await buscar(c, "B")
+        task = (await checkout(c, contexto, "cart_1")).json()["result"]
+        assert await _ap2(c) is None  # sin tope no hay mandato de AP2 que chequear
+    assert veredictos(task)[0]["status"] == "escalar" and not checkouts(task)
+
+
+def test_python_m_proxy_lee_proxy_ficha_demo():
+    from proxy.config import Config
+
+    assert Config.desde_entorno({}).ficha_demo is True
+    assert Config.desde_entorno({"PROXY_FICHA_DEMO": "0"}).ficha_demo is False
+
+
 def test_python_m_proxy_arma_la_fuente_del_fabricante():
     from proxy.__main__ import cargar_fabricante
 
