@@ -72,16 +72,33 @@ bloquea; en C, igual escala el sobreprecio.
 - **Si deja pasar un ataque**, el Guard igual verifica antes de la firma: la
   seguridad no depende del filtro.
 - **Si corta a un proveedor honesto**, se pierde esa negociación, pero no se
-  compra nada que no se autorizó. Lo medimos: 0 de 12 honestos cortados y
-  14 de 14 ataques cortados, en 26 casos de una corrida que escribimos
-  nosotros (muestra chica y optimista). En la prueba real apareció un falso
-  positivo (el eco de nuestro propio pedido) y lo corregimos.
+  compra nada que no se autorizó. Lo medimos: 0 de 18 honestos cortados y
+  18 de 18 ataques cortados con el filtro completo; solo con heurísticas,
+  12 de 18 ataques. Son 36 casos que escribimos nosotros, en dos corridas:
+  muestra chica y optimista, válida "en esta medición". En la prueba real
+  apareció un falso positivo con el eco de nuestro propio pedido y otro con
+  el desafío OTP del comercio honesto; los dos están corregidos.
 - **Si el filtro falla o no responde**, bloquea: nunca aprueba en silencio.
+
+### "¿Y si el filtro no ve la inyección?"
+
+Lo frena el Guard antes de la firma, si la oferta no cumple lo que autorizó
+el usuario. En el caso de las computadoras: el proveedor malicioso ofrece 20
+tablets con una inyección, y declara la entrega para el lunes 26. El pedido es
+para el lunes 19. Si el filtro no viera la inyección, el Guard la frena por
+las entregas, no porque sean tablets.
+
+El hueco, dicho de frente: la ficha no pide un tipo de producto y el Guard no
+compara la categoría de la oferta con la de la ficha. Si las tablets
+declararan 20 para el lunes 19, el veredicto sería `con_avisos` y la compra
+seguiría a la firma. El próximo chequeo a sumar es ese: categoría contra la
+ficha del fabricante por GTIN.
 
 ### "¿Qué hace el modelo y qué el código?"
 
 Los modelos entienden y proponen: el filtro juzga si un texto intenta
 manipular, el intake entiende el pedido (con probabilidades: si duda,
 repregunta) y el detector propone alternativas. El usuario autoriza: confirma
-la ficha y acepta o rechaza cada cambio. El código verifica: el Guard es
-determinístico, no usa LLM y nunca lee el texto del vendedor.
+la ficha y acepta o rechaza cada cambio. El código verifica: el núcleo del
+Guard (`evaluar()`) es determinístico, no usa LLM y no lee el texto libre del
+vendedor.
