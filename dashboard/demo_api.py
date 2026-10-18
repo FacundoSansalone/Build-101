@@ -74,7 +74,9 @@ GRUPOS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("notebook_dato_falso", "miente un dato"),
     )),
     ("Auriculares", (("auriculares_honesto", "honesto"), ("auriculares_malicioso", "inyección"))),
-    ("Computadoras", (("computadoras", "entrega en dos partes"),)),
+    ("Computadoras", (
+        ("computadoras", "entrega en dos partes"), ("computadoras_malicioso", "inyección"),
+    )),
 )
 ESCENARIOS = frozenset(e for _, opciones in GRUPOS for e, _ in opciones)
 ARCHIVO_ESCENARIO = "demo_scenario"  # demo_world.scenario.SCENARIO_FILE_NAME
@@ -679,12 +681,16 @@ async def api_demo_estado(request: Request) -> Response:
 
 async def api_demo_escenarios(request: Request) -> Response:
     cfg: Config = request.app.state.cfg
+    # Solo lo que el comercio conoce (como `fijar_escenario`): un escenario
+    # que world/ todavía no tiene no aparece. Sin demo_world, la lista entera.
+    del_mundo = _escenarios_del_mundo()
     grupos = [
         {
             "categoria": categoria,
             "opciones": [
                 {"id": e, "etiqueta": etiqueta, "pedido": _pedido_de_ejemplo(cfg, e)}
                 for e, etiqueta in opciones
+                if del_mundo is None or e in del_mundo
             ],
         }
         for categoria, opciones in GRUPOS

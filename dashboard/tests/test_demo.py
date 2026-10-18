@@ -888,3 +888,39 @@ def test_la_ruta_y_el_tope_del_pedido_son_los_del_proxy():
 
     assert demo.RUTA_PEDIDO_USUARIO in RUTAS_POST_CONTROL  # con token, Host local y JSON
     assert demo.MAX_TEXTO <= LARGO_MAXIMO  # todo lo que acepta el input entra
+
+
+# ---------------------------------------------------------------------------
+# Computadoras con proveedor malicioso (el escenario lo agrega world/)
+# ---------------------------------------------------------------------------
+
+
+def _opciones(c: TestClient) -> dict[str, list[tuple[str, str]]]:
+    datos = c.get("/api/demo/escenarios").json()
+    return {g["categoria"]: [(o["id"], o["etiqueta"]) for o in g["opciones"]] for g in datos["grupos"]}
+
+
+def test_computadoras_con_inyeccion_si_el_mundo_lo_conoce(tmp_path, monkeypatch):
+    conocidos = {e for _, opciones in demo.GRUPOS for e, _ in opciones}
+    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: conocidos)
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert _opciones(c)["Computadoras"] == [
+            ("computadoras", "entrega en dos partes"), ("computadoras_malicioso", "inyección"),
+        ]
+        r = _post(c, "/api/demo/escenario", {"escenario": "computadoras_malicioso"})
+        assert r.status_code == 200 and r.json()["activo"] == "computadoras_malicioso"
+
+
+def test_un_escenario_que_el_mundo_no_tiene_no_se_ofrece(tmp_path, monkeypatch):
+    """Mientras world/ no tenga `computadoras_malicioso`, el botón no aparece
+    (y elegirlo igual da 400, como hoy)."""
+    sin = {e for _, opciones in demo.GRUPOS for e, _ in opciones} - {"computadoras_malicioso"}
+    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: sin)
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert _opciones(c)["Computadoras"] == [("computadoras", "entrega en dos partes")]
+        assert len(_opciones(c)["Notebook"]) == 3  # el resto, igual
+        assert _post(c, "/api/demo/escenario", {"escenario": "computadoras_malicioso"}).status_code == 400
+    # Sin demo_world (no se puede saber), se ofrece la lista entera.
+    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: None)
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert ("computadoras_malicioso", "inyección") in _opciones(c)["Computadoras"]

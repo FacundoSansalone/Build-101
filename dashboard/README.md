@@ -87,10 +87,13 @@ queda como "Detalle técnico" (`/`).
   de la billetera ✓"). `DEMO_PAUSA_AUTO_S` espacia las respuestas (con el
   plan gratuito de Gemini, 15 pedidos/min, usar 6–8).
 - **Selector de comercio** visible, por categoría (zapatillas, notebook,
-  auriculares, computadoras): `POST /api/demo/escenario {"escenario"}` escribe
+  auriculares, computadoras: "entrega en dos partes" e "inyección", la de
+  las cuatro corridas de FLUJO.md): `POST /api/demo/escenario {"escenario"}` escribe
   `demo_scenario` donde lo lee el comercio (`WORLD_TEMP_DB_DIR`, por defecto
   `world/ap2/.temp-db`, el `TEMP_DB_DIR` de `run_world.sh`), valida contra
   `demo_world.scenario` (solo lectura) y empieza una compra nueva.
+  `GET /api/demo/escenarios` solo ofrece los que `demo_world` conoce (sin
+  `demo_world`, todos): un escenario que world/ todavía no tiene no aparece.
 - **Interruptor "Intermediario: activado/desactivado"**: `POST
   /api/proxy/guard/state` (el reenvío con token de siempre) después de una
   compra nueva. Apagado, el proxy deja fuera filtro, intake, oportunidades y
