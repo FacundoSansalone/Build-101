@@ -274,6 +274,21 @@ def _respondio(eventos: list[dict[str, Any]], herramienta: str) -> bool:
     return any(nombre == herramienta for e in eventos for nombre, _ in _respuestas(e))
 
 
+def _ultima_respuesta(eventos: list[dict[str, Any]], herramientas: set[str]) -> Any:
+    for e in reversed(eventos):
+        for nombre, respuesta in reversed(_respuestas(e)):
+            if nombre in herramientas:
+                return respuesta
+    return None
+
+
+def pide_codigo(eventos: list[dict[str, Any]]) -> bool:
+    """¿La última respuesta del pago es el desafío (OTP)? La herramienta del
+    sample devuelve "Verification required: …" solo en ese caso."""
+    respuesta = _ultima_respuesta(eventos, {"initiate_payment", "initiate_payment_with_otp"})
+    return respuesta is not None and "Verification required" in json.dumps(respuesta)
+
+
 def _textos_en(valor: Any) -> list[str]:
     if isinstance(valor, str):
         return [valor]
@@ -318,32 +333,38 @@ def siguiente_auto(
         return enviados[paso] < TOPES_AUTO[paso]
 
     if estado.get("initiate_payment_task_id"):
-        return PasoAuto("otp", OTP_DEMO) if puede("otp") else None
+        # Solo si el pago pidió el código (si falló, no hay nada que contestar).
+        return PasoAuto("otp", OTP_DEMO) if pide_codigo(eventos) and puede("otp") else None
     if estado.get("checkout_data") and not estado.get("checkout_mandate_sdjwt"):
         # Solo con el checkout firmado en el estado: si el LLM "dice" que lo
         # creó y no está, no se confirma nada (DEMO.md).
         if autor == "root_agent" and puede("confirmar"):
             return PasoAuto("confirmar", "Sí, confirmo la compra.")
         return None
+    seguir = PasoAuto("continuar", "Sí, seguí.")
     if autor == "payment_method_collector" and not estado.get("payment_credential_token"):
         alias = alias_de_tarjeta(eventos)
-        if alias is None or not puede("tarjeta"):
+        if alias is None:
+            # Contó su plan y espera antes de pedir la lista: que siga.
+            return seguir if puede("continuar") else None
+        if not puede("tarjeta"):
             return None
         digitos = re.findall(r"\d{4}", alias)
         return PasoAuto("tarjeta", alias, digitos[-1] if digitos else None)
-    if autor == "shipping_address_collector" and not _respondio(eventos, "get_shipping_address"):
+    direccion = _respondio(eventos, "get_shipping_address")
+    if autor == "shipping_address_collector" and not direccion:
         if not puede("billetera"):
             return None
         if enviados["billetera"] == 0:
             return PasoAuto("billetera", "Quiero usar mi billetera digital: Google Wallet.")
         return PasoAuto("billetera", "Sí, está bien.")
     if (
-        autor == "root_agent"
+        autor in ("root_agent", "shipping_address_collector")
         and not estado.get("checkout_data")
-        and _respondio(eventos, "get_shipping_address")
+        and direccion
         and puede("continuar")
     ):
-        return PasoAuto("continuar", "Sí, seguí.")
+        return seguir
     return None
 
 
@@ -506,8 +527,14 @@ class Conversacion:
                     if generacion != self._generacion:
                         return
                     paso = siguiente_auto(estado, eventos, self.enviados) if self.auto else None
-                    for autor, t in textos:
-                        self.registrar("agente", texto=t, autor=autor, oculto=paso is not None)
+                    # En modo demo, después de elegir el producto, la narración
+                    # del cobro no aporta: se ve solo lo último que dice el
+                    # agente cuando espera al usuario.
+                    narracion = self.auto and bool(estado.get("chosen_cart_id"))
+                    for i, (autor, t) in enumerate(textos):
+                        ultimo = i == len(textos) - 1
+                        oculto = paso is not None or (narracion and not ultimo)
+                        self.registrar("agente", texto=t, autor=autor, oculto=oculto)
                     if estado.get("payment_receipt") and self.fin != "pagado":
                         self.fin = "pagado"
                         cart_id = estado.get("chosen_cart_id")

@@ -275,12 +275,52 @@ def test_confirmacion_solo_con_el_checkout_firmado_en_el_estado():
 
 
 def test_otp_y_fin_con_el_recibo():
-    eventos = _sesion(ev("root_agent", texto="Enter the OTP"))
+    eventos = _sesion(
+        ev("root_agent", respuesta=("initiate_payment", {"result": "Verification required: enter the code"})),
+        ev("root_agent", texto="Enter the OTP"),
+    )
     estado = {"chosen_cart_id": "cart_1", "checkout_data": {}, "checkout_mandate_sdjwt": "x",
               "initiate_payment_task_id": "task-1"}
     paso = demo.siguiente_auto(estado, eventos, Counter())
     assert paso.paso == "otp" and paso.texto == "123"
     assert demo.siguiente_auto({**estado, "payment_receipt": {"id": "r"}}, eventos, Counter()) is None
+
+
+def test_sin_desafio_del_pago_no_se_manda_el_otp():
+    """Visto en la punta a punta: el pago falló (el filtro cortó la respuesta)
+    y el estado igual tenía la tarea del pago; sin el desafío no hay OTP."""
+    estado = {"chosen_cart_id": "cart_1", "checkout_data": {}, "checkout_mandate_sdjwt": "x",
+              "initiate_payment_task_id": "task-1"}
+    fallido = _sesion(
+        ev("root_agent", respuesta=("initiate_payment", {"result": "Status: failed"})),
+        ev("root_agent", texto="The payment failed. Do you want to try again?"),
+    )
+    assert demo.siguiente_auto(estado, fallido, Counter()) is None
+    # Un desafío viejo no cuenta si la última respuesta del pago falló.
+    viejo = _sesion(
+        ev("root_agent", respuesta=("initiate_payment", {"result": "Verification required: code"})),
+        ev("root_agent", respuesta=("initiate_payment_with_otp", {"result": "Status: failed"})),
+        ev("root_agent", texto="It failed."),
+    )
+    assert demo.siguiente_auto(estado, viejo, Counter(otp=1)) is None
+
+
+def test_el_cobro_sin_lista_de_tarjetas_todavia_sigue():
+    """El agente de la tarjeta a veces cuenta su plan y espera antes de pedir
+    la lista: se le dice que siga."""
+    eventos = _sesion(
+        ev("shipping_address_collector", respuesta=("get_shipping_address", {"city": "x"})),
+        ev("payment_method_collector", texto="1. Obtener tus métodos de pago 2. Presentarlos"),
+    )
+    paso = demo.siguiente_auto({"chosen_cart_id": "cart_1"}, eventos, Counter())
+    assert paso.paso == "continuar" and paso.texto.lower().startswith("sí")
+    assert demo.siguiente_auto({"chosen_cart_id": "cart_1"}, eventos, Counter(continuar=3)) is None
+    # Ya con la dirección, el que narra puede ser el de la dirección.
+    narra = _sesion(
+        ev("shipping_address_collector", respuesta=("get_shipping_address", {"city": "x"})),
+        ev("shipping_address_collector", texto="Status: transfiero al root_agent."),
+    )
+    assert demo.siguiente_auto({"chosen_cart_id": "cart_1"}, narra, Counter()).paso == "continuar"
 
 
 def test_despues_de_un_bloqueo_del_guard_no_se_contesta_nada():
@@ -389,6 +429,22 @@ def test_modo_demo_contesta_solo_billetera_tarjeta_confirmacion_y_otp(tmp_path):
     assert visibles == ["Options... which one?", "Your payment was successful!"]
     assert mensajes[-1]["tipo"] == "pago" and mensajes[-1]["cart_id"] == "cart_1"
     assert estado["fin"] == "pagado"
+
+
+def test_en_modo_demo_la_narracion_del_cobro_no_se_muestra(tmp_path):
+    """Después de elegir el producto, en modo demo solo se ve lo último que
+    dice el agente cuando espera al usuario (la narración intermedia, no)."""
+    adk = FakeADK([[
+        ev("root_agent", texto="Status: Dirección recibida.", delta={"chosen_cart_id": "cart_1"}),
+        ev("root_agent", texto="Status: delegando al cobro."),
+        ev("root_agent", texto="¿Querés elegir otro producto?"),
+    ]])
+    with TestClient(_app(tmp_path, adk=adk), base_url=BASE) as c:
+        _post(c, "/api/demo/mensaje", {"texto": "la primera"})
+        estado = _esperar(c)
+    agente = [(m["texto"], m["oculto"]) for m in estado["mensajes"] if m["tipo"] == "agente"]
+    assert agente == [("Status: Dirección recibida.", True), ("Status: delegando al cobro.", True),
+                      ("¿Querés elegir otro producto?", False)]
 
 
 def test_con_el_modo_demo_apagado_no_contesta_nada(tmp_path):
