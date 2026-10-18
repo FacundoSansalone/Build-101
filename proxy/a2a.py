@@ -383,7 +383,37 @@ def _es_entero(v: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_CART_ID_SEGURO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+
+
+def veredicto_para_agente(veredicto_json: dict[str, Any]) -> dict[str, Any]:
+    """La versión del veredicto que va al agente, sin texto del comercio.
+
+    Solo `status` y `motivo` (los arma guard/ con plantillas fijas), el
+    `cart_id_elegido` si es un identificador seguro (si no, None) y los
+    chequeos con `tipo` y `resultado`. Nada de `observado`, `esperado`,
+    `detalle`, `campo`, ranking ni recibo (`verificaciones[].declarado`): eso
+    va completo al dashboard en el evento `veredicto`.
+    """
+    cart_id = veredicto_json.get("cart_id_elegido")
+    chequeos = veredicto_json.get("chequeos")
+    return {
+        "status": veredicto_json.get("status"),
+        "motivo": veredicto_json.get("motivo"),
+        "cart_id_elegido": cart_id
+        if isinstance(cart_id, str) and _CART_ID_SEGURO.fullmatch(cart_id)
+        else None,
+        "chequeos": [
+            {"tipo": c.get("tipo"), "resultado": c.get("resultado")}
+            for c in (chequeos if isinstance(chequeos, list) else [])
+            if isinstance(c, dict)
+        ],
+    }
+
+
 def artefacto_veredicto(veredicto_json: dict[str, Any]) -> dict[str, Any]:
+    """El artefacto `guard.veredicto` (para el agente: pasale la versión de
+    `veredicto_para_agente`)."""
     return {
         "artifactId": f"guard-veredicto-{uuid.uuid4().hex}",
         "name": GUARD_VEREDICTO_KEY,

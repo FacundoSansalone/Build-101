@@ -176,7 +176,9 @@ class Decision:
         ).model_dump(mode="json")
 
     def artefacto(self) -> dict[str, Any]:
-        return a2a.artefacto_veredicto(self.veredicto_json())
+        """El artefacto para el agente: versión reducida, sin texto del
+        comercio (N5). El completo va al dashboard en el evento `veredicto`."""
+        return a2a.artefacto_veredicto(a2a.veredicto_para_agente(self.veredicto_json()))
 
 
 @dataclass

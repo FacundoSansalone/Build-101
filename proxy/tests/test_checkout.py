@@ -89,9 +89,11 @@ async def test_aprobado_checkout_byte_identico_y_veredicto_aparte(
     # El veredicto viaja en un artefacto aparte.
     extra = task["artifacts"][len(original["artifacts"]) :]
     assert len(extra) == 1
-    veredicto = Veredicto.model_validate(extra[0]["parts"][0]["data"][GUARD_VEREDICTO_KEY])
-    assert veredicto.status == "aprobado"
-    assert veredicto.cart_id_elegido == "cart_1"
+    # Al agente va la versión reducida (N5): status, motivo, cart y chequeos.
+    veredicto = extra[0]["parts"][0]["data"][GUARD_VEREDICTO_KEY]
+    assert set(veredicto) == {"status", "motivo", "cart_id_elegido", "chequeos"}
+    assert veredicto["status"] == "aprobado"
+    assert veredicto["cart_id_elegido"] == "cart_1"
     # El cliente A2A del SDK acepta la respuesta.
     SendMessageResponse.model_validate(resp.json())
 
@@ -139,10 +141,10 @@ async def test_bloqueado_tarea_failed_sin_checkout(
     assert task["status"]["state"] == "failed"
     assert _checkouts(task) == []  # no se presenta para firma
     assert merchant.ultimo_checkout["checkout_jwt"].encode() not in resp.content
-    veredicto = Veredicto.model_validate(_veredictos(task)[0])
-    assert veredicto.status == "bloqueado"
+    veredicto = _veredictos(task)[0]  # versión reducida para el agente (N5)
+    assert veredicto["status"] == "bloqueado"
     texto = task["status"]["message"]["parts"][0]["text"]
-    assert veredicto.motivo in texto
+    assert veredicto["motivo"] in texto
     assert task["status"]["message"]["taskId"] == task["id"]
     assert task["status"]["message"]["contextId"] == contexto
     parsed = SendMessageResponse.model_validate(resp.json())
