@@ -87,9 +87,9 @@ Actualizar esta tabla al pasar cada punto de control.
 
 | Dev | Fase actual | Hecho | Siguiente | Bloqueado por |
 |---|---|---|---|---|
-| Dev 1 (`world/`, `filtro/`) | Etapa 2 | Benchmark con LLM, 10 corridas, por el proxy y con Guard (`results/`); la UI de ADK muestra el motivo del Guard; `world/bench_con_pausa.py`; compra completa en la UI con B | Detección de malicia y escenarios de computadoras ([sección 7](#7-etapa-2-flujo-único)) | Contrato de la etapa 2 |
-| Dev 2 (`guard/`, `intencion/`) | Etapa 2 | Ficha, extractor, verificador, 4 chequeos + mandato + atadura del checkout firmado, veredicto, recibo ES256, adaptador, ficha con LLM; ronda de revisión cerrada | Contexto, detector de oportunidades y Guard con parámetros por compra ([sección 7](#7-etapa-2-flujo-único)) | Contrato de la etapa 2 |
-| Dev 3 (`proxy/`, `dashboard/`) | Etapa 2 | Proxy `:8010` con Guard real, interruptor, eventos SSE, aprobación humana para `escalar`, registro opcional en Supabase; dashboard `:8020` con momento clave, recibo verificado en el navegador y gráfico; ensayo de B grabado; ronda de revisión cerrada | Cadena de etapas en el proxy y chat de nuestro agente ([sección 7](#7-etapa-2-flujo-único)) | Contrato de la etapa 2 |
+| Dev 1 (`world/`, `filtro/`) | Etapa 2 | Benchmark con LLM, 10 corridas, por el proxy y con Guard (`results/`); la UI de ADK muestra el motivo del Guard; `world/bench_con_pausa.py`; compra completa en la UI con B | Hecho: filtro y escenarios de computadoras (sección 7, puntos 1 y 2). Siguiente: a definir por el equipo | Contrato de la etapa 2 |
+| Dev 2 (`guard/`, `intencion/`) | Etapa 2 | Ficha, extractor, verificador, 4 chequeos + mandato + atadura del checkout firmado, veredicto, recibo ES256, adaptador, ficha con LLM; ronda de revisión cerrada | Hecho: contexto, detector y Guard con parámetros por compra (sección 7, puntos 5 a 8). Siguiente: a definir; hueco conocido: la categoría de producto no entra en la verificación (ver [PREGUNTAS_DEL_JURADO](PREGUNTAS_DEL_JURADO.md)) | Contrato de la etapa 2 |
+| Dev 3 (`proxy/`, `dashboard/`) | Etapa 2 | Proxy `:8010` con Guard real, interruptor, eventos SSE, aprobación humana para `escalar`, registro opcional en Supabase; dashboard `:8020` con momento clave, recibo verificado en el navegador y gráfico; ensayo de B grabado; ronda de revisión cerrada | Hecho: cadena de etapas, API y vista Agente (sección 7, puntos 9 a 11). Siguiente: a definir por el equipo | Contrato de la etapa 2 |
 
 Punto de control 3 (B de punta a punta, con y sin Guard): probado por A2A
 real con `proxy/scripts/smoke_checkout.py` y el benchmark por `:8010`, y a
@@ -150,9 +150,10 @@ Propuesta inicial; se ajusta al acordarla.
 - `Oportunidad`: id, `contexto_id`, `cart_id`, cambios campo por campo
   (original → propuesto), por qué podría servir y parámetros propuestos.
 - `Requisito` y `Oferta`: cantidad y cronograma de entregas.
-- Tipos nuevos de `Evento`: `pedido_detectado`, `contexto_registrado`,
-  `filtro_bloqueo`, `oportunidad`, `oportunidad_aceptada` y
-  `oportunidad_rechazada`.
+- Tipos nuevos de `Evento` (`contracts/models.py`): `pedido_detectado`,
+  `contexto_registrado`, `oportunidad` y `oportunidad_decidida` (con
+  `datos.decision`: `aceptada`, `rechazada` o `vencida`). El corte del filtro
+  no tiene tipo propio: es un `bloqueado` con `datos.etapa = "seguridad"`.
 - El `Status` del Guard no cambia.
 
 ### Qué falta, por dev
@@ -218,9 +219,14 @@ Propuesta inicial; se ajusta al acordarla.
 
    Los parámetros autorizados se guardan por compra (`context_id`), en lugar
    del pedido global de `fuentes.py`. Falla cerrado, como hoy.
-10. **API nueva**, con la misma protección que el resto de `/guard/*`:
-    - `POST /guard/contexto`: la respuesta del porqué, u "omitir";
-    - `POST /guard/oportunidades/<id>/decision`: `aceptar` o `rechazar`.
+10. **API nueva**, con la misma protección que el resto de `/guard/*` (token
+    `X-Guard-Token`; ver [proxy/README.md](../proxy/README.md#etapa-2-contexto-filtro-y-oportunidad)):
+    - `POST /guard/compras/contexto`: `{compra_id, respuesta}` (el porqué),
+      `{compra_id, omitir: true}` o `{compra_id, confirmar: true}` (la ficha
+      del intake);
+    - `POST /guard/compras/decision`: `{compra_id, decision: "aceptar" | "rechazar"}`;
+    - `POST /guard/compras/pedido` (no estaba en el plan): el primer mensaje
+      del usuario en `/demo`, para el intake de la próxima compra.
 11. **Dashboard:**
     - el chat de nuestro agente: la pregunta, la respuesta y la consulta con
       Aceptar y Rechazar;
@@ -242,15 +248,15 @@ corrida por caso, casos escritos por nosotros): sirven para el pitch como
 | Tarea | Estado |
 |---|---|
 | Contrato | Hecho y aditivo; falta que lo revisen los tres (ver CLAUDE.md → Decisiones). La integración no lo cambió |
-| 1. Filtro (Dev 1) | Hecho (`filtro/`: heurísticas + tres preguntas a OpenAI Decisions, falla cerrado, motivos fijos). Medido en 26 casos, una corrida: detecta 14/14 maliciosos con 0/12 falsos positivos (heurísticas solas: 12/14). En la prueba de punta a punta apareció un falso positivo con el eco del pedido en el `history`: lo corrige el proxy |
+| 1. Filtro (Dev 1) | Hecho (`filtro/`: heurísticas + tres preguntas a OpenAI Decisions, falla cerrado, motivos fijos). Medido en 36 casos, dos corridas: filtro completo 18/18 maliciosos bloqueados con 0/18 falsos positivos (solo heurísticas: 12/18; modelo solo: 17/18). Lo medido en 26 casos (14/14) quedó superado. En la prueba de punta a punta apareció un falso positivo con el eco del pedido en el `history` (lo corrige el proxy) y otro con el desafío OTP (corregido, 0,00 en 5 de 5) |
 | 2. Escenarios de computadoras en `world/` (Dev 1) | Hechos en `world/` y exportados a `fixtures/etapa2/`: `computadoras` (honesto) y `computadoras_malicioso` (inyección para comprar tablets dentro del tope; `filtro/casos.py` usa su texto real) |
 | 3. `find_products` lee los parámetros autorizados | Hecho (`shopper/tools.py`, anotado en `NOTICE.md`) |
-| 4. Medir las corridas sin sistema | Falta |
+| 4. Medir las corridas sin sistema | Hecho a mano el 2026-10-18 (una corrida por caso, prueba de punta a punta en Windows; resultados en [FLUJO §5](FLUJO.md#5-la-demo-cuatro-corridas-del-mismo-flujo)). No es una muestra estadística |
 | 5 y 6. Contexto y detector (`intencion/`) | Hecho, con tests. Intake con decisiones: repregunta lo que falta (umbrales 0,80/0,60, hasta 3 repreguntas) y confirma la ficha; con atributos y la taxonomía de Google |
 | 7. Medir el detector con Gemini real | Hecho: 9/9 (`gemini-3.1-flash-lite-preview`, 3 casos × 3; `python -m intencion.evaluar_casos`). Intake con OpenAI Decisions: 60/60 decisiones de repreguntar o no en el turno 0 (12 pedidos), 0 valores resueltos equivocados |
 | 8. Guard con los parámetros de la compra | Hecho (`cantidad`, `entregas`, `cubre`, atributos con unidades, `minimo`, fuentes de verdad en orden y ficha del fabricante) |
 | 9 y 10. Etapas en el proxy y API | Hecho, con tests contra el comercio falso y una prueba de punta a punta real (abajo) |
-| 11. Dashboard: vista Agente | Hecho (pestaña 7, `#agente`), con tests de Python y JS; la oferta de una consulta se nombra con su título público o el SKU |
+| 11. Dashboard: vista Agente | Hecho (pestaña 7, `#agente`), con tests de Python y JS; la oferta de una consulta se nombra con su título público o el SKU. En `/demo`, el diagrama muestra las etapas (filtro, intención, verificación) y la comparación con y sin intermediario. Falta la línea "Contexto → Seguridad → Intención → Usuario → Firma" como vista propia |
 | 12. Supabase | No se hizo (opcional) |
 | Integración (`etapa2/integracion`) | Hecho: ficha de la demo con atributos y taxonomía en el proxy y el dashboard; fabricante consultado por el proxy antes de `evaluar()` (`FABRICANTE_FUENTE`, registrado en el evento `veredicto`); AP2 con el tope de cada compra; atributos confirmados en la ficha autorizada (el Guard publica `CAMPOS_SOPORTADOS`/`OPERADORES_SOPORTADOS`); taxonomía en el intake; título público en la consulta; `Compra.nueva_espera()`; `PROXY_FICHA_DEMO=0`; escenario `notebook_dato_falso` |
 
@@ -271,6 +277,17 @@ memoria ≥ 16 GB, taxonomía 328 Laptops) → el filtro deja pasar
 firma: "memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)" con el
 fabricante (fixture rotulado); AP2 no lo frenaba (USD 899 ≤ 1.200). Con
 `notebook_malicioso`, el filtro corta en las heurísticas.
+
+**Prueba de punta a punta del 2026-10-18 con `deploy/start_all.sh`** (Windows,
+agentes reales: Gemini flash-lite en el agente de compras y el detector,
+OpenAI Decisions en el intake): las cuatro corridas de computadoras, con su
+resultado en [FLUJO §5](FLUJO.md#5-la-demo-cuatro-corridas-del-mismo-flujo).
+Sin sistema, el malicioso paga 20 tablets (USD 9.000) y el honesto, 10 + 10
+el viernes (USD 17.000). Con sistema, el malicioso se corta en Seguridad y el
+honesto se paga 10 + 10 el miércoles (USD 18.000) tras la consulta. En
+notebooks, con "Comprá la más barata que cumpla.", el Guard frena la Zento
+Slim 14 antes de la firma (el filtro no la ve: no hay texto hostil). Una
+corrida por caso: muestra chica.
 
 ### Orden y puntos de control
 
