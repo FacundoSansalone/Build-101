@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,27 @@ def test_escenarios_con_inyeccion_tienen_senales(nombre):
     datos = json.loads((FIXTURES / f"scenario_{nombre}.json").read_text("utf-8"))
     textos = [c["item_label"] for c in datos["carts"]]
     assert "heuristica:instruccion_ia" in revisar(textos)
+
+
+ADVERSARIOS = {
+    "punto_y_espacios": ". " + " " * 200_000 + "x",
+    "corchete_y_espacios": "[" + " " * 200_000 + "x",
+    "angulo_y_saltos": "<" + "\n" * 200_000 + "x",
+    "saludo_y_saltos": "hi" + "\n" * 200_000 + "x",
+    "imagenes_sin_cierre": "![" * 100_000,
+    "urls_pegadas": "http://a.b/" * 50_000,
+    "ignore_repetido": "ignore " + "the " * 100_000 + "x",
+    "display_y_espacios": "display" + " " * 200_000 + "x",
+}
+
+
+@pytest.mark.parametrize("nombre", sorted(ADVERSARIOS))
+def test_textos_hechos_para_trabar_las_regex_terminan_rapido(nombre):
+    # Un proveedor no puede dejar un hilo del proxy clavado con una regex
+    # cuadrática (el proxy corta a los 30 s, pero el hilo seguiría corriendo).
+    inicio = time.perf_counter()
+    revisar([ADVERSARIOS[nombre]])
+    assert time.perf_counter() - inicio < 3.0
 
 
 def test_las_senales_son_codigos_cortos_sin_texto_del_proveedor():

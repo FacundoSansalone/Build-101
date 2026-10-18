@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -113,8 +115,11 @@ def _evaluar_modelo(fila: Fila, medido: ClienteMedido) -> None:
     except SinPresupuesto:
         fila.modelo = SIN_EVALUAR
         return
-    except Exception:  # noqa: BLE001 - se informa como error, no se oculta
-        fila.modelo = ERROR
+    except Exception as e:  # noqa: BLE001 - se informa como error, no se oculta
+        # Solo el tipo y el código HTTP: el cuerpo del error puede repetir datos
+        # del pedido o pedazos de la clave.
+        codigo = re.search(r"HTTP (\d{3})", str(e))
+        fila.modelo = f"{ERROR} ({type(e).__name__}{' ' + codigo.group(1) if codigo else ''})"
         return
     fila.probabilidades = dict(juicio.probabilidades)
     fila.modelo = BLOQUEA if (juicio.senales or juicio.sin_respuesta) else PASA
@@ -270,7 +275,14 @@ def main(argv: list[str] | None = None, *, cliente: ClienteDecisiones | None = N
     else:
         cliente = None
 
-    filas, medido = evaluar(casos(), cliente, max(0, args.max_llamadas))
+    # Cada caso fuera del presupuesto haría un aviso del filtro: la tabla ya lo dice.
+    registro = logging.getLogger("filtro")
+    nivel = registro.level
+    registro.setLevel(logging.ERROR)
+    try:
+        filas, medido = evaluar(casos(), cliente, max(0, args.max_llamadas))
+    finally:
+        registro.setLevel(nivel)
     print(_json(filas, medido) if args.json else imprimir(filas, medido))
     return 0
 

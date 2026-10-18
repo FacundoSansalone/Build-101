@@ -218,10 +218,14 @@ _COMPILADOS = {
 # Patrones sobre el texto tal cual (mayúsculas, guiones bajos, URLs)
 # ---------------------------------------------------------------------------
 
+# Sobre texto que puede traer miles de blancos seguidos: sin cuantificadores
+# vecinos que puedan repartirse lo mismo (eso es cuadrático) y con topes.
 _CRUDOS: dict[str, tuple[re.Pattern[str], ...]] = {
     MARCADOR_ROL: (
         # "SYSTEM:" al principio o después de un punto (no "OPERATING SYSTEM:")
-        re.compile(r"(?:^|[\n.!?\]\)]\s*)\W{0,3}\s*(?:SYSTEM|ASSISTANT|DEVELOPER|ADMIN)\s*:"),
+        re.compile(
+            r"(?:^|[\n.!?\]\)])[ \t]*(?:[^\w\s]{1,3}[ \t]*)?(?:SYSTEM|ASSISTANT|DEVELOPER|ADMIN)[ \t]*:"
+        ),
         re.compile(r"<\|[^|>\s]{1,30}\|>"),
     ),
     HERRAMIENTAS: (
@@ -234,8 +238,9 @@ _CRUDOS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"[\"'](?:tool_calls?|function_call|tool_use|tool_code)[\"']", re.IGNORECASE),
     ),
     EXFILTRACION: (
-        re.compile(r"!\[[^\]]*\]\(\s*https?://[^)\s]*\?[^)\s]*="),  # imagen markdown con datos
-        re.compile(r"https?://\S*[?&]\w+=\{", re.IGNORECASE),        # URL con plantilla {dato}
+        # imagen markdown con datos en la URL: ![x](https://host/p?d=...)
+        re.compile(r"!\[[^\]\n]{0,200}\]\([ \t]{0,10}https?://[^)\s?]{0,500}\?[^)\s]{0,500}="),
+        re.compile(r"[?&]\w{1,50}=\{"),  # parámetro con plantilla: ?card={card_number}
     ),
     TEXTO_OCULTO: (
         re.compile(r"<!--"),

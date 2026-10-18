@@ -23,8 +23,10 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
-MAX_NODOS = 50_000           # valores recorridos (dicts, listas, escalares, claves)
-MAX_CARACTERES = 1_000_000   # suma de todos los textos
+# Una respuesta real tiene unos pocos KB (con mandatos SD-JWT en el history,
+# decenas). Los topes acotan el peor caso de las heurísticas a ~2 s de CPU.
+MAX_NODOS = 50_000         # valores recorridos (dicts, listas, escalares, claves)
+MAX_CARACTERES = 300_000   # suma de todos los textos
 
 
 class RespuestaExcesiva(ValueError):
@@ -65,7 +67,11 @@ GRIEGAS_CONFUSABLES = frozenset(c for c in _HOMOGLIFOS if "GREEK" in unicodedata
 
 _SEPARADORES = re.compile(r"[_\-‐-―~*|\\/]+")
 _PUNTO_ENTRE_LETRAS = re.compile(r"(?<=[a-z])\.(?=[a-z])")
-_BLANCOS = re.compile(r"[ \t\r\f\v]+")
+_BLANCOS = re.compile(r"\s+")
+
+
+def _un_blanco(m: re.Match[str]) -> str:
+    return "\n" if "\n" in m.group() else " "
 
 
 def normalizar(texto: str) -> str:
@@ -79,7 +85,10 @@ def normalizar(texto: str) -> str:
     t = "".join(c for c in t if not unicodedata.combining(c)).casefold()
     t = _SEPARADORES.sub(" ", t)
     t = _PUNTO_ENTRE_LETRAS.sub(" ", t)
-    return _BLANCOS.sub(" ", t)
+    # Cada tramo de blancos queda en un carácter (un salto de línea si tenía
+    # alguno): así ningún patrón con \s* o \s+ se vuelve cuadrático con miles
+    # de blancos seguidos.
+    return _BLANCOS.sub(_un_blanco, t)
 
 
 _PALABRA = re.compile(r"\b[^\W\d_]{2,}\b")
