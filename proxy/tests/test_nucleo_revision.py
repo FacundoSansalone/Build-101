@@ -3,10 +3,12 @@ marcas de tiempo, eventos privados, seguridad y robustez."""
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
 import logging
 import socket
+import threading
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -602,3 +604,55 @@ def test_profundidad_de_mas_es_iterativa():
     assert a2a.anidado_de_mas({"a": [1, {"b": [2]}]}, 3)
     assert a2a.anidado_de_mas(_anidado(100_000), 64)  # sin RecursionError
     assert not a2a.anidado_de_mas("texto", 0)
+
+
+# ---------------------------------------------------------------------------
+# Hilos propios: el filtro no espera detrás de un LLM o un fabricante colgado
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_con_el_pool_del_llm_lleno_el_filtro_sigue_respondiendo(armar_proxy):
+    import httpx
+    from contracts import ResultadoFiltro
+
+    filtrados: list[int] = []
+
+    def filtro(respuesta):
+        filtrados.append(1)
+        return ResultadoFiltro(pasa=True)
+
+    app = armar_proxy(filtro=filtro)
+    proxy = app.state.proxy
+    soltar = threading.Event()
+    # `wait_for` corta la espera del LLM, no el hilo: siguen ocupados.
+    colgadas = [
+        asyncio.create_task(proxy._llm(soltar.wait, 10))
+        for _ in range(proxy.ejecutor_llm._max_workers + 2)
+    ]
+    try:
+        await asyncio.sleep(0.1)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost:8010"
+        ) as c:
+            resp = await asyncio.wait_for(
+                c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A), 5
+            )
+        assert resp.status_code == 200 and filtrados == [1]
+        assert texto_estado(resp.json()["result"]) == ""  # pasó el filtro: no hay corte
+    finally:
+        soltar.set()
+        for tarea in colgadas:
+            tarea.cancel()
+        await asyncio.gather(*colgadas, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_el_lifespan_cierra_los_hilos_propios(armar_proxy):
+    app = armar_proxy()
+    proxy = app.state.proxy
+    async with app.router.lifespan_context(app):
+        assert await proxy._llm(lambda: 41 + 1) == 42
+    for ejecutor in (proxy.ejecutor_filtro, proxy.ejecutor_llm):
+        with pytest.raises(RuntimeError):
+            ejecutor.submit(lambda: None)  # ya cerrado

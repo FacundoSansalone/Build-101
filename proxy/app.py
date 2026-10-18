@@ -26,6 +26,7 @@ aplica el veredicto y bloquea lo que no pudo evaluar (fail-closed).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import functools
 import hmac
@@ -33,7 +34,8 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
@@ -245,6 +247,11 @@ _MINIMO_TAXONOMIA_S = 10.0
 _TIMEOUT_LLM_S = 45.0
 _TIMEOUT_FILTRO_S = 30.0
 _TIMEOUT_FABRICANTE_S = 15.0  # todas las consultas de una compra (Icecat: 3 s cada una)
+# Hilos propios: el filtro en uno y el LLM y el fabricante en otro. `wait_for`
+# corta la espera, no el hilo: con el pool compartido de asyncio, unos LLM
+# colgados dejaban al filtro (lo primero de cada respuesta) sin hilos.
+HILOS_FILTRO = 16
+HILOS_LLM = 16
 MAX_INTAKES = 200  # estados de intake en memoria (como las compras)
 
 AccionEtapa2 = Literal["pasar", "con_parametros", "vencida", "bloqueada", "contexto_ajeno"]
@@ -506,6 +513,10 @@ class ProxyGuard:
         # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
         self.agente = agente
         self.filtro = filtro
+        # Los cierra el lifespan de `create_app`. Públicos: `/v1` sin estado
+        # (`sin_estado`) también corre el filtro y el fabricante en estos.
+        self.ejecutor_filtro = ThreadPoolExecutor(HILOS_FILTRO, thread_name_prefix="kaiai-filtro")
+        self.ejecutor_llm = ThreadPoolExecutor(HILOS_LLM, thread_name_prefix="kaiai-llm")
         # Fuente del fabricante por GTIN (fabricante.FuenteFabricante): la arma
         # `python -m proxy` (FABRICANTE_FUENTE, por defecto el fixture). Sin
         # fuente, lo obligatorio que solo declara el comercio escala.
@@ -561,6 +572,22 @@ class ProxyGuard:
         """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
         ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
         return self.config.demo_hoy or date.today()
+
+    async def _en_hilo(
+        self, ejecutor: ThreadPoolExecutor, funcion: Callable[..., Any], *args: Any
+    ) -> Any:
+        """Como `asyncio.to_thread` (con el contexto), pero en un pool propio.
+        Si la espera se cancela antes de que tome un hilo, no corre."""
+        contexto = contextvars.copy_context()
+        return await asyncio.get_running_loop().run_in_executor(
+            ejecutor, functools.partial(contexto.run, funcion, *args)
+        )
+
+    def cerrar_hilos(self) -> None:
+        """Al apagar: sin esperar a los que siguen corriendo (un LLM colgado)
+        y descartando los que no empezaron."""
+        for ejecutor in (self.ejecutor_filtro, self.ejecutor_llm):
+            ejecutor.shutdown(wait=False, cancel_futures=True)
 
     def _emitir(
         self,
@@ -1657,8 +1684,11 @@ class ProxyGuard:
         return max(0.0, _PRESUPUESTO_LLAMADA_S - (time.monotonic() - llamada.inicio))
 
     async def _llm(self, funcion: Any, *args: Any) -> Any:
-        """Una llamada al agente de intención, en un hilo y con tope de tiempo."""
-        return await asyncio.wait_for(asyncio.to_thread(funcion, *args), _TIMEOUT_LLM_S)
+        """Una llamada al agente de intención, en un hilo (el pool del LLM) y
+        con tope de tiempo."""
+        return await asyncio.wait_for(
+            self._en_hilo(self.ejecutor_llm, funcion, *args), _TIMEOUT_LLM_S
+        )
 
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
         """La ficha confirmada de la demo para ese escenario (si hay), con los
@@ -1952,7 +1982,8 @@ class ProxyGuard:
         revisar = a2a.sin_eco_del_pedido(objetivo, llamada.pedido.mensaje)
         try:
             salida = await asyncio.wait_for(
-                asyncio.to_thread(self.filtro, copy.deepcopy(revisar)), _TIMEOUT_FILTRO_S
+                self._en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(revisar)),
+                _TIMEOUT_FILTRO_S,
             )
             veredicto = (
                 salida
@@ -2416,7 +2447,8 @@ class ProxyGuard:
         gtins = gtins_de_ofertas(offer_details, catalogo)
         try:
             resultados = await asyncio.wait_for(
-                asyncio.to_thread(consultar_gtins, self.fabricante, gtins), _TIMEOUT_FABRICANTE_S
+                self._en_hilo(self.ejecutor_llm, consultar_gtins, self.fabricante, gtins),
+                _TIMEOUT_FABRICANTE_S,
             )
         except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala
             logger.warning("La fuente del fabricante no respondió: %s", type(e).__name__)
@@ -3187,6 +3219,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         yield
+        proxy.cerrar_hilos()
         if despachador is not None:
             await despachador.cerrar()
         await proxy.en_fondo.cerrar()

@@ -319,7 +319,10 @@ Reglas que no dependen de la demo:
   llamada (los plazos se recortan a lo que queda), y cada llamada al agente
   de intención tiene un tope de 45 s.
 - **Filtro.** Corre en un hilo, con un tope de 30 s. Si vence o falla,
-  bloquea. Revisa también los errores del comercio, los `result` que no son
+  bloquea. Tiene su propio pool (`ProxyGuard.ejecutor_filtro`, 16 hilos) y el
+  agente de intención y el fabricante, otro (`ejecutor_llm`, 16): un LLM
+  colgado sigue ocupando su hilo después del tope y, con el pool compartido
+  de asyncio, dejaba al filtro sin hilos. El lifespan los cierra sin esperar. Revisa también los errores del comercio, los `result` que no son
   objeto y cada evento de un stream. Lo que no se puede leer, con filtro, no
   se reenvía.
 - **Streams (SSE).** El filtro corta evento por evento. La respuesta no se
