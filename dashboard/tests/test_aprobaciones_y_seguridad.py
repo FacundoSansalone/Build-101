@@ -150,3 +150,114 @@ def test_reenvio_del_panel_pasa_host_origin_y_content_type_del_proxy(tmp_path):
                headers={"Origin": BASE})
     assert r.status_code == 409
     assert c.get("/api/proxy/guard/aprobaciones").json() == {"pendientes": [], "usadas": []}
+
+
+# ---------------------------------------------------------------------------
+# N4: el panel agrega el token del proxy en su reenvío (el navegador no lo ve)
+# ---------------------------------------------------------------------------
+
+TOKEN = "token-de-test-0123456789abcdefghijklmnop"
+
+
+def _escribir_token(repo: Path, token: str = TOKEN) -> Path:
+    path = repo / ".temp-db" / "guard_api_token"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    "ruta, cuerpo",
+    [("/api/proxy/guard/state", {"guard_activo": False}),
+     ("/api/proxy/guard/aprobaciones", {"contexto_id": "c", "cart_id": "x"})],
+)
+def test_post_reenviado_lleva_el_token_del_proxy(tmp_path, ruta, cuerpo):
+    _escribir_token(tmp_path)
+    recibidos: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recibidos.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    r = _cliente(tmp_path, handler).post(ruta, json=cuerpo, headers={"Origin": BASE})
+    assert r.status_code == 200
+    (pedido,) = recibidos
+    assert pedido.headers["x-guard-token"] == TOKEN
+    assert TOKEN not in r.text
+
+
+@pytest.mark.parametrize(
+    "ruta", ["/api/proxy/guard/state", "/api/proxy/guard/aprobaciones",
+             "/api/proxy/guard/events/history"]
+)
+def test_get_reenviado_no_manda_el_token(tmp_path, ruta):
+    _escribir_token(tmp_path)
+    recibidos: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recibidos.append(request)
+        return httpx.Response(200, json={})
+
+    assert _cliente(tmp_path, handler).get(ruta).status_code == 200
+    assert all("x-guard-token" not in p.headers for p in recibidos)
+
+
+def test_sin_token_del_proxy_el_post_da_503_sin_llamar(tmp_path):
+    c = _cliente(tmp_path, _no_llamar)
+    r = c.post("/api/proxy/guard/state", json={"guard_activo": False}, headers={"Origin": BASE})
+    assert r.status_code == 503
+    assert r.json()["error"] == "sin_token_del_proxy"
+
+
+@pytest.mark.parametrize("contenido", ["", "con espacios y  ", "x" * 5000, "corto"],
+                         ids=["vacio", "espacios", "largo", "corto"])
+def test_token_ilegible_no_se_manda(tmp_path, contenido):
+    _escribir_token(tmp_path, contenido)
+    c = _cliente(tmp_path, _no_llamar)
+    r = c.post("/api/proxy/guard/state", json={"guard_activo": False}, headers={"Origin": BASE})
+    assert r.status_code == 503
+
+
+def test_el_token_no_aparece_en_la_api_del_panel(tmp_path):
+    _escribir_token(tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"guard_activo": True})
+
+    c = _cliente(tmp_path, handler)
+    for ruta in ("/api/config", "/api/proxy/guard/state", "/api/proxy/guard/aprobaciones"):
+        assert TOKEN not in c.get(ruta).text, ruta
+
+
+def test_ruta_del_token_desde_el_entorno(monkeypatch, tmp_path):
+    monkeypatch.delenv("GUARD_API_TOKEN_PATH", raising=False)
+    assert config_desde_entorno().token_path == config_desde_entorno().repo_root / ".temp-db" / "guard_api_token"
+    monkeypatch.setenv("GUARD_API_TOKEN_PATH", str(tmp_path / "t"))
+    assert config_desde_entorno().token_path == tmp_path / "t"
+
+
+def test_cruzado_el_panel_pasa_el_token_y_sin_el_el_proxy_rechaza(tmp_path):
+    from proxy import guard_stub
+    from proxy.app import create_app as crear_proxy
+    from proxy.config import Config as ConfigProxy
+    from proxy.evaluador import EvaluadorCargado
+
+    proxy_app = crear_proxy(
+        ConfigProxy(events_jsonl=None, guard_key_path=tmp_path / "k.pem", permitir_stub=True,
+                    api_token_path=tmp_path / ".temp-db" / "guard_api_token"),
+        transport=httpx.MockTransport(_no_llamar),
+        evaluador=EvaluadorCargado(evaluar=guard_stub.evaluar, nombre="stub"),
+    )
+    cfg = Config(repo_root=tmp_path, proxy_url=PROXY,
+                 proxy_transport=httpx.ASGITransport(app=proxy_app))
+    panel = TestClient(create_app(cfg), base_url=BASE)
+    directo = TestClient(proxy_app, base_url=PROXY)
+
+    # Sin token (un proceso local o el agente con una herramienta HTTP): 403.
+    r = directo.post("/guard/state", json={"guard_activo": False})
+    assert r.status_code == 403
+    assert proxy_app.state.proxy.guard_activo is True
+    # El panel lo lee de .temp-db/guard_api_token y lo agrega: pasa.
+    r = panel.post("/api/proxy/guard/state", json={"guard_activo": False}, headers={"Origin": BASE})
+    assert r.status_code == 200 and r.json()["guard_activo"] is False
+    assert proxy_app.state.proxy.api_token not in r.text
