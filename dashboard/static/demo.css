@@ -142,7 +142,7 @@ button, input, select { font: inherit; color: inherit; }
 
 /* -------------------------------------------------------------- principal */
 .principal {
-  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px;
+  flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 14px;
   width: 100%; max-width: var(--ancho); margin: 0 auto; padding: 8px 16px 24px;
 }
 .rotulo {
@@ -296,7 +296,7 @@ button, input, select { font: inherit; color: inherit; }
 @media (max-width: 640px), (max-height: 560px) {
   /* Pantallas chicas: la página scrollea y el input queda pegado abajo. */
   body { height: auto; min-height: 100dvh; }
-  .principal { min-height: auto; }
+  .principal { min-height: auto; overflow: visible; }
   .pie { position: sticky; bottom: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px); }
   .relato { flex: none; overflow: visible; }
   .linea { scroll-margin-bottom: 150px; }
