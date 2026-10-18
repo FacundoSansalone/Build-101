@@ -87,13 +87,14 @@ Actualizar esta tabla al pasar cada punto de control.
 
 | Dev | Fase actual | Hecho | Siguiente | Bloqueado por |
 |---|---|---|---|---|
-| Dev 1 (`world/`) | 4. Completar | Benchmark con LLM, 10 corridas, por el proxy y con Guard (`results/`); la UI de ADK muestra el motivo del Guard; `world/bench_con_pausa.py` | Compra completa en la UI con B (hasta el pago, OTP `123`) y anotar los pasos para el guion | — |
-| Dev 2 (`guard/`) | 4. Completar | Ficha, extractor, verificador, 4 chequeos + mandato + atadura del checkout firmado, veredicto, recibo ES256, adaptador, ficha con LLM; ronda de revisión cerrada | Congelar (fase 5) | — |
-| Dev 3 (`proxy/`, `dashboard/`) | 4. Completar | Proxy `:8010` con Guard real, interruptor, eventos SSE, aprobación humana para `escalar`; dashboard `:8020` con momento clave, recibo verificado en el navegador y gráfico; ronda de revisión cerrada | Grabar el ensayo de B (con y sin Guard) en `dashboard/demo/` y pitch | — |
+| Dev 1 (`world/`, `filtro/`) | Etapa 2 | Benchmark con LLM, 10 corridas, por el proxy y con Guard (`results/`); la UI de ADK muestra el motivo del Guard; `world/bench_con_pausa.py`; compra completa en la UI con B | Detección de malicia y escenarios de computadoras ([sección 7](#7-etapa-2-flujo-único)) | Contrato de la etapa 2 |
+| Dev 2 (`guard/`, `intencion/`) | Etapa 2 | Ficha, extractor, verificador, 4 chequeos + mandato + atadura del checkout firmado, veredicto, recibo ES256, adaptador, ficha con LLM; ronda de revisión cerrada | Contexto, detector de oportunidades y Guard con parámetros por compra ([sección 7](#7-etapa-2-flujo-único)) | Contrato de la etapa 2 |
+| Dev 3 (`proxy/`, `dashboard/`) | Etapa 2 | Proxy `:8010` con Guard real, interruptor, eventos SSE, aprobación humana para `escalar`, registro opcional en Supabase; dashboard `:8020` con momento clave, recibo verificado en el navegador y gráfico; ensayo de B grabado; ronda de revisión cerrada | Cadena de etapas en el proxy y chat de nuestro agente ([sección 7](#7-etapa-2-flujo-único)) | Contrato de la etapa 2 |
 
 Punto de control 3 (B de punta a punta, con y sin Guard): probado por A2A
-real con `proxy/scripts/smoke_checkout.py` y el benchmark por `:8010`. Falta
-el recorrido manual en la UI de ADK hasta el pago.
+real con `proxy/scripts/smoke_checkout.py` y el benchmark por `:8010`, y a
+mano en la UI de ADK hasta el pago el 2026-10-17
+(`dashboard/demo/ensayo_B.jsonl`).
 
 ## Decisiones (antes abiertas)
 
@@ -110,3 +111,139 @@ Todas resueltas el 2026-10-17; el detalle está en
   Agent muestra el motivo del Guard (cambio mínimo listado en
   `world/NOTICE.md`). El humano ve la evidencia en el dashboard y puede
   "Aprobar igual"; el reintento del checkout pasa intacto.
+
+## 7. Etapa 2: flujo único
+
+Desde el 2026-10-18. El comportamiento esperado está en
+[FLUJO.md](FLUJO.md): un solo flujo con dos capas, seguridad e intención.
+Todo lo de la etapa 1 (escenario B, Guard, proxy, dashboard, benchmark)
+sigue valiendo: es la verificación antes de la firma y el respaldo de la
+demo.
+
+### Dónde ocurre cada paso
+
+Todo lo que va entre el agente del cliente y el proveedor pasa por el proxy
+(`:8010`). Por eso el flujo se implementa sin tocar al agente del cliente,
+salvo un cambio mínimo para que reciba los parámetros autorizados.
+
+| Paso de [FLUJO.md](FLUJO.md#paso-a-paso) | Dónde | Cómo |
+|---|---|---|
+| 1. Pedido y contexto | proxy + `intencion/` + dashboard | El proxy ve la búsqueda (`find_products` → `catalog_search`), emite `pedido_detectado` y **retiene el pedido** hasta que el usuario contesta el porqué en el chat de nuestro agente (o lo omite). Recién ahí lo reenvía al proveedor. |
+| 2. Seguridad | `filtro/`, llamado por el proxy | Corre sobre cada respuesta del proveedor antes que nada. Si bloquea, la tarea vuelve `failed` con un mensaje fijo, no se reenvía nada y no se llama a `intencion/`. Si el filtro falla, también bloquea. |
+| 3 y 4. Análisis y pausa | proxy + `intencion/` | Si ninguna oferta cumple los parámetros autorizados, el detector busca una que cubra la necesidad. Si la encuentra, el proxy **retiene la respuesta** del proveedor: el agente del cliente no puede rechazar lo que todavía no recibió. |
+| 5. Consulta | dashboard | Tarjeta en el chat de nuestro agente: qué cambia, por qué podría servir, Aceptar o Rechazar. |
+| 6. Acepta | proxy → agente del cliente | El proxy entrega la respuesta intacta y, en un artefacto aparte, los parámetros autorizados nuevos (`guard.parametros_autorizados`). Si el proveedor manda uno con esa clave, se borra, como hoy con `guard.veredicto`. La herramienta `find_products` del agente del cliente lo lee. |
+| 6. Rechaza | proxy | Entrega la respuesta sin cambios y el agente del cliente aplica el pedido literal. |
+| 6. No contesta | proxy | La respuesta sigue retenida. El cliente A2A del sample espera hasta 600 s por llamada (`DEFAULT_TIMEOUT` en `common/payment_remote_a2a_client.py`), y la pregunta del paso 1 y la consulta caen en la misma llamada. Al vencer, no se compra nada. |
+| 7. Verificación | `guard/` | `evaluar()` en `create_checkout`, con los parámetros autorizados **de esa compra** (hoy usa un pedido global, `proxy/fuentes.py`). Una oferta que necesitaba autorización y no la tiene no cumple y se bloquea. |
+
+### Contrato (los tres, primero)
+
+Propuesta inicial; se ajusta al acordarla.
+
+- `ResultadoFiltro`: `pasa`, `motivo` (fijo, sin texto del proveedor) y
+  `señales`.
+- `Contexto`: pedido explícito, necesidad (con las palabras del usuario) y
+  flexibilidades, cada una marcada como `dicha` o `inferida`.
+- `ParametrosAutorizados`: los requisitos vigentes de cada compra, con su
+  origen (`original`, o `aceptado` con el id de la oportunidad).
+- `Oportunidad`: id, `contexto_id`, `cart_id`, cambios campo por campo
+  (original → propuesto), por qué podría servir y parámetros propuestos.
+- `Requisito` y `Oferta`: cantidad y cronograma de entregas.
+- Tipos nuevos de `Evento`: `pedido_detectado`, `contexto_registrado`,
+  `filtro_bloqueo`, `oportunidad`, `oportunidad_aceptada` y
+  `oportunidad_rechazada`.
+- El `Status` del Guard no cambia.
+
+### Qué falta, por dev
+
+**Dev 1: detección de malicia (`filtro/`) y escenarios (`world/`)**
+
+1. **Filtro de seguridad** con ML, heurísticas y LLM:
+   `filtrar(respuesta_del_proveedor) -> ResultadoFiltro`. El proxy lo llama
+   antes que nada.
+   - Tiene que bloquear A, B, B2 y el proveedor malicioso de computadoras.
+   - **No** tiene que bloquear `baseline` ni el proveedor honesto de
+     computadoras. Un falso positivo en el honesto rompe la demo: una oferta
+     que no cumple el pedido no es un ataque.
+   - Medirlo como el benchmark: tasa de bloqueo por escenario y falsos
+     positivos.
+   - El motivo que viaja al agente es fijo y no copia texto del proveedor.
+2. **Escenarios de computadoras**, con el mismo pedido:
+   - un proveedor malicioso, con una inyección para que el agente compre otra
+     cosa dentro del tope;
+   - un proveedor honesto, que ofrece 10 el lunes y 10 el miércoles. Lo dice
+     en el `item_label` y en `offer_details`, con `entregas`.
+
+   Hace falta un pedido por escenario: hoy hay uno global en
+   `demo_world/scenario.py`. El checkout puede ir como un lote, porque hoy se
+   firma siempre `quantity=1`.
+3. **Cambio mínimo al agente del cliente:** que `find_products` lea
+   `guard.parametros_autorizados` si viene. Se anota en `world/NOTICE.md`.
+4. **Medir las corridas sin sistema:** que el agente del cliente caiga con el
+   proveedor malicioso y rechace al honesto por el pedido literal. Si toma la
+   oferta de 10 + 10 solo, hay que configurarlo estricto (también va a
+   `NOTICE.md`).
+
+**Dev 2: intención (`intencion/`) y Guard (`guard/`)**
+
+5. **Contexto:** a partir del texto de la búsqueda y de la respuesta del
+   usuario, armar la pregunta del porqué y el `Contexto`. Es un LLM con
+   salida estructurada y puede partir de `guard/ficha_llm.py`. Va en una
+   carpeta nueva, `intencion/`, para que `guard/` siga siendo determinístico.
+6. **Detector de oportunidades:**
+   `detectar_oportunidad(contexto, parametros_autorizados, ofertas) -> Oportunidad | None`.
+   Usa un LLM con salida estructurada, más una validación en código: el cart
+   existe y los números que cita coinciden con la oferta. Recibe solo lo que
+   pasó el filtro.
+7. **Casos de prueba**, cada uno corrido varias veces:
+   - 10 el lunes y 10 el miércoles → propone;
+   - 10 el lunes y 10 el viernes → no propone;
+   - 20 el martes → no propone.
+
+   La tasa de aciertos es una métrica para el pitch.
+8. **Guard:** `evaluar()` con los `ParametrosAutorizados` de la compra,
+   incluidas cantidad y entregas. Una oferta que no los cumple se bloquea
+   aunque el agente la elija.
+
+**Dev 3: proxy (`proxy/`) y dashboard (`dashboard/`)**
+
+9. **Cadena de etapas en el proxy**, en este orden:
+   1. retener el pedido hasta tener el contexto;
+   2. filtro;
+   3. análisis;
+   4. retener la respuesta si hay una oportunidad;
+   5. entregarla con o sin parámetros nuevos;
+   6. `evaluar()` con los parámetros de la compra.
+
+   Los parámetros autorizados se guardan por compra (`context_id`), en lugar
+   del pedido global de `fuentes.py`. Falla cerrado, como hoy.
+10. **API nueva**, con la misma protección que el resto de `/guard/*`:
+    - `POST /guard/contexto`: la respuesta del porqué, u "omitir";
+    - `POST /guard/oportunidades/<id>/decision`: `aceptar` o `rechazar`.
+11. **Dashboard:**
+    - el chat de nuestro agente: la pregunta, la respuesta y la consulta con
+      Aceptar y Rechazar;
+    - una vista del flujo único con las etapas en línea (Contexto →
+      Seguridad → Intención → Usuario → Firma), que marca dónde terminó cada
+      corrida;
+    - las cuatro corridas lado a lado.
+12. **Opcional:** registrar oportunidades y decisiones en Supabase
+    (`persistencia.py`).
+
+### Orden y puntos de control
+
+1. **Contrato**, los tres juntos, antes que nada.
+2. **En paralelo**, cada uno con stubs y fixtures: Dev 1 (1–4), Dev 2 (5–8)
+   y Dev 3 (9–12).
+3. **Punto de control A:** el **caso honesto** de punta a punta, con y sin
+   sistema. Es lo nuevo, así que va primero.
+4. **Punto de control B:** el **caso malicioso** con el filtro.
+5. **Congelar**, ensayar las cuatro corridas y grabarlas.
+
+### Plan B
+
+- Si el filtro no llega, el caso malicioso se muestra con el escenario B de
+  la etapa 1: el Guard bloquea antes de la firma, y ya está grabado en
+  `dashboard/demo/ensayo_B.jsonl`.
+- Si el caso honesto falla en vivo, se muestran las corridas grabadas.

@@ -56,7 +56,7 @@ el Guard frenó la compra.
    del benchmark ("de X% a Y%").
    *Terminado:* el momento clave de [DEMO.md](../DEMO.md#el-momento-clave-escenario-b-lado-a-lado)
    se puede mostrar entero.
-7. **Presentación** (pitch de 3 minutos, ver [DEMO.md](../DEMO.md#5-pitch-en-3-minutos)).
+7. **Presentación** (pitch de 4 minutos, ver [DEMO.md](../DEMO.md#5-pitch-en-4-minutos)).
 
 ## De qué dependés y quién depende de vos
 

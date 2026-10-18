@@ -3,11 +3,17 @@
 > **Si sos un Claude Code nuevo en este repo, leé primero `docs/onboarding/`
 > según el dev que te use** (`dev1-world.md`, `dev2-guard.md` o
 > `dev3-proxy-dashboard.md`). Si no sabés qué dev es, preguntá.
+>
+> **Etapa 2 (desde el 2026-10-18): un solo flujo con dos capas, seguridad e
+> intención.** Antes que nada, leé [`docs/FLUJO.md`](docs/FLUJO.md) y la tarea
+> de tu dev en [`docs/PLAN.md`](docs/PLAN.md#7-etapa-2-flujo-único). Si otro doc
+> (también los de onboarding) contradice FLUJO.md, manda FLUJO.md.
 
 ## Índice de `docs/`
 
 | Archivo | Para qué |
 |---|---|
+| [`docs/FLUJO.md`](docs/FLUJO.md) | **El qué:** comportamiento esperado del flujo único (seguridad e intención) y la demo de cuatro corridas. Manda sobre el resto |
 | [`docs/CONTEXTO.md`](docs/CONTEXTO.md) | El porqué: problema, investigación, quién cubre qué, posicionamiento |
 | [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) | El cómo: flujo AP2 real, dónde va el Guard, chequeos, veredictos, datos de `world/` |
 | [`docs/CONTRATOS_PROPUESTOS.md`](docs/CONTRATOS_PROPUESTOS.md) | **Borrador** de modelos para `contracts/` y decisiones abiertas del paso 0 |
@@ -20,22 +26,33 @@ Proyecto de hackatón. Equipo de 3 desarrolladores, cada uno con Claude Code.
 
 ## Qué construimos
 
-Un guard del lado del comprador que impide que un agente de compras sea
-manipulado **dentro de los límites de su mandato AP2**. Actúa entre la respuesta
-del comercio (A2A) y la firma del usuario. Principio: el agente decide solo con
-datos estructurados y verificados, nunca con texto libre del vendedor.
+Un sistema del lado del comprador que acompaña a su agente de compras en un
+**flujo único con dos capas** ([`docs/FLUJO.md`](docs/FLUJO.md)):
+
+1. **Seguridad del agente.** Un filtro (`filtro/`) revisa cada mensaje del
+   proveedor antes que nada y, si hay malicia, corta la conversación. Antes de
+   la firma, el Guard (`guard/`) verifica la compra contra los parámetros
+   autorizados y los datos públicos del comercio.
+2. **Intención del usuario.** Nuestro agente (`intencion/`) le pregunta al
+   usuario para qué quiere lo que pide y observa la negociación. Si una oferta
+   no cumple el pedido literal pero sí la necesidad, pausa la negociación y se
+   la consulta al usuario. Si el usuario acepta, le pasa los parámetros nuevos
+   al agente del cliente.
 
 AP2 ya frena lo que supera el tope firmado. Nuestro valor está en lo que AP2 no
-ve: un producto que cumple el tope pero no es lo pedido (ataque de inyección),
-datos falsos del comercio y precios que no coinciden con su catálogo público.
+ve: manipulación dentro del mandato, datos falsos del comercio, precios que no
+coinciden con su catálogo público y compras viables que un agente literal deja
+pasar.
 
 ## Estructura y dueños
 
 | Carpeta | Dueño | Qué es |
 |---|---|---|
 | `world/` | Dev 1 | Flujo AP2 real (copia del sample oficial), comercio atacante, catálogo público, benchmark. Ver `world/README.md`. |
-| `guard/` | Dev 2 | Núcleo del Guard: ficha del pedido, extractor estructurado, verificador, chequeos, veredicto, recibo. |
-| `proxy/` | Dev 3 | Proxy A2A entre el Shopping Agent y el Merchant Agent que llama al Guard. |
+| `filtro/` | Dev 1 | Detección de malicia (ML, heurísticas y LLM): el primer filtro de cada mensaje del proveedor. Etapa 2. |
+| `intencion/` | Dev 2 | Contexto del pedido (el porqué) y detector de oportunidades, con LLM. Etapa 2. |
+| `guard/` | Dev 2 | Verificación determinística antes de la firma: ficha del pedido, extractor estructurado, verificador, chequeos, veredicto, recibo. |
+| `proxy/` | Dev 3 | Proxy A2A entre el Shopping Agent y el Merchant Agent. Corre las etapas del flujo: contexto, filtro, intención, pausa y verificación. |
 | `dashboard/` | Dev 3 | Vista de la demo: flujo, veredicto, recibo, gráfico del benchmark. |
 | `contracts/` | Los tres | Modelos de datos compartidos. **No se cambian sin acordarlo entre los tres.** |
 | `fixtures/` | Generado | Escenarios exportados por `world/` para trabajar sin levantar agentes. |
@@ -48,11 +65,18 @@ Cada uno edita solo su carpeta. Merges a `main` chicos y frecuentes.
   sample están listados en `world/NOTICE.md`.
 - **El Guard nunca altera objetos firmados** (checkout JWT, mandatos). Puede
   leerlos, bloquear, avisar o escalar, pero no reescribirlos.
-- **Las decisiones críticas del Guard son código determinístico**, no un LLM.
-  El LLM solo se usa para convertir el pedido en lenguaje natural en la ficha.
-- **No prometemos "detectar inyecciones".** Prometemos que la decisión se toma
-  con datos verificados. Las métricas son tasas de éxito del ataque antes y
-  después, no "0%".
+- **La seguridad va primero.** Todo mensaje del proveedor pasa por el filtro
+  antes que cualquier otra etapa. Lo bloqueado no llega a ningún LLM ni
+  agente, tampoco al nuestro, y no dispara la búsqueda de alternativas. Si el
+  filtro falla, se bloquea. Las métricas son tasas antes y después, nunca
+  "0%".
+- **Los LLM detectan y proponen; nunca autorizan.** Hay LLM en el filtro, en
+  el contexto del pedido y en el detector de oportunidades. Cambiar los
+  parámetros lo autoriza solo el usuario, y la verificación antes de la firma
+  (`guard/`) sigue siendo código determinístico.
+- **Los parámetros explícitos siguen vigentes hasta que el usuario acepte
+  cambiarlos.** Nuestro agente no negocia ni le habla al proveedor: pregunta,
+  observa, propone y comunica. El silencio no es autorización.
 - Antes de una tarea grande, pedí un plan y revisalo.
 - Si una tarea requiere cambiar un contrato, pará y avisá al equipo.
 
@@ -221,6 +245,21 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
 - **Benchmark con el plan gratuito de Gemini** (15 pedidos/min):
   `world/bench_con_pausa.py` corre el mismo `benchmark.main()` espaciando las
   llamadas al LLM. No toca `world/ap2/`.
+- **Etapa 2: flujo único (2026-10-18).**
+  - **Definición y tareas:** el comportamiento está en `docs/FLUJO.md` y las
+    tareas por dev, en `docs/PLAN.md` §7.
+  - **Pitch y demo:** el pitch dura **4 minutos**. La demo son cuatro corridas
+    del mismo flujo, con el mismo pedido ("20 computadoras para el lunes"):
+    proveedor malicioso y proveedor honesto, cada uno con y sin sistema.
+  - **Detección de malicia:** la hace **Dev 1** (`filtro/`).
+  - **Reglas que se reemplazan:** "no prometemos detectar inyecciones" y "el
+    LLM solo arma la ficha".
+  - **Por defecto:** si el usuario no contesta el porqué, sigue el pedido
+    literal sin análisis de oportunidades; si hay varias alternativas, se
+    consulta la mejor, una por vez.
+  - **Pendiente de revisar:** `docs/CONTEXTO.md` ("no es un detector de
+    prompt injection") y `docs/PREGUNTAS_DEL_JURADO.md` todavía responden
+    con el posicionamiento anterior.
 
 Tests de las carpetas nuevas, desde la raíz:
 

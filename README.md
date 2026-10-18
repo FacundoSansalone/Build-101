@@ -45,6 +45,11 @@ en [`CLAUDE.md`](CLAUDE.md).
 
 ## Para el equipo
 
+**Etapa 2 (desde el 2026-10-18):** leé primero
+[`docs/FLUJO.md`](docs/FLUJO.md), que define el flujo único con seguridad e
+intención, y tu tarea en
+[`docs/PLAN.md`](docs/PLAN.md#7-etapa-2-flujo-único).
+
 1. Leé [`docs/CONTEXTO.md`](docs/CONTEXTO.md) y
    [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 2. Mirá cómo trabajamos en [`docs/PLAN.md`](docs/PLAN.md) (fases, puntos de
