@@ -1,11 +1,16 @@
 // Dashboard de la demo del Pre-Sign Guard. JS vanilla, sin build ni CDN.
 // Fuentes de eventos: "En vivo (proxy)" por SSE o "Replay (archivo)".
 
+import {
+  TIPOS_AGENTE, comprasDesdeEventos, cuerpoContexto, cuerpoDecision, cuerpoOmitir, esperaAlUsuario,
+  fusionarCompras, mensajeErrorAgente, reemplazarCompra, restante,
+} from "./lib/agente.js";
 import { interruptorHabilitado, registrarSondeo, unaALaVez } from "./lib/conexion.js";
 import {
   aJsonl, agruparCompras, cuerpoAprobacion, estadoAprobacion, fusionarEventos,
 } from "./lib/eventos.js";
 import { decodificarSdJwt, resolverSdJwt, sha256B64url, verificarRecibo } from "./lib/jose.js";
+import { renderAgente } from "./views/agente.js";
 import { renderBenchmark } from "./views/benchmark.js";
 import { renderFicha } from "./views/ficha.js";
 import { renderFlujo } from "./views/flujo.js";
@@ -21,6 +26,8 @@ const VISTAS = {
   recibo: renderRecibo,
   ficha: renderFicha,
   benchmark: renderBenchmark,
+  // Etapa 2. Va última para no correr los atajos 1–6 de la demo de la etapa 1.
+  agente: renderAgente,
 };
 const ORDEN_VISTAS = Object.keys(VISTAS);
 
@@ -45,6 +52,9 @@ const estado = {
   proxy: { conectado: null, fallos: 0, guard_activo: null, evaluador: null, merchant_url: null, cambiando: false },
   // GET /guard/aprobaciones del proxy (solo en vivo).
   aprobaciones: { pendientes: [], usadas: [] },
+  // GET /guard/compras del proxy (solo en vivo): las compras de nuestro agente.
+  comprasProxy: [],
+  agenteSel: null, // compra_id elegida en la vista Agente (null = la más nueva)
   sse: "cerrado",
   fixtures: [],
   catalogo: null,
@@ -65,6 +75,14 @@ const detallesAbiertos = new Set();
 const nuevos = new Set();
 const aprobando = new Set(); // contextos con un POST de aprobación en curso
 const mensajesAprobacion = new Map(); // contexto → {ok, texto}
+const borradores = new Map(); // compra_id → lo que el usuario está escribiendo
+const enviandoAgente = new Set(); // compras con un POST de nuestro agente en curso
+const enviadosAgente = new Map(); // compra_id → estado en que se contestó (OK del proxy)
+const respuestasEnviadas = new Map(); // compra_id → respuesta al porqué que aceptó el proxy
+const mensajesAgente = new Map(); // compra_id → {ok, texto}
+// "Ahora" de las cuentas regresivas: lo avanza un reloj de 1 s y lo usa
+// también el render, así un render dibuja lo mismo que el último tic.
+let ahoraCuenta = Date.now();
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -132,7 +150,7 @@ function programarRender() {
 // Contexto que reciben las vistas
 // ---------------------------------------------------------------------------
 
-let derivados = { compras: [], sistema: [] };
+let derivados = { compras: [], sistema: [], agente: [] };
 let observador = null;
 let usoObservador = false; // la vista de este render midió el ancho (benchmark)
 
@@ -154,12 +172,13 @@ const tooltip = {
 };
 
 function ctx() {
-  const { compras, sistema } = derivados;
+  const { compras, sistema, agente } = derivados;
   return {
     estado,
     eventos: estado.eventos,
     compras,
     sistema,
+    comprasAgente: agente,
     fixtures: estado.fixtures,
     catalogo: estado.catalogo,
     detallesAbiertos,
@@ -191,6 +210,23 @@ function ctx() {
     aprobar,
     aprobando: (contextoId) => aprobando.has(contextoId),
     mensajeAprobacion: (contextoId) => mensajesAprobacion.get(contextoId) ?? null,
+    // Nuestro agente
+    ahora: () => ahoraCuenta,
+    borrador: (compraId) => borradores.get(compraId) ?? "",
+    // Sin render: el texto vive en el <textarea>; esto es para no perderlo
+    // si la vista se vuelve a dibujar. Escribir fija la compra elegida: si
+    // llega otra más nueva, la vista no cambia mientras el usuario escribe.
+    escribir: (compraId, texto) => {
+      borradores.set(compraId, texto);
+      if (!estado.agenteSel) estado.agenteSel = compraId;
+    },
+    responder,
+    decidir,
+    enviandoAgente: (compraId) => enviandoAgente.has(compraId),
+    // Ya se contestó en este estado (el proxy todavía no lo aplicó).
+    yaEnviado: (compra) => enviadosAgente.get(compra.compra_id) === compra.estado,
+    respuestaEnviada: (compraId) => respuestasEnviadas.get(compraId) ?? null,
+    mensajeAgente: (compraId) => mensajesAgente.get(compraId) ?? null,
     verificacion: (recibo) => cache.verificaciones.get(claveRecibo(recibo)) ?? null,
     verificar,
     irARecibo(compra) {
@@ -320,12 +356,17 @@ function ingerir(lista, { marcarNuevos = true } = {}) {
         if (e.tipo === "bloqueado" && e.datos?.requiere_aprobacion) {
           anunciar(`Retenido: requiere aprobación humana. ${e.datos?.motivo ?? ""}`);
           refrescarAprobaciones();
-        } else if (e.tipo === "bloqueado") anunciar(`Bloqueado antes de la firma: ${e.datos?.motivo ?? ""}`);
+        } else if (e.tipo === "bloqueado" && e.datos?.etapa === "seguridad") anunciar("Corte de seguridad: la conversación quedó bloqueada");
+        else if (e.tipo === "bloqueado" && e.datos?.etapa === "intencion") anunciar("La consulta venció: no se compra nada");
+        else if (e.tipo === "bloqueado") anunciar(`Bloqueado antes de la firma: ${e.datos?.motivo ?? ""}`);
         else if (e.tipo === "reenviado" && e.datos?.aprobacion_humana) {
           anunciar("Aprobado por humano: el checkout pasó intacto");
           refrescarAprobaciones();
         }
         else if (e.tipo === "veredicto") anunciar(`Veredicto del Guard: ${e.datos?.veredicto?.status ?? ""}`);
+        else if (e.tipo === "pedido_detectado") anunciar(`Nuestro agente pregunta: ${e.datos?.pregunta ?? ""} (vista Agente)`);
+        else if (e.tipo === "oportunidad") anunciar("Posible punto de encuentro: nuestro agente espera que aceptes o rechaces (vista Agente)");
+        if (TIPOS_AGENTE.has(e.tipo)) refrescarCompras();
       }
     }
     primerLote = false;
@@ -434,9 +475,12 @@ async function cambiarFuente(fuente) {
   estado.eventos = [];
   nuevos.clear();
   mensajesAprobacion.clear();
+  mensajesAgente.clear();
+  enviadosAgente.clear();
   Object.assign(estado, {
     compraSel: null, seguirUltima: true, momentoSin: null, momentoCon: null,
     aprobaciones: { pendientes: [], usadas: [] },
+    comprasProxy: [], agenteSel: null,
   });
   if (fuente === "vivo") {
     conectarSse();
@@ -463,15 +507,23 @@ async function refrescarReplays() {
 const refrescarProxy = unaALaVez(async () => {
   try {
     const { datos } = await pedirJson("/api/proxy/guard/state", { timeout: 3500 });
+    // La vista Agente avisa si la capa de intención o el filtro están apagados.
+    if (datos.intencion !== estado.proxy.intencion || datos.filtro !== estado.proxy.filtro) programarRender();
     estado.proxy = {
       ...registrarSondeo(estado.proxy, true),
       guard_activo: datos.guard_activo, evaluador: datos.evaluador, merchant_url: datos.merchant_url,
+      // Etapa 2 (undefined con un proxy viejo): nombre del agente de intención
+      // o null si está apagado, y si hay filtro de seguridad.
+      intencion: datos.intencion, filtro: datos.filtro,
     };
   } catch {
     estado.proxy = registrarSondeo(estado.proxy, false);
   }
   renderBarra();
-  if (estado.proxy.conectado) refrescarAprobaciones();
+  if (estado.proxy.conectado) {
+    refrescarAprobaciones();
+    refrescarCompras();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -518,6 +570,99 @@ async function aprobar(compraVista) {
     setTimeout(refrescarAprobaciones, 600);
     render();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Nuestro agente: el porqué del pedido y la consulta de una oportunidad
+// ---------------------------------------------------------------------------
+
+// Mismo ritmo que las aprobaciones: cada sondeo del proxy (4 s), un pedido a
+// la vez, y además cuando llega un evento de nuestro agente.
+const refrescarCompras = unaALaVez(async () => {
+  if (estado.fuente !== "vivo") return;
+  try {
+    const { datos } = await pedirJson("/api/proxy/guard/compras", { timeout: 3500 });
+    if (!datos || !Array.isArray(datos.compras) || estado.fuente !== "vivo") return;
+    if (JSON.stringify(datos.compras) !== JSON.stringify(estado.comprasProxy)) {
+      estado.comprasProxy = datos.compras;
+      programarRender();
+    }
+  } catch { /* proxy caído o sin /guard/compras: quedan los eventos */ }
+});
+
+async function postAgente(compraVista, ruta, cuerpo, textoOk) {
+  const id = cuerpo.compra_id;
+  if (enviandoAgente.has(id)) return;
+  enviandoAgente.add(id);
+  mensajesAgente.delete(id);
+  render();
+  try {
+    const { datos } = await pedirJson(ruta, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo),
+    });
+    // El proxy devuelve la compra actualizada: se ve sin esperar el sondeo.
+    if (datos?.compra_id === id) estado.comprasProxy = reemplazarCompra(estado.comprasProxy, datos);
+    // El proxy contesta enseguida, pero la decisión se aplica después (sigue
+    // en esperando_decision hasta el evento): los botones quedan trabados
+    // mientras la compra siga en el estado en que se contestó.
+    enviadosAgente.set(id, compraVista.estado);
+    mensajesAgente.set(id, { ok: true, texto: textoOk });
+    anunciar(textoOk);
+    if (typeof cuerpo.respuesta === "string") {
+      respuestasEnviadas.set(id, cuerpo.respuesta);
+      borradores.delete(id);
+    }
+  } catch (e) {
+    const texto = e?.name === "AbortError"
+      ? "El proxy no contestó a tiempo. En unos segundos se ve el estado actualizado."
+      : mensajeErrorAgente(e?.status, e?.datos, e?.message);
+    mensajesAgente.set(id, { ok: false, texto });
+    anunciar(texto);
+  } finally {
+    enviandoAgente.delete(id);
+    await refrescarCompras();
+    // Si había un sondeo en vuelo (de antes del POST), otro enseguida.
+    setTimeout(refrescarCompras, 600);
+    render();
+  }
+}
+
+/** La respuesta al porqué ("Enviar") u "Omitir". */
+async function responder(compraVista, { omitir = false } = {}) {
+  const id = compraVista?.compra_id;
+  const cuerpo = omitir ? cuerpoOmitir(id) : cuerpoContexto(id, borradores.get(id));
+  if (!cuerpo) return;
+  await postAgente(compraVista, "/api/proxy/guard/compras/contexto", cuerpo, omitir
+    ? "Pregunta omitida: la negociación sigue con el pedido literal."
+    : "Respuesta enviada: nuestro agente arma el contexto y la negociación sigue.");
+}
+
+/** "Aceptar" o "Rechazar" la oportunidad. */
+async function decidir(compraVista, decision) {
+  const cuerpo = cuerpoDecision(compraVista?.compra_id, decision);
+  if (!cuerpo) return;
+  await postAgente(compraVista, "/api/proxy/guard/compras/decision", cuerpo, decision === "aceptar"
+    ? "Aceptaste: nuestro agente le pasa los parámetros nuevos al agente del cliente."
+    : "Rechazaste: se mantiene el pedido original.");
+}
+
+/**
+ * Reloj de las cuentas regresivas: actualiza solo el número de cada
+ * `[data-vence]` de la vista activa (sin volver a dibujarla, así no se
+ * pierde lo que se está escribiendo). Al vencer un plazo, sí redibuja para
+ * deshabilitar los botones.
+ */
+function ticCuentas() {
+  ahoraCuenta = Date.now();
+  const panel = $(`#panel-${estado.vista}`);
+  let vencio = false;
+  for (const el of panel?.querySelectorAll("[data-vence]") ?? []) {
+    const r = restante(el.dataset.vence, ahoraCuenta);
+    if (!r || r.vencido) vencio = true;
+    else ponerTexto(el, r.texto);
+  }
+  // También si venció el plazo de otra compra (el aviso "otra compra espera").
+  if (vencio || contarPendientes() !== pendientesDibujados) programarRender();
 }
 
 async function cambiarGuard() {
@@ -625,23 +770,60 @@ function renderBarra() {
   ponerPropiedad($("#aviso-stub"), "hidden", !(p.conectado === true && p.evaluador === "stub"));
 }
 
+const FOCUSABLES = "button, select, summary, [tabindex], a[href], input, textarea";
+
+// El foco se recupera por `data-foco` si el elemento lo tiene (el cuadro de
+// respuesta de nuestro agente), si no por posición. En un cuadro de texto
+// también vuelve el cursor.
 function claveFoco(panel) {
   const activo = document.activeElement;
   if (!activo || !panel.contains(activo)) return null;
-  const focusables = [...panel.querySelectorAll("button, select, summary, [tabindex], a[href], input")];
-  return focusables.indexOf(activo);
+  const seleccion = typeof activo.selectionStart === "number" ? [activo.selectionStart, activo.selectionEnd] : null;
+  return {
+    indice: [...panel.querySelectorAll(FOCUSABLES)].indexOf(activo),
+    clave: activo.dataset?.foco ?? null,
+    seleccion,
+  };
 }
 
-function restaurarFoco(panel, indice) {
-  if (indice === null || indice < 0) return;
-  const focusables = [...panel.querySelectorAll("button, select, summary, [tabindex], a[href], input")];
-  const el = focusables[Math.min(indice, focusables.length - 1)];
-  if (el) el.focus({ preventScroll: true });
+function restaurarFoco(panel, foco) {
+  if (!foco) return;
+  let el = foco.clave
+    ? [...panel.querySelectorAll("[data-foco]")].find((x) => x.dataset.foco === foco.clave) ?? null : null;
+  if (!el && foco.indice >= 0) {
+    const focusables = [...panel.querySelectorAll(FOCUSABLES)];
+    el = focusables[Math.min(foco.indice, focusables.length - 1)];
+  }
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  if (foco.seleccion && typeof el.setSelectionRange === "function") {
+    try { el.setSelectionRange(...foco.seleccion); } catch { /* el tipo de input no la admite */ }
+  }
+}
+
+// Aviso en la pestaña Agente: cuántas compras esperan una respuesta del
+// usuario. Solo en vivo: en replay no hay nada que contestar.
+let pendientesDibujados = 0;
+function contarPendientes() {
+  if (estado.fuente !== "vivo") return 0;
+  return derivados.agente.filter((c) => esperaAlUsuario(c, ahoraCuenta)).length;
+}
+function renderAvisoAgente() {
+  const n = contarPendientes();
+  pendientesDibujados = n;
+  const aviso = $("#agente-pendientes");
+  ponerPropiedad(aviso, "hidden", n === 0);
+  ponerTexto(aviso, n ? String(n) : "");
+  ponerAtributo($("#tab-agente"), "title", n ? `${n} ${n === 1 ? "compra espera" : "compras esperan"} tu respuesta` : null);
 }
 
 function render() {
-  derivados = agruparCompras(estado.eventos);
+  derivados = {
+    ...agruparCompras(estado.eventos),
+    agente: fusionarCompras(comprasDesdeEventos(estado.eventos), estado.fuente === "vivo" ? estado.comprasProxy : []),
+  };
   renderBarra();
+  renderAvisoAgente();
   for (const id of ORDEN_VISTAS) {
     const activa = id === estado.vista;
     const tab = $(`#tab-${id}`);
@@ -727,7 +909,7 @@ function enlazar() {
     e.preventDefault();
     irAVista(ORDEN_VISTAS[(mapa[e.key] + ORDEN_VISTAS.length) % ORDEN_VISTAS.length], { foco: true });
   });
-  // Atajos 1–6 para cambiar de vista durante la demo.
+  // Atajos 1–7 para cambiar de vista durante la demo (no mientras se escribe).
   document.addEventListener("keydown", (e) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.target.closest?.("input, select, textarea")) return;
@@ -777,6 +959,7 @@ async function iniciar() {
   }
   render();
   setInterval(refrescarProxy, 4000);
+  setInterval(ticCuentas, 1000);
 }
 
 iniciar();

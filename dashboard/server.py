@@ -11,7 +11,9 @@ y una API chica de solo lectura sobre los datos guardados del repo:
 Además reenvía al proxy del Guard (`PROXY_URL`, por defecto :8010) las
 llamadas `/guard/*` desde el mismo origen, para que el navegador no dependa de
 que el proxy tenga CORS. El dashboard no decide nada: muestra y reenvía la
-decisión del humano ("Aprobar igual") cuando el Guard escala.
+decisión del humano ("Aprobar igual") cuando el Guard escala, y lo que el
+usuario le contesta a nuestro agente (el porqué del pedido, aceptar o
+rechazar una oportunidad).
 
 Como es la puerta al proxy, la API (`/api/*`) solo atiende `Host`
 localhost/127.0.0.1 con su puerto, y los POST exigen JSON y el `Origin` del
@@ -163,7 +165,12 @@ def verificar_host_local(host: str, permitir_remoto: bool) -> None:
 
 
 # Rutas que cambian estado en el proxy (solo con JSON y desde el propio panel).
-RUTAS_POST = frozenset({"/api/proxy/guard/state", "/api/proxy/guard/aprobaciones"})
+RUTAS_POST = frozenset({
+    "/api/proxy/guard/state",
+    "/api/proxy/guard/aprobaciones",
+    "/api/proxy/guard/compras/contexto",
+    "/api/proxy/guard/compras/decision",
+})
 
 
 class SoloLocal:
@@ -694,6 +701,87 @@ async def api_proxy_aprobaciones(request: Request) -> Response:
     return await _reenviar_json(cfg, "POST", "/guard/aprobaciones", cuerpo=cuerpo)
 
 
+# ---------------------------------------------------------------------------
+# Nuestro agente: el porqué del pedido y la consulta de una oportunidad
+# (docs/FLUJO.md, pasos 1, 5 y 6). El panel no decide: reenvía lo que
+# contesta el usuario.
+# ---------------------------------------------------------------------------
+
+_MAX_RESPUESTA = 1000
+DECISIONES = frozenset({"aceptar", "rechazar"})
+
+
+def _compra_id_valido(valor: Any) -> bool:
+    return isinstance(valor, str) and 0 < len(valor) <= _MAX_ID
+
+
+def cuerpo_contexto_valido(cuerpo: Any) -> bool:
+    """Exactamente `{"compra_id", "respuesta"}` (1..1000 caracteres sin los
+    espacios de los bordes) o `{"compra_id", "omitir": true}`."""
+    if not isinstance(cuerpo, dict) or not _compra_id_valido(cuerpo.get("compra_id")):
+        return False
+    claves = set(cuerpo)
+    if claves == {"compra_id", "respuesta"}:
+        respuesta = cuerpo["respuesta"]
+        return isinstance(respuesta, str) and 0 < len(respuesta.strip()) <= _MAX_RESPUESTA
+    if claves == {"compra_id", "omitir"}:
+        return cuerpo["omitir"] is True
+    return False
+
+
+def cuerpo_decision_valido(cuerpo: Any) -> bool:
+    """Exactamente `{"compra_id", "decision": "aceptar" | "rechazar"}`."""
+    return (
+        isinstance(cuerpo, dict)
+        and set(cuerpo) == {"compra_id", "decision"}
+        and _compra_id_valido(cuerpo["compra_id"])
+        and isinstance(cuerpo["decision"], str)
+        and cuerpo["decision"] in DECISIONES
+    )
+
+
+async def api_proxy_compras(request: Request) -> Response:
+    """Compras con su contexto y su oportunidad, de la más nueva a la más vieja."""
+    return await _reenviar_json(request.app.state.cfg, "GET", "/guard/compras")
+
+
+async def api_proxy_compras_contexto(request: Request) -> Response:
+    """La respuesta del usuario al porqué del pedido, u "omitir"."""
+    try:
+        cuerpo = await request.json()
+    except ValueError:
+        return _error(400, "json_invalido")
+    if not cuerpo_contexto_valido(cuerpo):
+        return _error(
+            400,
+            "se_espera",
+            formato=[
+                {"compra_id": "str", "respuesta": f"str (1..{_MAX_RESPUESTA})"},
+                {"compra_id": "str", "omitir": True},
+            ],
+        )
+    return await _reenviar_json(
+        request.app.state.cfg, "POST", "/guard/compras/contexto", cuerpo=cuerpo
+    )
+
+
+async def api_proxy_compras_decision(request: Request) -> Response:
+    """Aceptar o rechazar la oportunidad que propone nuestro agente."""
+    try:
+        cuerpo = await request.json()
+    except ValueError:
+        return _error(400, "json_invalido")
+    if not cuerpo_decision_valido(cuerpo):
+        return _error(
+            400,
+            "se_espera",
+            formato={"compra_id": "str", "decision": sorted(DECISIONES)},
+        )
+    return await _reenviar_json(
+        request.app.state.cfg, "POST", "/guard/compras/decision", cuerpo=cuerpo
+    )
+
+
 async def api_proxy_historial(request: Request) -> Response:
     try:
         limite = int(request.query_params.get("limit", "200"))
@@ -781,6 +869,13 @@ def create_app(cfg: Config | None = None) -> Starlette:
         Route("/api/proxy/guard/state", api_proxy_estado, methods=["GET", "POST"]),
         Route(
             "/api/proxy/guard/aprobaciones", api_proxy_aprobaciones, methods=["GET", "POST"]
+        ),
+        Route("/api/proxy/guard/compras", api_proxy_compras),
+        Route(
+            "/api/proxy/guard/compras/contexto", api_proxy_compras_contexto, methods=["POST"]
+        ),
+        Route(
+            "/api/proxy/guard/compras/decision", api_proxy_compras_decision, methods=["POST"]
         ),
         Route("/api/proxy/guard/events", api_proxy_eventos),
         Route("/api/proxy/guard/events/history", api_proxy_historial),
