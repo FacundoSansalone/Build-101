@@ -42,7 +42,7 @@ from guard.chequeos import (
 from guard.extractor import extraer
 from guard.ranking import chequeo_integridad, rankear
 from guard.recibo import armar_recibo
-from guard.fuentes import NOMBRE_FUENTE, ORDEN_FUENTES
+from guard.fuentes import ORDEN_FUENTES, nombre_fuente
 from guard.textos import acotar, sin_control
 from guard.verificador import verificar_con_rotulos
 
@@ -69,20 +69,23 @@ def agregar(chequeos: Iterable[Chequeo]) -> Status:
     return "aprobado"
 
 
-def redactar_motivo(status: Status, chequeos: list[Chequeo]) -> str:
+def redactar_motivo(
+    status: Status, chequeos: list[Chequeo], fixtures: frozenset[str] = frozenset()
+) -> str:
     """Una frase para el dashboard (y el agente): por qué este veredicto.
 
     Plantilla fija: solo dice lo que efectivamente se chequeó. Los `detalle`
     que junta no interpolan texto del comercio (ver `guard.textos`).
+    `fixtures`: orígenes cuyos datos fueron de prueba (se rotulan).
     """
     if status == "aprobado":
-        return _motivo_aprobado(chequeos)
+        return _motivo_aprobado(chequeos, fixtures)
     resultado = next(r for r, s in _STATUS_POR_RESULTADO.items() if s == status)
     detalles = [c.detalle for c in chequeos if c.resultado == resultado]
     return sin_control(f"{_PREFIJO[status]}: " + " ".join(detalles))
 
 
-def _motivo_aprobado(chequeos: list[Chequeo]) -> str:
+def _motivo_aprobado(chequeos: list[Chequeo], fixtures: frozenset[str] = frozenset()) -> str:
     ok = [c for c in chequeos if c.resultado == "ok"]
     mandato = {c.campo for c in ok if c.tipo == "mandato" and c.origen != "checkout_firmado"}
     partes: list[str] = []
@@ -98,7 +101,7 @@ def _motivo_aprobado(chequeos: list[Chequeo]) -> str:
         partes.append(f"{cumplidos} requisito{plural} del pedido cumplido{plural}")
     origenes = {c.origen for c in ok if c.tipo == "evidencia"}
     if origenes:
-        fuentes = [NOMBRE_FUENTE[o] for o in ORDEN_FUENTES if o in origenes]
+        fuentes = [nombre_fuente(o, o in fixtures) for o in ORDEN_FUENTES if o in origenes]
         if len(fuentes) > 1:
             fuentes = [", ".join(fuentes[:-1]) + " y " + fuentes[-1]]
         partes.append(f"los datos coinciden con {fuentes[0] if fuentes else 'el catálogo público'}")
@@ -179,6 +182,10 @@ def evaluar(
         chequeos += del_checkout
 
     status = agregar(chequeos)
+    origenes_fixture = frozenset(
+        elegida.evidencia[clave].origen_usado
+        for clave in (fixtures[elegida.cart_id] if elegida is not None else ())
+    )
     recibo = armar_recibo(
         ficha=ficha,
         ofertas=ofertas,
@@ -198,7 +205,7 @@ def evaluar(
         cart_id_recomendado=ranking[0] if ranking else None,
         ranking=ranking,
         chequeos=chequeos,
-        motivo=redactar_motivo(status, chequeos),
+        motivo=redactar_motivo(status, chequeos, origenes_fixture),
         recibo=recibo,
     )
 

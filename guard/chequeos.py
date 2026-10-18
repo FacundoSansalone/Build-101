@@ -623,5 +623,7 @@ def _detalle_atributo(
             return f"{nombre}: lo que indica el comercio cumple {referencia} ({pedido})."
         return f"{nombre}: lo que indica el comercio no cumple {referencia} ({pedido})."
     valor = observado if isinstance(observado, str) else formatear_atributo(observado)
+    if valor in ("sí", "no"):  # "cancelacion_ruido (no) no cumple...", no "no no cumple"
+        valor = f"({valor})"
     verbo = "cumple" if resultado_cumple else "no cumple"
     return f"{nombre} {valor} {verbo} {referencia} ({pedido})."

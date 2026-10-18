@@ -365,8 +365,9 @@ def formatear_atributo(valor: ValorAtributo | dict | None) -> str:
         valor = valor_atributo(valor)
     if valor is None:
         return "sin dato"
-    if isinstance(valor.valor, bool):
-        texto = "sí" if valor.valor else "no"
+    booleano = como_booleano(valor.valor) if valor.unidad is None else None
+    if booleano is not None:  # también "Y"/"N" de Icecat
+        texto = "sí" if booleano else "no"
     elif isinstance(valor.valor, (list, tuple)):
         texto = ", ".join(str(v) for v in valor.valor)
     else:

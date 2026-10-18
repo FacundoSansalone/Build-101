@@ -251,6 +251,16 @@ def test_el_fixture_del_fabricante_queda_rotulado(ahora):
     assert "fixture" not in _por_campo(sin_rotulo, "evidencia")["atributo:memoria_ram"].detalle
 
 
+def test_el_motivo_aprobado_nombra_las_fuentes_y_rotula_el_fixture(ahora):
+    catalogo = con_fuentes(_catalogo(), _fabricante(fixture=True))
+    veredicto = evaluar(_ficha(), _vistas(), "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "aprobado", veredicto.motivo
+    assert (
+        "los datos coinciden con la ficha del fabricante (fixture de prueba) y el "
+        "catálogo público" in veredicto.motivo
+    )
+
+
 def test_requisito_de_gtin(ahora):
     ficha = _ficha().model_copy(deep=True)
     ficha.requisitos.append(
