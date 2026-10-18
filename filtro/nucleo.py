@@ -48,6 +48,12 @@ MOTIVO_SOLO_HEURISTICAS = (
     "Sin señales en las heurísticas (modo solo heurísticas: sin la revisión del modelo)."
 )
 
+# El modo efectivo, para mostrarlo al arrancar (`describir()`).
+DESCRIPCION_SOLO_HEURISTICAS = "solo heurísticas"
+DESCRIPCION_SIN_CLIENTE = "sin cliente: bloquea todo"
+# `ClienteDecisiones.nombre` → el valor de DECISIONES_PROVEEDOR.
+_PROVEEDORES = {"openai-decisions": "openai"}
+
 # El proxy corta el filtro a los 30 s y el adaptador hace hasta 3 intentos con
 # 1,5 s de espera: 3 × 9 + 1,5 < 30.
 TIMEOUT_POR_DEFECTO_S = 8.0
@@ -86,6 +92,23 @@ class FiltroSeguridad:
         except Exception as e:  # noqa: BLE001 - falla cerrado
             logger.error("El filtro de seguridad falló (%s): se bloquea", type(e).__name__)
             return _no_verificado("filtro:error_interno")
+
+    def describir(self) -> str:
+        """El modo en un texto corto: "solo heurísticas", "sin cliente:
+        bloquea todo" o "heurísticas + modelo <proveedor>/<modelo>". Nunca la
+        clave."""
+        if self.solo_heuristicas:
+            return DESCRIPCION_SOLO_HEURISTICAS
+        if self.cliente is None:
+            if self.config_invalida:
+                return f"{DESCRIPCION_SIN_CLIENTE} (DECISIONES_PROVEEDOR inválido)"
+            return DESCRIPCION_SIN_CLIENTE
+        nombre = str(getattr(self.cliente, "nombre", "") or type(self.cliente).__name__)
+        proveedor = _PROVEEDORES.get(nombre, nombre)
+        modelo = getattr(self.cliente, "modelo", None)
+        if not modelo:
+            return f"heurísticas + modelo {proveedor}"
+        return f"heurísticas + modelo {proveedor}/{modelo}"
 
     def _filtrar(self, respuesta: Any) -> ResultadoFiltro:
         try:
@@ -159,20 +182,28 @@ def desde_entorno(env: Mapping[str, str] | None = None) -> FiltroSeguridad:
       `FILTRO_TIMEOUT_S` por llamada (8 s por defecto, entre 1 y 9).
     - Sin ninguno de los dos, el filtro bloquea todo lo que no puede verificar.
     """
-    env = os.environ if env is None else env
+    return _armar(os.environ if env is None else env, avisar=True)
+
+
+def _armar(env: Mapping[str, str], *, avisar: bool) -> FiltroSeguridad:
+    """`desde_entorno` sin red. Con `avisar=False` (lo usa `describir()`) no
+    deja nada en el log."""
     if (env.get("FILTRO_SOLO_HEURISTICAS") or "").strip().lower() in _VERDADEROS:
-        logger.warning("Filtro en modo solo heurísticas: sin la revisión del modelo")
+        if avisar:
+            logger.warning("Filtro en modo solo heurísticas: sin la revisión del modelo")
         return FiltroSeguridad(solo_heuristicas=True)
     try:
         cliente = cliente_desde_entorno(env)
     except ValueError:
-        logger.error("DECISIONES_PROVEEDOR inválido: el filtro bloquea todo")
+        if avisar:
+            logger.error("DECISIONES_PROVEEDOR inválido: el filtro bloquea todo")
         return FiltroSeguridad(config_invalida=True)
     if cliente is None:
-        logger.error(
-            "Filtro sin cliente de decisiones (OPENAI_API_KEY o TYPESAFE_API_KEY) ni "
-            "FILTRO_SOLO_HEURISTICAS=1: bloquea todo lo que no puede verificar"
-        )
+        if avisar:
+            logger.error(
+                "Filtro sin cliente de decisiones (OPENAI_API_KEY o TYPESAFE_API_KEY) ni "
+                "FILTRO_SOLO_HEURISTICAS=1: bloquea todo lo que no puede verificar"
+            )
         return FiltroSeguridad()
     if dataclasses.is_dataclass(cliente) and hasattr(cliente, "timeout"):
         cliente = dataclasses.replace(cliente, timeout=_timeout(env))
@@ -207,3 +238,21 @@ def filtrar(respuesta: dict[str, Any]) -> ResultadoFiltro:
                 _por_defecto = desde_entorno()
             filtro = _por_defecto
     return filtro(respuesta)
+
+
+def describir(env: Mapping[str, str] | None = None) -> str:
+    """El modo efectivo del filtro en un texto corto, para mostrarlo al
+    arrancar: "heurísticas + modelo <proveedor>/<modelo>", "solo heurísticas"
+    o "sin cliente: bloquea todo".
+
+    Sin `env`: el filtro que usa `filtrar()` si ya está armado (`configurar()`
+    o la primera llamada) y, si no, el que armaría con el entorno del proceso,
+    sin guardarlo. Con `env`: el que armaría ese entorno. No llama a la red,
+    no escribe en el log y nunca muestra la clave.
+    """
+    if env is None:
+        filtro = _por_defecto
+        if filtro is not None:
+            return filtro.describir()
+        env = os.environ
+    return _armar(env, avisar=False).describir()

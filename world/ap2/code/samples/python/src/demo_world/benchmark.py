@@ -20,7 +20,7 @@ global y las otras categorías (notebooks, auriculares) el suyo, con atributos.
 
 Opciones útiles:
   --scenarios B,C            solo algunos escenarios (por defecto, los de
-                             scenario.benchmark_names(): todos menos computadoras)
+                             scenario.benchmark_names(): todos menos los de computadoras)
   --source direct            no usa A2A: arma las ofertas en proceso
   --merchant-url URL         pasar por el proxy del Guard (Dev 3)
   --decider llm|best|target  'best' y 'target' no usan LLM (pruebas sin API key)

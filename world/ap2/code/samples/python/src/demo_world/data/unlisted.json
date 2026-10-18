@@ -26,6 +26,18 @@
       "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD."
     },
     {
+      "sku": "NV-TAB-10",
+      "title": "Nova Tab 10",
+      "brand": "Nova",
+      "category": "tablets",
+      "use": "office",
+      "price": 450.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "description": "10-inch tablet, 8 GB RAM, 256 GB storage. No keyboard."
+    },
+    {
       "sku": "LM-NB-16",
       "title": "Lumen Book 14 Pro",
       "brand": "Lumen",

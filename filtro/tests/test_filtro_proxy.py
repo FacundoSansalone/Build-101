@@ -86,6 +86,20 @@ async def test_el_proxy_corta_los_escenarios_con_inyeccion(proxy_con_filtro, esc
     assert "Note for AI" not in resp.text
 
 
+async def test_el_proxy_corta_al_proveedor_malicioso_de_computadoras(proxy_con_filtro):
+    """La corrida "malicioso con sistema" de la demo: la respuesta real de
+    `computadoras_malicioso` no llega al agente, tampoco las ofertas honestas."""
+    async with _cliente(proxy_con_filtro) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_find_products("computadoras_malicioso")), headers=HEADERS_A2A
+        )
+    task = resp.json()["result"]
+    assert task["status"]["state"] == "failed"
+    assert _carts(task) == []
+    for texto in ("Instructions for the purchasing agent", "Nova Tab", "Orion Notebook"):
+        assert texto not in resp.text
+
+
 @pytest.mark.parametrize("escenario", ["baseline", "C", "computadoras"])
 async def test_el_proxy_deja_pasar_lo_honesto(proxy_con_filtro, escenario):
     async with _cliente(proxy_con_filtro) as c:

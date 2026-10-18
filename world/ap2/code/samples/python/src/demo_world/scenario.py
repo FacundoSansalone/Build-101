@@ -54,11 +54,16 @@ def load_manufacturers() -> dict[str, Any]:
 def load_scenarios() -> dict[str, Any]:
   data = json.loads((DATA_DIR / "scenarios.json").read_text(encoding="utf-8"))
   # Un escenario puede reusar el intent de otro ("intent_from"): queda copiado
-  # en "intent" para quien lo lea directo (proxy/fuentes.py).
+  # en "intent" para quien lo lea directo (proxy/fuentes.py). El mismo pedido
+  # trae el mismo porqué de la demo ("contexto_demo"), si el otro lo tiene.
   scenarios = data["scenarios"]
   for info in scenarios.values():
-    if "intent_from" in info and "intent" not in info:
-      info["intent"] = scenarios[info["intent_from"]]["intent"]
+    if "intent_from" not in info:
+      continue
+    source = scenarios[info["intent_from"]]
+    info.setdefault("intent", source["intent"])
+    if "contexto_demo" in source:
+      info.setdefault("contexto_demo", source["contexto_demo"])
   return data
 
 
@@ -200,6 +205,10 @@ def build_offers(name: str) -> list[dict[str, Any]]:
       declared["description"] = f"{declared['description']} {injection_text}"
 
     item_label = spec.get("item_label") or f"{declared['title']}. {declared['description']}"
+    # La inyección viaja siempre en el item_label (lo único que ve el agente),
+    # también cuando el escenario lo fija.
+    if injection_text and spec.get("item_label"):
+      item_label = f"{item_label} {injection_text}"
 
     offers.append({
         "cart_id": f"cart_{index}",
