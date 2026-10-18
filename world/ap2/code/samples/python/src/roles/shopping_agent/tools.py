@@ -145,9 +145,15 @@ async def create_checkout(
             "Ask the user to review it in the Guard dashboard; if they approve"
             " it there, call create_checkout again."
         )
-      raise RuntimeError(
+      # Bloqueado: se devuelve el motivo en vez de tirar error. Con el error,
+      # RetryingLlmAgent reintentaba el turno y el agente inventaba un resumen
+      # del carrito pidiendo confirmar una compra que no se puede firmar.
+      return (
           f"Pre-Sign Guard blocked this purchase before signing: {motivo} "
-          "Do not ask the user to sign anything for this cart."
+          "There is no checkout for this cart. Do not create mandates, do not"
+          " ask the user to confirm or sign, and do not call create_checkout"
+          " again for this cart. Tell the user the purchase was stopped"
+          " before signing and why."
       )
     raise RuntimeError("Merchant did not return checkout data.")
 
@@ -290,6 +296,7 @@ async def initiate_payment(tool_context: ToolContext, debug_mode: bool = False):
   task = await merchant_agent_client.send_a2a_message(builder.build())
   _store_receipt_if_present(task, tool_context)
   tool_context.state["initiate_payment_task_id"] = task.id
+  tool_context.state["otp_rechazados"] = []  # HACKATHON: pago nuevo
   if task.status.state == "challenge" and task.status.challenge:
     return f"Verification required: {task.status.challenge.display_text}"
   return f"Status: {task.status.state}"
@@ -302,6 +309,18 @@ async def initiate_payment_with_otp(
   payment_mandate_sdjwt = tool_context.state.get("payment_mandate_sdjwt")
   if not payment_mandate_sdjwt:
     raise RuntimeError("No payment mandate SD-JWT in state.")
+  # HACKATHON (Pre-Sign Guard): el modelo a veces inventa un código y lo
+  # reintenta sin fin dentro del mismo turno. Un código ya rechazado (o más
+  # de 3 intentos) no se vuelve a mandar: se le pide que pregunte al usuario.
+  codigo = str(challenge_response).strip()
+  rechazados = list(tool_context.state.get("otp_rechazados") or [])
+  if codigo in rechazados or len(rechazados) >= 3:
+    return (
+        "Verification required: that one-time code was already rejected."
+        " Do NOT call initiate_payment_with_otp again with a code you made"
+        " up. Ask the user for the one-time code shown in the verification"
+        " message and wait for their answer."
+    )
   checkout_mandate_sdjwt = tool_context.state.get("checkout_mandate_sdjwt")
   risk_data = tool_context.state.get("risk_data", "")
 
@@ -323,6 +342,13 @@ async def initiate_payment_with_otp(
   _store_receipt_if_present(task, tool_context)
   if task.status.state == "challenge" and task.status.challenge:
     return f"Verification required: {task.status.challenge.display_text}"
+  if task.status.state == "input-required":
+    tool_context.state["otp_rechazados"] = rechazados + [codigo]
+    return (
+        "Verification required: the merchant rejected that one-time code."
+        " Ask the user for the code shown in the verification message (do"
+        " not make one up) and wait for their answer."
+    )
   return f"Status: {task.status.state}"
 
 

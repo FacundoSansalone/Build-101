@@ -362,6 +362,13 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     el Guard igual frena). El proveedor malicioso de computadoras sigue solo
     en `filtro/casos.py`.
 
+- **Deploy (2026-10-18, `deploy/`):** toda la demo en una sola máquina
+  (`deploy/start_all.sh`) y en la nube en un Tenki Sandbox
+  (`deploy/tenki.sh`). Solo se publica el dashboard (:8020, `/demo`). El
+  resto sigue en `127.0.0.1`, sin tocar `world/` ni el proxy.
+  `DASHBOARD_PUBLIC_ORIGINS` (y `DASHBOARD_EXTRA_HOSTS`) suman el dominio
+  público a los `Origin`/`Host` que acepta `/api/*`.
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh

@@ -6,6 +6,8 @@ Variables de entorno:
   DASHBOARD_ALLOW_REMOTE  1 para escuchar fuera de loopback (no recomendado)
   PROXY_URL               proxy del Guard (http://127.0.0.1:8010)
   GUARD_API_TOKEN_PATH    token de la API del proxy (.temp-db/guard_api_token)
+  DASHBOARD_PUBLIC_ORIGINS  deploy: orígenes públicos, ej. https://demo.ejemplo.com
+  DASHBOARD_EXTRA_HOSTS   deploy: Host extra si un túnel lo reescribe
 """
 
 from __future__ import annotations

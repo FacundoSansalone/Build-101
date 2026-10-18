@@ -57,6 +57,19 @@ async def find_products(
   task = await merchant_agent_client.send_a2a_message(message)
 
   if task.status.state != "completed":
+    # HACKATHON (Pre-Sign Guard): si el proxy del Guard cortó la conversación
+    # (filtro de seguridad o consulta vencida), se devuelve su motivo en vez
+    # de tirar error. Con el error, RetryingLlmAgent reintentaba la búsqueda
+    # hasta 5 veces y cada reintento era una compra nueva para el Guard.
+    veredicto = _veredicto_guard(task.artifacts)
+    if veredicto is not None and veredicto.get("status") == "bloqueado":
+      return (
+          "Pre-Sign Guard blocked this conversation with the merchant before"
+          f" any of its content reached you: {veredicto.get('motivo', '')}"
+          " No products from this merchant can be offered. Do NOT call"
+          " find_products again for this request. Tell the user the purchase"
+          " was stopped for safety."
+      )
     raise RuntimeError(f"Failed to find products: {task.status}")
 
   tool_context.state["shopping_context_id"] = task.context_id
@@ -77,6 +90,16 @@ async def find_products(
         "authorized_cart_id": parametros.get("cart_id"),
     }
   return carts
+
+
+def _veredicto_guard(artifacts) -> dict | None:
+  """El data part `guard.veredicto` del proxy del Guard, si vino."""
+  for artifact in artifacts or []:
+    for part in artifact.parts:
+      data = getattr(part.root, "data", None)
+      if isinstance(data, dict) and isinstance(data.get("guard.veredicto"), dict):
+        return data["guard.veredicto"]
+  return None
 
 
 def _parametros_autorizados(artifacts) -> dict | None:

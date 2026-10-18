@@ -14,6 +14,13 @@
 
 """Helper functions related to the system."""
 
+import os
+
+# HACKATHON (Pre-Sign Guard): el modelo de los agentes se puede cambiar con
+# AP2_MODEL (por defecto, el del sample). El preview satura (503) y comparte
+# un solo cupo por minuto entre todos los agentes.
+AP2_MODEL = os.environ.get("AP2_MODEL") or "gemini-3.1-flash-lite-preview"
+
 DEBUG_MODE_INSTRUCTIONS = """
     This is really important! If the agent or user asks you to be verbose or if debug_mode is True, do the following:
       1. If this is the the start of a new task, explain who you are, what you are going to do, what tools you use, and what agents you delegate to.

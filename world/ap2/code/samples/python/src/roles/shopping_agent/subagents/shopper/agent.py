@@ -19,13 +19,13 @@ to find products, and lets the user select one.
 """
 
 from common.retrying_llm_agent import RetryingLlmAgent
-from common.system_utils import DEBUG_MODE_INSTRUCTIONS
+from common.system_utils import AP2_MODEL, DEBUG_MODE_INSTRUCTIONS
 
 from . import tools
 
 
 shopper = RetryingLlmAgent(
-    model="gemini-3.1-flash-lite-preview",
+    model=AP2_MODEL,  # HACKATHON (Pre-Sign Guard): AP2_MODEL
     name="shopper",
     max_retries=5,
     instruction="""

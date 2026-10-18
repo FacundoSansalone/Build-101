@@ -28,6 +28,8 @@ from a2a.types import Task
 from google import genai
 from google.genai import types
 
+from common.system_utils import AP2_MODEL
+
 
 DataPartContent = dict[str, Any]
 Tool = Callable[[list[DataPartContent], TaskUpdater, Task | None], Any]
@@ -82,7 +84,7 @@ class FunctionCallResolver:
         called. If no suitable tool is found, it returns "Unknown".
     """
     response = self._client.models.generate_content(
-        model="gemini-3.1-flash-lite-preview",
+        model=AP2_MODEL,  # HACKATHON (Pre-Sign Guard): AP2_MODEL
         contents=prompt,
         config=self._config,
     )

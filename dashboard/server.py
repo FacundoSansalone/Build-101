@@ -17,7 +17,8 @@ rechazar una oportunidad).
 
 Como es la puerta al proxy, la API (`/api/*`) solo atiende `Host`
 localhost/127.0.0.1 con su puerto, y los POST exigen JSON y el `Origin` del
-propio panel (ver `SoloLocal`). Los POST que reenvía al proxy llevan el
+propio panel (ver `SoloLocal`). En un deploy, `DASHBOARD_PUBLIC_ORIGINS`
+suma el dominio público a esos orígenes y hosts (`deploy/`). Los POST que reenvía al proxy llevan el
 token de su API de control (`X-Guard-Token`), que el proxy escribe en
 `.temp-db/guard_api_token` en cada arranque: lo lee el servidor, nunca el
 navegador.
@@ -35,6 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import ValidationError
@@ -111,16 +113,25 @@ class Config:
         default=None, compare=False
     )
     adk_transport: httpx.AsyncBaseTransport | None = field(default=None, compare=False)
+    # Deploy: orígenes públicos del panel (`https://dominio`) y `Host` extra
+    # (si un túnel lo reescribe). Vacíos en local.
+    origenes_publicos: tuple[str, ...] = ()
+    hosts_extra: tuple[str, ...] = ()
 
     @property
     def origenes(self) -> tuple[str, ...]:
         """Orígenes del propio panel (los únicos que pueden hacer POST)."""
-        return (f"http://localhost:{self.port}", f"http://127.0.0.1:{self.port}")
+        return (f"http://localhost:{self.port}", f"http://127.0.0.1:{self.port}", *self.origenes_publicos)
 
     @property
     def hosts(self) -> frozenset[str]:
         """`Host` aceptados en /api/* (protege del DNS rebinding)."""
-        return frozenset({f"localhost:{self.port}", f"127.0.0.1:{self.port}"})
+        return frozenset({
+            f"localhost:{self.port}",
+            f"127.0.0.1:{self.port}",
+            *(urlsplit(o).netloc for o in self.origenes_publicos),
+            *self.hosts_extra,
+        })
 
     @property
     def fixtures_dir(self) -> Path:
@@ -150,6 +161,29 @@ class Config:
         return self.repo_root / ORIGENES_RESULTADOS[origen]
 
 
+def origenes_publicos(texto: str) -> tuple[str, ...]:
+    """`DASHBOARD_PUBLIC_ORIGINS`: orígenes separados por coma
+    (`https://dominio[:puerto]`, sin ruta). Uno inválido no arranca."""
+    origenes = []
+    for crudo in texto.split(","):
+        o = crudo.strip().rstrip("/")
+        if not o:
+            continue
+        partes = urlsplit(o)
+        if (
+            partes.scheme not in ("http", "https")
+            or not partes.hostname
+            or "@" in partes.netloc
+            or partes.path or partes.query or partes.fragment
+        ):
+            raise SystemExit(
+                f"DASHBOARD_PUBLIC_ORIGINS: {crudo.strip()!r} no es un origen "
+                "(https://dominio[:puerto], sin ruta)."
+            )
+        origenes.append(f"{partes.scheme}://{partes.netloc.lower()}")
+    return tuple(origenes)
+
+
 def config_desde_entorno() -> Config:
     token = os.environ.get("GUARD_API_TOKEN_PATH")
     token_path = Path(token) if token else REPO_ROOT / TOKEN_RELATIVO
@@ -171,6 +205,10 @@ def config_desde_entorno() -> Config:
         world_temp_dir=world_temp,
         demo_auto=auto,
         demo_pausa_auto_s=pausa,
+        origenes_publicos=origenes_publicos(os.environ.get("DASHBOARD_PUBLIC_ORIGINS", "")),
+        hosts_extra=tuple(
+            h.strip().lower() for h in os.environ.get("DASHBOARD_EXTRA_HOSTS", "").split(",") if h.strip()
+        ),
     )
 
 
@@ -209,7 +247,8 @@ class SoloLocal:
     """La API del panel es la puerta al proxy: misma protección que /guard/*.
 
     - `Host` de /api/* tiene que ser localhost/127.0.0.1 con el puerto del
-      panel (403): frena el DNS rebinding.
+      panel, o el dominio de `DASHBOARD_PUBLIC_ORIGINS` en un deploy (403):
+      frena el DNS rebinding.
     - Los POST exigen el `Origin` del panel (403 si falta o es otro; el
       navegador siempre lo manda en un POST) y, si viene `Sec-Fetch-Site`,
       que sea `same-origin`: el panel agrega el token del proxy, así que solo
