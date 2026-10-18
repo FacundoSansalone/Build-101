@@ -102,8 +102,9 @@ queda como "Detalle técnico" (`/`).
   en `localStorage` (`psg.demo.comparacion`) y se muestra lado a lado para el
   comercio elegido ("Se compró Zento Slim 14, con 8 GB de memoria RAM
   (pediste 16 GB)" / "Frenada antes de la firma: no se pagó nada").
-- **Replay (plan B)**: el selector "Grabación…" reproduce un `.jsonl` de
-  `dashboard/demo/` o `.logs/` con el mismo diagrama y relato.
+- **Replay (plan B)**: en `/demo/clasico`, el selector "Grabación…"
+  reproduce un `.jsonl` de `dashboard/demo/` o `.logs/` con el mismo
+  diagrama y relato. `/demo` no lo usa.
 
 | Variable | Default | Para qué |
 |---|---|---|
@@ -342,7 +343,7 @@ avisa que esa capa está apagada.
 | `GET /api/results/{results\|world}/{nombre}` | Un archivo puntual |
 | `GET /api/fixtures` · `/api/fixtures/{escenario}` · `/api/fixtures/{escenario}/ficha` | Fixtures y la ficha armada con el contrato |
 | `GET /api/catalog` | `fixtures/public_catalog.json` |
-| `GET /api/replay` · `/api/replay/{nombre}` | Archivos `.jsonl` y sus `Evento` validados (las líneas inválidas se cuentan en `X-Lineas-Invalidas`) |
+| `GET /api/replay` · `/api/replay/{nombre}` | Archivos `.jsonl` y sus `Evento` validados (las líneas inválidas se cuentan en `X-Lineas-Invalidas`). Con `DASHBOARD_PUBLIC_ORIGINS` (panel publicado), solo los de `dashboard/demo/`: `.logs/guard_events.jsonl` es el registro entero del proxy y no se sirve |
 | `GET /api/public-key` | Clave pública del Guard (proxy o local) |
 | `GET/POST /api/proxy/guard/state`, `GET /api/proxy/guard/events` (SSE), `GET /api/proxy/guard/events/history` | Reenvío al proxy (el POST, con el token) |
 | `GET /api/proxy/guard/aprobaciones` | Reenvío de `GET :8010/guard/aprobaciones` (`{"pendientes", "usadas"}`) |

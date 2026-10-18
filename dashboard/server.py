@@ -505,9 +505,14 @@ async def api_catalogo(request: Request) -> Response:
 
 
 def _replays(cfg: Config) -> dict[str, tuple[Path, str]]:
-    """nombre → (ruta, origen). Lista blanca: solo lo que hay en disco."""
+    """nombre → (ruta, origen). Lista blanca: solo lo que hay en disco.
+
+    Con el panel publicado (`DASHBOARD_PUBLIC_ORIGINS`), solo las grabaciones
+    de `dashboard/demo/`: `.logs/guard_events.jsonl` es el registro entero del
+    proxy (pedidos, contextos, checkouts y mandatos) y no tiene token.
+    """
     out: dict[str, tuple[Path, str]] = {}
-    if cfg.log_eventos.is_file():
+    if cfg.log_eventos.is_file() and not cfg.origenes_publicos:
         out[REPLAY_LOG] = (cfg.log_eventos, ".logs")
     if cfg.demo_dir.is_dir():
         for path in sorted(cfg.demo_dir.glob("*.jsonl")):

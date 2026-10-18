@@ -81,3 +81,45 @@ def test_config_desde_entorno_lee_las_variables_del_deploy(monkeypatch):
     cfg = config_desde_entorno()
     assert PUBLICO in cfg.origenes
     assert {"demo.ejemplo.test", "interno:8020"} <= cfg.hosts
+
+
+def _evento_jsonl(i: int) -> str:
+    from datetime import datetime, timezone
+
+    from contracts import Evento
+
+    return Evento(
+        id=f"evento-test-{i}", ts=datetime(2026, 1, 1, 0, 0, i, tzinfo=timezone.utc),
+        contexto_id="ctx-test", escenario="B", guard_activo=True, tipo="busqueda_enviada",
+        datos={"catalog_search": "búsqueda de test"},
+    ).model_dump_json()
+
+
+def test_con_dominio_publico_los_replays_son_solo_los_de_dashboard_demo(tmp_path):
+    """`.logs/guard_events.jsonl` es el registro entero del proxy (pedidos,
+    contextos, mandatos): publicado el panel, no se sirve. Las grabaciones de
+    `dashboard/demo/` (commiteadas para el plan B) sí."""
+    (tmp_path / ".logs").mkdir()
+    (tmp_path / ".logs" / "guard_events.jsonl").write_text(_evento_jsonl(1) + "\n", encoding="utf-8")
+    (tmp_path / "dashboard" / "demo").mkdir(parents=True)
+    (tmp_path / "dashboard" / "demo" / "ensayo-test.jsonl").write_text(_evento_jsonl(2) + "\n", encoding="utf-8")
+    for base in (PUBLICO, "http://localhost:8020"):
+        c = _cliente(tmp_path, base, origenes_publicos=(PUBLICO,))
+        assert [r["nombre"] for r in c.get("/api/replay").json()] == ["ensayo-test.jsonl"]
+        r = c.get("/api/replay/guard_events.jsonl")
+        assert r.status_code == 404 and "evento-test-1" not in r.text
+        assert [e["id"] for e in c.get("/api/replay/ensayo-test.jsonl").json()] == ["evento-test-2"]
+    # En local, sin dominio público, como siempre.
+    local = _cliente(tmp_path, "http://localhost:8020")
+    assert {r["nombre"] for r in local.get("/api/replay").json()} == {"guard_events.jsonl", "ensayo-test.jsonl"}
+    assert local.get("/api/replay/guard_events.jsonl").status_code == 200
+
+
+def test_la_demo_publica_no_depende_del_replay(tmp_path):
+    """/demo no tiene selector de grabaciones ni pide /api/replay: publicada,
+    no pierde nada sin el registro del proxy."""
+    c = _cliente(tmp_path, PUBLICO, origenes_publicos=(PUBLICO,))
+    html = c.get("/demo").text
+    assert "grabacion" not in html and "/api/replay" not in html
+    js = c.get("/demo.js").text
+    assert "reproducir(" not in js.replace("async function reproducir(", "")
