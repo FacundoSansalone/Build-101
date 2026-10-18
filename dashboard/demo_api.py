@@ -284,9 +284,14 @@ def _ultima_respuesta(eventos: list[dict[str, Any]], herramientas: set[str]) -> 
 
 def pide_codigo(eventos: list[dict[str, Any]]) -> bool:
     """¿La última respuesta del pago es el desafío (OTP)? La herramienta del
-    sample devuelve "Verification required: …" solo en ese caso."""
+    sample devuelve "Verification required: …" o, como pasa con el
+    procesador del sample, "Status: TaskState.input_required" (el desafío
+    viaja aparte). Si el pago falló o terminó, no."""
     respuesta = _ultima_respuesta(eventos, {"initiate_payment", "initiate_payment_with_otp"})
-    return respuesta is not None and "Verification required" in json.dumps(respuesta)
+    if respuesta is None:
+        return False
+    texto = json.dumps(respuesta)
+    return "Verification required" in texto or "input_required" in texto
 
 
 def _textos_en(valor: Any) -> list[str]:

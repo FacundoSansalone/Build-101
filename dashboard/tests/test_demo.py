@@ -284,6 +284,11 @@ def test_otp_y_fin_con_el_recibo():
     paso = demo.siguiente_auto(estado, eventos, Counter())
     assert paso.paso == "otp" and paso.texto == "123"
     assert demo.siguiente_auto({**estado, "payment_receipt": {"id": "r"}}, eventos, Counter()) is None
+    # Lo que devolvió de verdad la herramienta en la punta a punta: la tarea
+    # del pago queda input_required (el desafío viaja en un data part).
+    real = _sesion(ev("root_agent", respuesta=("initiate_payment", {"result": "Status: TaskState.input_required"})),
+                   ev("root_agent", texto="Se requiere un código OTP."))
+    assert demo.siguiente_auto(estado, real, Counter()).paso == "otp"
 
 
 def test_el_agente_principal_que_narra_despues_de_elegir_sigue():
