@@ -357,6 +357,37 @@ def test_el_bloqueo_se_reconoce_tambien_con_el_texto_del_proxy():
     assert demo.siguiente_auto(estado, eventos, Counter()) is None
 
 
+def test_los_parametros_autorizados_no_son_un_bloqueo():
+    """Regresión (prueba de punta a punta del 2026-10-18): al aceptar la
+    alternativa, find_products trae "KaiAI: el usuario autorizó …". Eso no es
+    un freno: la billetera y el resto del cobro se siguen contestando solos."""
+    carts = {
+        "carts": [{"cart_id": "cart_2", "item_label": "x", "amount": 18000.0, "currency": "USD"}],
+        "parameters_authorized_by_the_user": (
+            "KaiAI: el usuario autorizó nuevos parámetros para esta compra (Cantidad: 20). "
+            "La oferta cart_2 los cumple: seguí la compra con esos parámetros."
+        ),
+        "authorized_cart_id": "cart_2",
+    }
+    eventos = _sesion(
+        ev("shopper", respuesta=("find_products", carts)),
+        ev("shipping_address_collector", texto="¿Would you prefer to use a digital wallet?"),
+    )
+    assert not demo.bloqueo_del_guard(eventos)
+    paso = demo.siguiente_auto({"chosen_cart_id": "cart_2"}, eventos, Counter())
+    assert paso is not None and paso.paso == "billetera"
+
+
+@pytest.mark.parametrize("freno", [
+    "KaiAI: escalar. motivo. El checkout requiere aprobación humana.",
+    "KaiAI: en pausa. Hay una alternativa esperando la decisión del usuario.",
+    "Pre-Sign Guard held this checkout for human review: x",
+])
+def test_retener_o_pausar_tambien_frena(freno):
+    eventos = _sesion(ev("root_agent", respuesta=("create_checkout", {"error": freno})))
+    assert demo.bloqueo_del_guard(eventos)
+
+
 def test_la_eleccion_del_producto_es_del_usuario():
     eventos = _sesion(ev("shopper", texto="Which one would you like?"))
     assert demo.siguiente_auto({}, eventos, Counter()) is None
