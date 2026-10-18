@@ -6,8 +6,11 @@ dashboard ("Aprobar igual"). La aprobación:
 
 - es de un solo uso;
 - vale para un contexto y un cart;
-- queda atada al monto (y la moneda) del último checkout que el Guard
-  escaló en ese contexto/cart: si el reintento trae otro monto, no aplica.
+- queda atada al monto y la moneda **firmados** del último checkout que el
+  Guard escaló en ese contexto/cart (`a2a.monto_firmado`: el total entero
+  del JWT, sin fallbacks): si el reintento firma otro monto u otra moneda,
+  no aplica. Si el checkout escalado no tiene un total firmado exacto, no se
+  puede aprobar.
 
 El proxy no decide: el Guard vuelve a evaluar cada reintento y la aprobación
 solo cuenta si el veredicto nuevo es otra vez `escalar` (nunca salta un
@@ -87,8 +90,11 @@ class RegistroAprobaciones:
             raise SinEscalar(
                 "el último veredicto de ese contexto y cart no es escalar"
             )
-        if ultimo.centavos is None:
-            raise SinEscalar("el checkout escalado no tiene un monto legible")
+        if ultimo.centavos is None or ultimo.moneda is None:
+            raise SinEscalar(
+                "el checkout escalado no tiene un total firmado exacto (entero en "
+                "centavos y moneda en el checkout_jwt): no se puede aprobar"
+            )
         previa = self._pendientes.get(clave)
         if (
             previa is not None
@@ -113,7 +119,7 @@ class RegistroAprobaciones:
         self, contexto_id: str, cart_id: str, centavos: int | None, moneda: str | None
     ) -> Aprobacion | None:
         previa = self._pendientes.get((contexto_id, cart_id))
-        if previa is None or centavos is None:
+        if previa is None or centavos is None or moneda is None:
             return None
         if previa.centavos != centavos or previa.moneda != moneda:
             return None

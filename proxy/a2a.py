@@ -12,6 +12,7 @@ import codecs
 import copy
 import hashlib
 import json
+import math
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -293,43 +294,68 @@ class Respuesta:
 
 
 # ---------------------------------------------------------------------------
-# Monto del checkout (para atar la aprobación humana)
+# Monto firmado del checkout (para atar la aprobación humana)
 # ---------------------------------------------------------------------------
 
 
-def monto_checkout(checkout: dict[str, Any]) -> tuple[int | None, str | None]:
-    """(centavos, moneda) del checkout: lo firmado en el JWT si se puede leer
-    (`totals` → total, si no la suma de `line_items`), si no el data part."""
-    _, payload = decodificar_jwt(checkout.get("checkout_jwt"))
-    centavos: int | None = None
-    moneda: str | None = None
-    if payload:
-        moneda = payload.get("currency") if isinstance(payload.get("currency"), str) else None
-        totales = payload.get("totals")
-        if isinstance(totales, list):
-            for t in totales:
-                if isinstance(t, dict) and t.get("type") == "total" and _es_entero(t.get("amount")):
-                    centavos = t["amount"]
-        if centavos is None and isinstance(payload.get("line_items"), list):
-            suma = 0
-            for li in payload["line_items"]:
-                precio = (li.get("item") or {}).get("price") if isinstance(li, dict) else None
-                cantidad = li.get("quantity", 1) if isinstance(li, dict) else None
-                if not (_es_entero(precio) and _es_entero(cantidad)):
-                    suma = None
-                    break
-                suma += precio * cantidad
-            centavos = suma
-    if centavos is None:
-        if _es_entero(checkout.get("amount_cents")):
-            centavos = checkout["amount_cents"]
-        elif isinstance(checkout.get("amount"), (int, float)) and not isinstance(
-            checkout.get("amount"), bool
-        ):
-            centavos = int(round(checkout["amount"] * 100))
-    if moneda is None and isinstance(checkout.get("currency"), str):
-        moneda = checkout["currency"]
-    return centavos, moneda
+def monto_firmado(checkout: dict[str, Any]) -> tuple[int, str] | None:
+    """(centavos, moneda) que firmó el comercio en el `checkout_jwt`, o None.
+
+    Es exactamente el `totals[type=total].amount` del payload (un entero
+    JSON, en centavos) y la `currency` firmada. Sin fallbacks: ni la suma de
+    `line_items` (la arma el comercio) ni el data part (`amount`,
+    `amount_cents`). Si el JWT no se puede leer en estricto (claves
+    duplicadas, números no finitos), falta el total, hay más de uno o no es un
+    entero exacto, devuelve None y no se puede aprobar.
+    """
+    payload = _payload_estricto(checkout.get("checkout_jwt"))
+    if payload is None:
+        return None
+    moneda = payload.get("currency")
+    if not isinstance(moneda, str) or not 0 < len(moneda) <= 16:
+        return None
+    totales = payload.get("totals")
+    if not isinstance(totales, list):
+        return None
+    montos = [t.get("amount") for t in totales if isinstance(t, dict) and t.get("type") == "total"]
+    if len(montos) != 1 or not _es_entero(montos[0]) or montos[0] < 0:
+        return None
+    return montos[0], moneda
+
+
+def _sin_duplicadas(pares: list[tuple[str, Any]]) -> dict[str, Any]:
+    objeto: dict[str, Any] = {}
+    for clave, valor in pares:
+        if clave in objeto:
+            raise ValueError(f"clave duplicada: {clave!r}")
+        objeto[clave] = valor
+    return objeto
+
+
+def _float_finito(texto: str) -> float:
+    valor = float(texto)
+    if not math.isfinite(valor):
+        raise ValueError(f"número no finito: {texto[:20]}")
+    return valor
+
+
+def _payload_estricto(jwt: Any) -> dict[str, Any] | None:
+    """Payload de un JWT leído en estricto (sin claves duplicadas, NaN ni
+    números que desbordan). No verifica la firma: eso lo hace el Guard/AP2."""
+    if not isinstance(jwt, str) or jwt.count(".") != 2:
+        return None
+    segmento = jwt.split(".")[1]
+    try:
+        raw = base64.urlsafe_b64decode(segmento + "=" * (-len(segmento) % 4))
+        payload = json.loads(
+            raw,
+            object_pairs_hook=_sin_duplicadas,
+            parse_constant=_constante_no_estandar,
+            parse_float=_float_finito,
+        )
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _es_entero(v: Any) -> bool:

@@ -908,7 +908,9 @@ class ProxyGuard:
             contexto_id=contexto_id,
             escenario=escenario,
         )
-        centavos, moneda = a2a.monto_checkout(checkout)
+        # La aprobación humana se ata solo a lo firmado (N2): sin total entero
+        # exacto en el JWT no se puede aprobar.
+        centavos, moneda = a2a.monto_firmado(checkout) or (None, None)
         self.aprobaciones.registrar_veredicto(
             contexto_id, cart_id, veredicto.status, centavos, moneda
         )
