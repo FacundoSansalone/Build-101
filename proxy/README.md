@@ -832,6 +832,7 @@ receptor de webhooks se inyectan):
 |---|---|
 | `test_claves.py`, `test_comercios.py` | Formato y verificación de claves, middleware por oyente, CLI; registro de comercios y URLs |
 | `test_gateway_revision.py` | Regresiones de la revisión adversarial del gateway: desalojo de memoria, aprobaciones solo del dueño, GET de `/guard/*` sin token, escrituras en orden, listado tras un reinicio y límite concurrente |
+| `test_revision_esperas_y_caches.py` | Segunda revisión: otra búsqueda sin plazo espera la llamada, una consulta al almacén por contexto y llamada en el tráfico anónimo, marcas de una fila de otro reloj, caché del filtro sobre la Agent Card y los duplicados (`anidado_de_mas`, `en_hilo`) |
 | `test_webhooks.py` | Firma, reintentos, SSRF (IPs no globales, IP fijada, sin redirecciones), cola y registro de entregas |
 | `test_estado.py`, `test_estado_supabase.py`, `test_compras_api.py` | Almacén en memoria y PostgREST (con `MockTransport`), compras de API y su normalización tras un reinicio |
 | `test_api_v1.py`, `test_vistas.py` | Validación de `/v1`, errores, OpenAPI y que nada del vendedor salga en las vistas |
