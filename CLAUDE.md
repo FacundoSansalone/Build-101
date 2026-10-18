@@ -102,7 +102,7 @@ El Merchant Agent responde por A2A, en cada búsqueda:
   (puede mentir).
 - `demo_scenario` → nombre del escenario activo.
 
-Catálogo público (verdad): `GET http://localhost:8011/products` y
+Catálogo público (verdad): `GET http://127.0.0.1:8011/products` y
 `/products/<sku>`. El pedido del usuario y sus requisitos están en
 `fixtures/scenario_*.json` → `intent`.
 
@@ -133,6 +133,7 @@ pasar por el proxy: `MERCHANT_AGENT_URL=http://localhost:8010/a2a/merchant_agent
 
 ```sh
 bash world/run_world.sh B                       # levanta todo en el escenario B
+bash deploy/start_all.sh computadoras           # demo completa (world, proxy, dashboard en :8020/demo); Windows con Git Bash
 cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.benchmark --trials 10
 cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.export_fixtures
 ```
@@ -361,8 +362,9 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   - **`world/`:** `computadoras` ya está en `world/` (y fuera del
     benchmark); escenarios de notebooks y auriculares, y
     `notebook_dato_falso` (RAM falsa **sin inyección**: el filtro no lo ve y
-    el Guard igual frena). El proveedor malicioso de computadoras sigue solo
-    en `filtro/casos.py`.
+    el Guard igual frena). El proveedor malicioso de computadoras está en
+    `world/` (`computadoras_malicioso`, fuera del benchmark); `filtro/casos.py`
+    usa su mismo texto.
 
 - **Deploy (2026-10-18, `deploy/`):** toda la demo en una sola máquina
   (`deploy/start_all.sh`) y en la nube en un Tenki Sandbox
@@ -406,6 +408,30 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   ("Pre-Sign Guard blocked …") y las marcas `HACKATHON (Pre-Sign Guard)`
   siguen igual, y el dashboard reconoce las dos marcas
   (`dashboard.demo_api.MARCAS_GUARD`).
+
+- **Mejoras (2026-10-18, ramas `mejoras/*`):**
+  - **`DEMO_HOY=2026-10-18`:** fija el "hoy" del agente de intención
+    (`deploy/start_all.sh` lo exporta). El Guard no lo usa: los vencimientos
+    del checkout firmado se miran con el reloj de verdad.
+  - **JSONL privado de integradores:** los eventos de compras de integrador van
+    a `GUARD_EVENTS_JSONL_PRIVADO` (`.logs/guard_events_privados.jsonl`). El
+    JSONL principal, que sirve el replay, no los tiene.
+  - **`[::1]` y `SO_EXCLUSIVEADDRUSE`:** el proxy escucha también en `[::1]`
+    (en Windows, `localhost` tardaba ~2,1 s por conexión). Si otro proceso
+    tiene ese puerto en `[::1]`, no arranca. En Windows los sockets usan
+    `SO_EXCLUSIVEADDRUSE`.
+  - **Registro del pedido del usuario:** `/demo` registra el primer mensaje de
+    cada compra (`POST /guard/compras/pedido`, con token) y el intake lo lee.
+    Vence a los 180 s y se usa una vez. No autoriza nada.
+  - **`computadoras_malicioso`** (`world/`): proveedor malicioso de computadoras
+    (tablets con inyección). Las ofertas honestas quedan igual.
+  - **`.gitattributes`:** `*.sh` con LF, para que Git Bash en Windows y bash en
+    la VM de Tenki no fallen con CRLF.
+  - **`ADK_HOST`:** `world/run_world.sh` levanta la dev-ui de ADK en
+    `127.0.0.1`. Para publicarla, `ADK_HOST=<host>`.
+  - **`filtro_modo`:** `filtro.describir()` da el modo efectivo del filtro
+    (`heurísticas + modelo …` o `solo heurísticas`). Sale en la línea de
+    arranque del proxy y en `GET /guard/state`. Solo informa.
 
 Tests de las carpetas nuevas, desde la raíz:
 
