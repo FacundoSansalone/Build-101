@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import logging
 import time
 import uuid
@@ -55,7 +56,9 @@ from contracts import (
     Ficha,
     Filtro,
     OfertasVistas,
+    Requisito,
     ResultadoFiltro,
+    Turno,
     Veredicto,
 )
 from proxy import a2a
@@ -163,8 +166,12 @@ _MOTIVO_CONTEXTO_AJENO = (
 # sample) y las dos esperas caen en la misma: presupuesto con margen.
 _PRESUPUESTO_LLAMADA_S = 570.0
 _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
+# Una repregunta del intake solo si queda al menos esto de la llamada (si
+# no, sigue con lo que tiene: la consulta de una oportunidad también espera).
+_MINIMO_REPREGUNTA_S = 30.0
 _TIMEOUT_LLM_S = 45.0
 _TIMEOUT_FILTRO_S = 30.0
+MAX_INTAKES = 200  # estados de intake en memoria (como las compras)
 
 AccionEtapa2 = Literal["pasar", "con_parametros", "vencida", "bloqueada", "contexto_ajeno"]
 
@@ -173,6 +180,70 @@ Accion = Literal["pasar", "retener", "bloquear"]
 
 def _filtrar(headers: Any, excluidos: set[str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in excluidos}
+
+
+def _ficha_verificable(texto: str, requisitos: list[Requisito]) -> Ficha | None:
+    """La ficha del agente con lo que el Guard sabe chequear (None si nada)."""
+    from intencion.agente_decisiones import requisitos_verificables
+
+    verificables, _ = requisitos_verificables(list(requisitos))
+    if not verificables:
+        return None
+    return Ficha(pedido_original=texto, requisitos=verificables, confirmada=True)
+
+
+def _nueva_espera(compra: Compra, pregunta: str) -> None:
+    """Otro turno del intake: la compra vuelve a esperar una respuesta.
+
+    `RegistroCompras.responder` resuelve un Future por compra; para cada
+    repregunta hace falta uno nuevo (la compra vive en `proxy/compras.py`).
+    """
+    compra._respuesta = asyncio.get_running_loop().create_future()
+    compra.pregunta = pregunta
+    compra.estado = "esperando_contexto"
+
+
+@dataclass
+class EstadoIntake:
+    """El intake de una compra: qué turno, qué falta y cómo terminó."""
+
+    turno: int = 0
+    confirmar: bool = False  # el turno actual pide confirmar la ficha
+    resultado: Any = None  # intencion.intake.ResultadoIntake (None sin intake)
+    final: bool = False
+    confirmada: bool | None = None
+    ficha_autorizada: list[Requisito] | None = None
+    sin_verificar_guard: list[Requisito] | None = None
+
+    def intake_json(self) -> dict[str, Any]:
+        r = self.resultado
+        if r is None:
+            return {}
+        return {
+            "faltan": list(r.faltan),
+            "a_confirmar": list(r.a_confirmar),
+            "ficha_parcial": [p.a_json() for p in r.parametros],
+            "cortado": r.cortado,
+            "mensaje": r.mensaje,
+            "fuera_de_catalogo": r.fuera_de_catalogo,
+        }
+
+    def cierre_json(self) -> dict[str, Any]:
+        return {
+            "final": self.final,
+            "confirmada": self.confirmada,
+            "ficha_autorizada": [q.model_dump(mode="json") for q in self.ficha_autorizada or []],
+            "sin_verificar_guard": [
+                q.model_dump(mode="json") for q in self.sin_verificar_guard or []
+            ],
+        }
+
+    def a_json(self) -> dict[str, Any]:
+        datos: dict[str, Any] = {"turno": self.turno, "confirmar": self.confirmar}
+        datos.update(self.intake_json())
+        if self.final:
+            datos.update(self.cierre_json())
+        return datos
 
 
 def _del_comercio(headers: Any) -> dict[str, str]:
@@ -327,6 +398,10 @@ class ProxyGuard:
         self.agente = agente
         self.filtro = filtro
         self.compras = RegistroCompras()
+        # Intake (agentes con `evaluar_intake`): estado por compra y las
+        # compras cuya ficha confirmó el usuario (la API resuelve la espera).
+        self._intakes: OrderedDict[str, EstadoIntake] = OrderedDict()
+        self._confirmaciones: set[str] = set()
         if evaluador.nombre == "stub":
             logger.warning(
                 "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
@@ -941,12 +1016,18 @@ class ProxyGuard:
         )
 
     async def _etapa_contexto(self, llamada: Llamada) -> None:
-        """Paso 1: antes de negociar, nuestro agente pregunta el porqué.
+        """Paso 1: antes de negociar, nuestro agente pregunta el porqué y, con
+        un agente de intake (`evaluar_intake`), lo que falte para comprar.
 
         Retiene el find_products hasta que el usuario contesta, omite o vence
-        el plazo. Otra búsqueda de la misma compra no vuelve a preguntar: si
-        el porqué está pendiente, espera lo mismo. Si el agente falla, la
-        compra sigue con el pedido literal: la seguridad no depende de esto.
+        el plazo. Con intake, si después de una respuesta falta algo necesario
+        (categoría, cantidad, tope, moneda, plazo) vuelve a preguntar, y al
+        final pide confirmar la ficha: todo dentro del presupuesto de la
+        llamada (570 s). Lo inferido solo se autoriza si el usuario confirma.
+
+        Otra búsqueda de la misma compra no vuelve a preguntar: si el porqué
+        está pendiente, espera lo mismo. Si el agente falla, la compra sigue
+        con lo que tiene (o el pedido literal): la seguridad no depende de esto.
         """
         pedido = llamada.pedido
         existente = self.compras.de_contexto(pedido.contexto_id)
@@ -962,67 +1043,198 @@ class ProxyGuard:
             return
         texto = pedido.catalog_search or ""
         hoy = date.today()
+        categorias: list[str] | None = None
+        resultado: Any = None  # intencion.intake.ResultadoIntake del último turno
         try:
             categorias = await self._categorias()
             pregunta = await self._llm(self.agente.preguntar, texto, hoy, categorias)
             pregunta_texto = pregunta.pregunta
-            ficha_llm = pregunta.ficha(texto) if pregunta.requisitos else None
+            resultado = getattr(pregunta, "intake", None)
+            ficha_llm = _ficha_verificable(texto, pregunta.requisitos)
         except Exception as e:  # noqa: BLE001 - sin agente, el pedido sigue literal
             logger.exception("El agente de intención no pudo armar la pregunta")
             self._error(
                 llamada, f"El agente de intención no pudo armar la pregunta ({type(e).__name__})"
             )
-            pregunta_texto, ficha_llm = _PREGUNTA_POR_DEFECTO, None
+            pregunta_texto, ficha_llm, resultado = _PREGUNTA_POR_DEFECTO, None, None
+        con_intake = resultado is not None and callable(
+            getattr(self.agente, "evaluar_intake", None)
+        )
         compra = self.compras.crear(texto, pregunta_texto, ficha_llm, pedido.contexto_id)
         llamada.compra = compra
-        vence = compra.fijar_plazo(
-            min(self.config.espera_contexto_s, self._restante(llamada) - _MARGEN_S)
-        )
-        self._emitir(
-            "pedido_detectado",
-            {
-                "compra_id": compra.id,
-                "pedido": texto,
-                "pregunta": pregunta_texto,
-                "requisitos": [r.model_dump(mode="json") for r in compra.requisitos],
-                "vence": vence.isoformat(),
-            },
-            guard_activo=True,
-            contexto_id=pedido.contexto_id,
-            escenario=pedido.escenario,
-        )
-        respuesta, vencido, contexto = None, False, None
+        estado = self._estado_intake(compra.id)
+        estado.resultado = resultado if con_intake else None
+        self._emitir_pregunta(llamada, compra, estado)
+        turnos: list[Turno] = []
+        contexto = None
         try:
-            respuesta, vencido = await compra.esperar_respuesta()
-            if respuesta:
-                try:
-                    contexto = await self._llm(
-                        self.agente.armar_contexto, texto, pregunta_texto, respuesta, hoy
+            while True:
+                respuesta, vencido = await compra.esperar_respuesta()
+                confirmo = compra.id in self._confirmaciones
+                self._confirmaciones.discard(compra.id)
+                nuevo = None
+                if respuesta:
+                    turnos.append(Turno(pregunta=compra.pregunta, respuesta=respuesta))
+                    if con_intake:
+                        nuevo = await self._intake_turno(llamada, texto, turnos, hoy, categorias)
+                    contexto = (
+                        await self._contexto_turno(llamada, texto, turnos, hoy, con_intake)
+                        or contexto
                     )
-                except Exception as e:  # noqa: BLE001 - sin contexto, sin oportunidades
-                    logger.exception("El agente de intención no pudo armar el contexto")
-                    self._error(
-                        llamada,
-                        f"El agente de intención no pudo armar el contexto ({type(e).__name__})",
-                    )
+                    if nuevo is not None:
+                        estado.resultado = nuevo
+                        if not compra.ficha_resuelta:
+                            compra.ficha_llm = _ficha_verificable(
+                                texto, nuevo.requisitos_autorizables(confirmada=False)
+                            )
+                # ¿Otra pregunta? Solo si el intake la pide y queda tiempo.
+                otra, sin_tiempo = False, False
+                if nuevo is not None and nuevo.siguiente in ("repreguntar", "confirmar"):
+                    otra = self._restante(llamada) - _MARGEN_S >= _MINIMO_REPREGUNTA_S
+                    sin_tiempo = not otra
+                datos: dict[str, Any] = {
+                    "compra_id": compra.id,
+                    "turno": estado.turno,
+                    "respuesta": respuesta,
+                    "omitido": respuesta is None and not vencido and not confirmo,
+                    "vencido": vencido,
+                    "contexto": contexto.model_dump(mode="json") if contexto else None,
+                }
+                if con_intake:
+                    datos["intake"] = estado.resultado.a_json()
+                    if not otra:
+                        self._cerrar_intake(compra, texto, estado, confirmada=confirmo)
+                        datos.update(estado.cierre_json(), sin_tiempo=sin_tiempo)
+                self._emitir(
+                    "contexto_registrado",
+                    datos,
+                    guard_activo=True,
+                    contexto_id=pedido.contexto_id,
+                    escenario=pedido.escenario,
+                )
+                if not otra:
+                    break
+                estado.turno += 1
+                _nueva_espera(compra, nuevo.pregunta)
+                self._emitir_pregunta(llamada, compra, estado)
         finally:
             # También si se cancela la llamada: ninguna compra queda colgada.
             if compra.estado == "esperando_contexto":
                 compra.estado = "negociando"
             compra.contexto = contexto
+            if con_intake and not estado.final:
+                self._cerrar_intake(compra, texto, estado, confirmada=False)
             compra.contexto_listo.set()
-        self._emitir(
-            "contexto_registrado",
-            {
-                "compra_id": compra.id,
-                "omitido": respuesta is None and not vencido,
-                "vencido": vencido,
-                "contexto": contexto.model_dump(mode="json") if contexto else None,
-            },
-            guard_activo=True,
-            contexto_id=pedido.contexto_id,
-            escenario=pedido.escenario,
+
+    # -- etapa 2: intake (repreguntas y confirmación de la ficha) ---------------
+
+    def _estado_intake(self, compra_id: str) -> EstadoIntake:
+        estado = self._intakes[compra_id] = EstadoIntake()
+        while len(self._intakes) > MAX_INTAKES:
+            self._intakes.popitem(last=False)
+        return estado
+
+    def _emitir_pregunta(self, llamada: Llamada, compra: Compra, estado: EstadoIntake) -> None:
+        """`pedido_detectado` de un turno (el primero es el porqué)."""
+        vence = compra.fijar_plazo(
+            min(self.config.espera_contexto_s, self._restante(llamada) - _MARGEN_S)
         )
+        r = estado.resultado
+        estado.confirmar = r is not None and r.siguiente == "confirmar"
+        datos: dict[str, Any] = {
+            "compra_id": compra.id,
+            "pedido": compra.pedido,
+            "pregunta": compra.pregunta,
+            "requisitos": [q.model_dump(mode="json") for q in compra.requisitos],
+            "vence": vence.isoformat(),
+            "turno": estado.turno,
+            "confirmar": estado.confirmar,
+        }
+        if r is not None:
+            datos.update(estado.intake_json())
+        self._emitir(
+            "pedido_detectado",
+            datos,
+            guard_activo=True,
+            contexto_id=llamada.pedido.contexto_id,
+            escenario=llamada.pedido.escenario,
+        )
+
+    async def _intake_turno(
+        self, llamada: Llamada, texto: str, turnos: list[Turno], hoy: date, categorias: Any
+    ) -> Any:
+        """El intake con todas las respuestas; None si el agente falla."""
+        try:
+            return await self._llm(self.agente.evaluar_intake, texto, list(turnos), hoy, categorias)
+        except Exception as e:  # noqa: BLE001 - sin intake, sigue con lo que hay
+            logger.exception("El agente de intención no pudo revisar la respuesta")
+            self._error(
+                llamada,
+                f"El agente de intención no pudo revisar la respuesta ({type(e).__name__})",
+            )
+            return None
+
+    async def _contexto_turno(
+        self, llamada: Llamada, texto: str, turnos: list[Turno], hoy: date, con_intake: bool
+    ) -> Any:
+        """El contexto con la primera respuesta y, con intake, el historial."""
+        primero, *resto = turnos
+        funcion = self.agente.armar_contexto
+        if con_intake and resto:
+            funcion = functools.partial(funcion, historial=list(resto))
+        try:
+            return await self._llm(funcion, texto, primero.pregunta, primero.respuesta, hoy)
+        except Exception as e:  # noqa: BLE001 - sin contexto, sin oportunidades
+            logger.exception("El agente de intención no pudo armar el contexto")
+            self._error(
+                llamada,
+                f"El agente de intención no pudo armar el contexto ({type(e).__name__})",
+            )
+            return None
+
+    def _cerrar_intake(
+        self, compra: Compra, texto: str, estado: EstadoIntake, confirmada: bool
+    ) -> None:
+        """Los parámetros autorizados que salen del intake.
+
+        Lo que el usuario dijo con confianza alta va siempre; lo inferido o
+        dudoso, solo si confirmó la ficha. Lo que el Guard todavía no sabe
+        chequear (atributos genéricos, `minimo`) se informa aparte y no va a
+        la ficha: haría fallar `evaluar()`. Si la demo tiene una ficha
+        confirmada, esa sigue mandando (`Compra.resolver_ficha`).
+        """
+        from intencion.agente_decisiones import requisitos_verificables
+
+        r = estado.resultado
+        requisitos = r.requisitos_autorizables(confirmada) if r is not None else []
+        verificables, fuera = requisitos_verificables(requisitos)
+        estado.final, estado.confirmar, estado.confirmada = True, False, confirmada
+        estado.ficha_autorizada, estado.sin_verificar_guard = verificables, fuera
+        if not compra.ficha_resuelta:
+            compra.ficha_llm = _ficha_verificable(texto, verificables)
+
+    def _compra_json(self, datos: dict[str, Any]) -> dict[str, Any]:
+        """La compra del registro + el estado del intake (turno, faltan…)."""
+        estado = self._intakes.get(datos.get("compra_id"))
+        if estado is not None:
+            datos["intake"] = estado.a_json()
+        return datos
+
+    def _confirmar(self, compra_id: str) -> Response:
+        """El usuario confirma la ficha (solo en el turno de confirmación)."""
+        compra = self.compras.get(compra_id)
+        if compra is None:
+            return JSONResponse({"error": "compra_desconocida"}, status_code=404)
+        estado = self._intakes.get(compra_id)
+        if estado is None or not estado.confirmar or compra.estado != "esperando_contexto":
+            return JSONResponse({"error": "estado", "estado": compra.estado}, status_code=409)
+        self._confirmaciones.add(compra_id)
+        try:
+            compra = self.compras.responder(compra_id, None)
+        except EstadoInvalido as e:
+            self._confirmaciones.discard(compra_id)
+            return JSONResponse({"error": "estado", "estado": e.estado}, status_code=409)
+        return JSONResponse(self._compra_json(compra.a_json()))
 
     async def _filtrar(
         self, objetivo: dict[str, Any], llamada: Llamada
@@ -1735,16 +1947,19 @@ class ProxyGuard:
     # -- etapa 2: compras (lo que contesta y decide el usuario) --------------
 
     async def get_compras(self, request: Request) -> Response:
-        return JSONResponse({"compras": self.compras.listar()})
+        return JSONResponse({"compras": [self._compra_json(c) for c in self.compras.listar()]})
 
     async def post_contexto(self, request: Request) -> Response:
-        """La respuesta del usuario al porqué: `{compra_id, respuesta}` o
-        `{compra_id, omitir: true}`."""
+        """La respuesta del usuario a la pregunta del turno: `{compra_id,
+        respuesta}`, `{compra_id, omitir: true}` o, en el turno de
+        confirmación del intake, `{compra_id, confirmar: true}`."""
         body, error = a2a.parsear_json(await request.body())
         valido = error is None and isinstance(body, dict) and _compra_id_valido(body)
         if valido and set(body) == {"compra_id", "respuesta"}:
             respuesta = body["respuesta"]
             valido = isinstance(respuesta, str) and 0 < len(respuesta.strip()) <= LARGO_MAXIMO_RESPUESTA
+        elif valido and set(body) == {"compra_id", "confirmar"}:
+            valido = body["confirmar"] is True
         elif valido:
             valido = set(body) == {"compra_id", "omitir"} and body["omitir"] is True
         if not valido:
@@ -1754,10 +1969,13 @@ class ProxyGuard:
                     "formato": [
                         {"compra_id": "str", "respuesta": f"str (1 a {LARGO_MAXIMO_RESPUESTA})"},
                         {"compra_id": "str", "omitir": True},
+                        {"compra_id": "str", "confirmar": True},
                     ],
                 },
                 status_code=400,
             )
+        if "confirmar" in body:
+            return self._confirmar(body["compra_id"])
         texto = body["respuesta"].strip() if "respuesta" in body else None
         return self._resultado_compra(lambda: self.compras.responder(body["compra_id"], texto))
 
@@ -1790,7 +2008,7 @@ class ProxyGuard:
             return JSONResponse({"error": "compra_desconocida"}, status_code=404)
         except EstadoInvalido as e:
             return JSONResponse({"error": "estado", "estado": e.estado}, status_code=409)
-        return JSONResponse(compra.a_json())
+        return JSONResponse(self._compra_json(compra.a_json()))
 
     async def historial(self, request: Request) -> Response:
         try:

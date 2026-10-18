@@ -195,8 +195,8 @@ Además van a `GUARD_EVENTS_JSONL`, una línea por evento. `escenario` es el
 | `bloqueado` | `{"cart_id", "motivo", "status", "requiere_aprobacion": bool}` (`requiere_aprobacion: true` = retenido por `escalar`) |
 | `guard_cambiado` | `{"guard_activo": bool}` |
 | `error` | `{"mensaje"}` |
-| `pedido_detectado` | Etapa 2. `{"compra_id", "pedido", "pregunta", "requisitos": [Requisito], "vence"}` |
-| `contexto_registrado` | Etapa 2. `{"compra_id", "omitido": bool, "vencido": bool, "contexto": Contexto\|null}` |
+| `pedido_detectado` | Etapa 2. `{"compra_id", "pedido", "pregunta", "requisitos": [Requisito], "vence", "turno": int, "confirmar": bool}`. Con intake, además `"faltan"`, `"a_confirmar"`, `"ficha_parcial"`, `"cortado"`, `"mensaje"`, `"fuera_de_catalogo"`. Uno por turno (0 = el porqué) |
+| `contexto_registrado` | Etapa 2. `{"compra_id", "turno", "respuesta": str\|null, "omitido": bool, "vencido": bool, "contexto": Contexto\|null}`. Con intake, `"intake"` y, en el último, `"final": true`, `"confirmada"`, `"ficha_autorizada"`, `"sin_verificar_guard"`, `"sin_tiempo"` |
 | `oportunidad` | Etapa 2. `{"compra_id", "oportunidad": Oportunidad, "vence"}` |
 | `oportunidad_decidida` | Etapa 2. `{"compra_id", "oportunidad_id", "decision": "aceptada"\|"rechazada"\|"vencida", "requisitos_autorizados": [Requisito]\|null}` |
 
@@ -215,6 +215,20 @@ prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
    (`POST /guard/compras/contexto`), que la omita o que venza
    `PROXY_ESPERA_CONTEXTO_S`. Recién ahí reenvía el pedido al proveedor.
    Otra búsqueda del mismo contexto no vuelve a preguntar.
+
+   **Intake (agente `decisiones`):** si después de una respuesta falta algo
+   necesario para comprar (producto, cantidad, tope, moneda, plazo), el
+   proxy **vuelve a preguntar** en la misma llamada: otro
+   `pedido_detectado` con `turno`, `faltan` y `ficha_parcial`, y otra
+   espera. Corta tras 3 repreguntas (y lo dice). Al final pide **confirmar
+   la ficha** (`confirmar: true`): el usuario la confirma
+   (`{"compra_id", "confirmar": true}`), la corrige (una respuesta: se
+   vuelve a evaluar) o no la confirma (omitir). Lo inferido (por ejemplo,
+   una sola unidad o la moneda de un "$" suelto) solo entra a los
+   parámetros autorizados si confirmó; lo que el Guard todavía no sabe
+   chequear (atributos genéricos, `minimo`) va aparte, en
+   `sin_verificar_guard`. Solo se repregunta si quedan al menos 30 s de la
+   llamada. Con Gemini (sin intake) es una sola pregunta, como antes.
 2. **Filtro.** Con un filtro cargado (`GUARD_FILTRO`, de Dev 1), cada
    respuesta del proveedor pasa por él antes que nada. Si bloquea o falla,
    el agente del cliente recibe una tarea `failed` con un texto fijo y
@@ -265,17 +279,19 @@ Reglas que no dependen de la demo:
 
 | Variable | Default | Qué es |
 |---|---|---|
-| `GOOGLE_API_KEY` o `GEMINI_API_KEY` | — | Sin ninguna de las dos no hay agente de intención (la etapa 2 queda apagada). `world/run_world.sh` igual exige `GOOGLE_API_KEY` |
+| `INTENCION_PROVEEDOR` | según las claves | `decisiones` (intake con juicios tipados: repregunta y confirma la ficha) o `gemini` (una sola pregunta). Sin la variable: `decisiones` si hay cliente de decisiones, si no `gemini`. Otro valor: no arranca |
+| `OPENAI_API_KEY` o `TYPESAFE_API_KEY` | — | Cliente de decisiones (OpenAI Decisions o Jev; `DECISIONES_PROVEEDOR` elige, ver `decisiones/`) |
+| `GOOGLE_API_KEY` o `GEMINI_API_KEY` | — | Agente `gemini` y, con `decisiones`, el detector de oportunidades (sin Gemini hay intake pero no oportunidades). Sin ninguna clave no hay agente de intención. `world/run_world.sh` igual exige `GOOGLE_API_KEY` |
 | `INTENCION_ACTIVA` | `1` | `0` para apagar la capa de intención aunque haya clave. **Usalo para el benchmark y `smoke_checkout.py`**: no hay un humano que conteste y cada búsqueda esperaría `PROXY_ESPERA_CONTEXTO_S` |
-| `INTENCION_MODELO` | `gemini-3.1-flash-lite-preview` | Modelo del agente de intención |
+| `INTENCION_MODELO` | `gemini-3.1-flash-lite-preview` | Modelo de Gemini (agente o detector) |
 | `GUARD_FILTRO` | — | Filtro de seguridad, `paquete.modulo:funcion` (`contracts.Filtro`). Si se pide y no carga, el proxy no arranca |
-| `PROXY_ESPERA_CONTEXTO_S` | `120` | Cuánto se espera el porqué |
+| `PROXY_ESPERA_CONTEXTO_S` | `120` | Cuánto se espera el porqué (y cada repregunta del intake) |
 | `PROXY_ESPERA_DECISION_S` | `420` | Cuánto se espera la decisión sobre la oportunidad |
 
 | Endpoint | Respuesta |
 |---|---|
-| `GET /guard/compras` | `{"compras": [Compra]}`, la más nueva primero. `Compra`: `compra_id`, `estado` (`esperando_contexto`, `negociando`, `esperando_decision`, `sin_oportunidad`, `bloqueada`, `aceptada`, `rechazada`, `vencida`), `creada`, `contexto_id`, `pedido`, `pregunta`, `requisitos`, `contexto`, `oportunidad`, `vence`, `decision`, `requisitos_autorizados` |
-| `POST /guard/compras/contexto` con `{"compra_id", "respuesta"}` o `{"compra_id", "omitir": true}` y `X-Guard-Token` | 200 con la compra; 404 `compra_desconocida`; 409 `{"error": "estado", "estado"}` si no está esperando el porqué; 400 si el cuerpo no es exactamente eso (respuesta de 1 a 1000 caracteres) |
+| `GET /guard/compras` | `{"compras": [Compra]}`, la más nueva primero. `Compra`: `compra_id`, `estado` (`esperando_contexto`, `negociando`, `esperando_decision`, `sin_oportunidad`, `bloqueada`, `aceptada`, `rechazada`, `vencida`), `creada`, `contexto_id`, `pedido`, `pregunta`, `requisitos`, `contexto`, `oportunidad`, `vence`, `decision`, `requisitos_autorizados` e `intake` (`turno`, `confirmar` y, con intake, lo que falta, la ficha parcial y, al final, la autorizada) |
+| `POST /guard/compras/contexto` con `{"compra_id", "respuesta"}`, `{"compra_id", "omitir": true}` o `{"compra_id", "confirmar": true}` y `X-Guard-Token` | 200 con la compra; 404 `compra_desconocida`; 409 `{"error": "estado", "estado"}` si no está esperando una respuesta (o, para `confirmar`, si el turno no es el de confirmar la ficha); 400 si el cuerpo no es exactamente eso (respuesta de 1 a 1000 caracteres) |
 | `POST /guard/compras/decision` con `{"compra_id", "decision": "aceptar"\|"rechazar"}` y `X-Guard-Token` | Igual: 200, 404, 409 (si no hay una consulta pendiente) o 400 |
 
 `GET /guard/state` suma `"intencion"` (nombre del agente o `null`) y

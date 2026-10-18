@@ -4,9 +4,10 @@
 // Todo texto externo (pedido, pregunta, título, por qué…) entra como texto.
 
 import {
-  CAMPOS, ESPERAN_AL_USUARIO, FINALES, MAX_RESPUESTA, TEXTO_ESTADO, TEXTO_FINAL, compraElegida,
-  cuerpoContexto, desenlaceContexto, describirRequisito, esperaAlUsuario, formatearEntrega,
-  formatearValor, restante,
+  CAMPOS, ESPERAN_AL_USUARIO, FINALES, MAX_RESPUESTA, PARAMETROS, TEXTO_ESTADO, TEXTO_FINAL,
+  compraElegida, cuerpoContexto, desenlaceContexto, describirParametro, describirRequisito,
+  esperaAlUsuario, formatearEntrega, formatearValor, mismosRequisitos, restante, tieneIntake,
+  turnoActual,
 } from "../lib/agente.js";
 import { chip, dinero, fechaHora, filaDato, h, icono, vacio } from "./comunes.js";
 
@@ -18,6 +19,20 @@ const TONO_FINAL = { aceptada: "ok", rechazada: "neutro", vencida: "warn", sin_o
 const ICONO_FINAL = { aceptada: "check", rechazada: "x", vencida: "alert", sin_oportunidad: "arrow", bloqueada: "block" };
 // Sin contexto, la negociación sigue con el pedido literal.
 const SIN_CONTEXTO = new Set(["omitido", "vencido", "sin_contexto", "sin_respuesta"]);
+// Ficha parcial del intake: estado de cada parámetro.
+const TONO_PARAMETRO = { resuelto: "ok", a_confirmar: "warn", faltante: "crit" };
+const ICONO_PARAMETRO = { resuelto: "check", a_confirmar: "alert", faltante: "dash" };
+
+/** El estado de la compra en palabras, con el turno del intake si hay. */
+function textoEstado(c) {
+  if (c.estado === "esperando_contexto" && c.intake?.confirmar) return "Esperando que confirmes la ficha";
+  if (c.estado === "esperando_contexto" && turnoActual(c) > 0) return `Esperando tu respuesta (repregunta ${turnoActual(c)})`;
+  if (c.estado === "negociando" && tieneIntake(c) && !c.intake.final) return "Revisando tu respuesta";
+  return TEXTO_ESTADO[c.estado] ?? (c.estado ? `Estado: ${c.estado}` : "Sin estado");
+}
+
+/** ¿Terminó la parte de preguntas (o no hubo intake)? */
+const intakeTerminado = (c) => !tieneIntake(c) || c.intake.final === true;
 
 const QUIEN = {
   cliente: ["Agente del cliente", "cart"],
@@ -58,7 +73,7 @@ function selector(compras, ctx) {
         compras.map((c) => h("option", {
           value: c.compra_id,
           selected: ctx.estado.agenteSel === c.compra_id ? true : null,
-          text: `${TEXTO_ESTADO[c.estado] ?? c.estado ?? "?"} · ${resumir(c.pedido) || "sin pedido"} · ${c.compra_id}`,
+          text: `${textoEstado(c)} · ${resumir(c.pedido) || "sin pedido"} · ${c.compra_id}`,
         })))));
 }
 
@@ -68,7 +83,7 @@ function capasApagadas(ctx) {
   if (ctx.estado.fuente !== "vivo" || p.conectado !== true) return null;
   const avisos = [];
   if (p.intencion === null) {
-    avisos.push("Capa de intención apagada en el proxy (¿falta GOOGLE_API_KEY?): no pregunta el porqué ni busca alternativas; la negociación sigue con el pedido literal.");
+    avisos.push("Capa de intención apagada en el proxy (¿falta OPENAI_API_KEY o GOOGLE_API_KEY?): no pregunta el porqué ni busca alternativas; la negociación sigue con el pedido literal.");
   }
   if (p.filtro === false) avisos.push("El proxy no tiene cargado el filtro de seguridad.");
   if (!avisos.length) return null;
@@ -111,16 +126,19 @@ function conversacion(c, ctx) {
   return h("section", { class: "agente", "aria-label": "Conversación con nuestro agente" },
     h("header", { class: "agente-cab" },
       h("h3", { class: "agente-id", text: `Compra ${c.compra_id}` }),
-      chip(TEXTO_ESTADO[c.estado] ?? (c.estado ? `Estado: ${c.estado}` : "Sin estado"), { tono: TONO_ESTADO[c.estado] ?? "neutro" }),
+      chip(textoEstado(c), { tono: TONO_ESTADO[c.estado] ?? "neutro" }),
       c.creada ? h("span", { class: "nota mono", text: fechaHora(c.creada) }) : null,
       c.contexto_id ? h("span", { class: "nota mono", title: "context_id de A2A", text: `contexto ${c.contexto_id.slice(0, 8)}` }) : null),
     h("ol", { class: "chat" },
       msjPedido(c),
-      c.pregunta ? mensaje("nuestro", {}, h("p", { class: "msj-texto", text: c.pregunta })) : null,
-      bloqueRespuesta(c, ctx, ahora, habilitado),
-      bloqueEntendi(c),
+      ...chatTurnos(c, ctx, ahora, habilitado),
+      // Entre turnos del intake el proxy revisa la respuesta (todavía no negocia).
+      c.estado === "negociando" && !intakeTerminado(c)
+        ? mensaje("nuestro", {}, h("p", { text: "Estoy revisando tu respuesta…" })) : null,
+      intakeTerminado(c) ? bloqueEntendi(c) : null,
+      fichaFinal(c),
       // Mientras nuestro agente arma el contexto, la búsqueda sigue retenida.
-      c.estado === "negociando" && fin !== "armando" ? mensaje("sistema", { tono: "neutro" }, h("p", {
+      c.estado === "negociando" && fin !== "armando" && intakeTerminado(c) ? mensaje("sistema", { tono: "neutro" }, h("p", {
         text: SIN_CONTEXTO.has(fin)
           ? "El agente del cliente negocia con el proveedor con el pedido literal."
           : "El agente del cliente negocia con el proveedor. Si una oferta no cumple el pedido pero podría cubrir tu necesidad, te la consulto acá.",
@@ -149,7 +167,8 @@ function listaRequisitos(requisitos) {
       return h("li", {},
         h("span", { class: "req-campo", text: d.campo }),
         h("span", { class: "mono", text: d.condicion }),
-        d.obligatorio ? null : chip("preferido", { tono: "neutro" }));
+        d.obligatorio ? null : chip("preferido", { tono: "neutro" }),
+        d.inferido ? chip("lo deduje", { tono: "warn", icon: "alert", titulo: "Lo dedujo nuestro agente y lo confirmaste" }) : null);
     })),
     acumulado ? h("p", { class: "nota", text: "Entregas acumuladas: al menos esa cantidad entregada a más tardar en cada fecha." }) : null,
   ];
@@ -162,6 +181,101 @@ function msjPedido(c) {
     c.requisitos.length
       ? [h("p", { class: "rotulo", text: "Parámetros autorizados (pedido explícito)" }), listaRequisitos(c.requisitos)]
       : null);
+}
+
+// ---------------------------------------------------------------------------
+// Turnos del intake: el porqué, las repreguntas y la confirmación de la ficha
+// ---------------------------------------------------------------------------
+
+/**
+ * Una pregunta por turno, cada una con su respuesta (o el cuadro para
+ * contestar, en el turno actual). Sin turnos en los eventos (solo el sondeo
+ * del proxy, o un proxy sin intake), una sola pregunta como antes.
+ */
+function chatTurnos(c, ctx, ahora, habilitado) {
+  if (!c.turnos.length) {
+    return [
+      c.pregunta ? mensaje("nuestro", {}, h("p", { class: "msj-texto", text: c.pregunta })) : null,
+      bloqueRespuesta(c, ctx, ahora, habilitado),
+    ];
+  }
+  const actual = turnoActual(c);
+  return c.turnos.flatMap((t) => {
+    const esperando = c.estado === "esperando_contexto" && t.turno === actual;
+    let respuesta;
+    if (esperando) respuesta = composer(c, ctx, ahora, habilitado, { confirmar: t.confirmar });
+    else if (t.turno === 0 && t.respuesta === null && !t.omitido && !t.vencido) {
+      respuesta = bloqueRespuesta(c, ctx, ahora, habilitado); // eventos de un proxy sin `respuesta`
+    } else respuesta = respuestaTurno(c, t, ctx);
+    return [msjPregunta(t), respuesta];
+  });
+}
+
+function msjPregunta(t) {
+  const faltan = t.faltan.map((n) => PARAMETROS[n] ?? String(n));
+  const ficha = t.ficha_parcial;
+  return mensaje("nuestro", { clase: t.confirmar ? "msj-confirmar" : null },
+    t.turno > 0 ? h("p", { class: "rotulo", text: t.confirmar ? "Ficha de la compra" : `Repregunta ${t.turno}` }) : null,
+    h("p", { class: "msj-texto", text: t.pregunta || "—" }),
+    faltan.length ? h("p", { class: "faltan" },
+      h("span", { class: "nota", text: "Me falta:" }), faltan.map((f) => chip(f, { tono: "serious", icon: "dash" }))) : null,
+    ficha.length && t.confirmar ? tablaFicha(ficha) : null,
+    ficha.length && !t.confirmar ? h("details", { class: "mas" },
+      h("summary", { text: "Lo que tengo hasta ahora" }), tablaFicha(ficha)) : null);
+}
+
+function respuestaTurno(c, t, ctx) {
+  if (t.respuesta) return mensaje("usuario", {}, h("p", { class: "msj-texto", text: t.respuesta }));
+  if (t.confirmada) {
+    return mensaje("usuario", {}, h("p", { class: "msj-final-texto" }, icono("check"), h("strong", { text: "Confirmaste la ficha." })));
+  }
+  if (t.omitido) return mensaje("sistema", { tono: "neutro" }, h("p", { text: "Omitiste la pregunta." }));
+  if (t.vencido) return mensaje("sistema", { tono: "warn" }, h("p", { text: "No hubo respuesta a tiempo." }));
+  // El proxy ya aceptó la respuesta y el evento todavía no llegó.
+  const enviada = ctx.respuestaEnviada(c.compra_id, t.turno);
+  return enviada ? mensaje("usuario", {}, h("p", { class: "msj-texto", text: enviada })) : null;
+}
+
+/** La ficha parcial: cada parámetro con su valor, su estado y de dónde salió. */
+function tablaFicha(parcial) {
+  return h("div", { class: "tabla-scroll" }, h("table", { class: "tabla tabla-ficha" },
+    h("thead", {}, h("tr", {}, ["Parámetro", "Valor", "Estado", "Origen"].map((t) => h("th", { scope: "col", text: t })))),
+    h("tbody", {}, parcial.map((p) => {
+      const d = describirParametro(p);
+      return h("tr", {},
+        h("th", { scope: "row", text: d.nombre }),
+        h("td", { class: "mono valor", text: d.valor }),
+        h("td", {}, chip(d.estado, { tono: TONO_PARAMETRO[p?.estado] ?? "neutro", icon: ICONO_PARAMETRO[p?.estado] ?? null })),
+        h("td", {},
+          d.origen ? chip(d.origen, { tono: d.origen === "lo deduje" ? "warn" : "ok" }) : null,
+          d.obligatorio ? null : chip("preferido", { tono: "neutro" })));
+    }))));
+}
+
+/** Cómo terminó el intake: la ficha autorizada (confirmada o no). */
+function fichaFinal(c) {
+  const i = c.intake;
+  if (!i?.final) return null;
+  const autorizada = Array.isArray(i.ficha_autorizada) ? i.ficha_autorizada : [];
+  const sinGuard = Array.isArray(i.sin_verificar_guard) ? i.sin_verificar_guard : [];
+  return mensaje("nuestro", { clase: "msj-ficha" },
+    h("p", { class: "rotulo", text: i.confirmada ? "Ficha confirmada: parámetros autorizados" : "Ficha sin confirmar: parámetros autorizados" }),
+    autorizada.length ? listaRequisitos(autorizada)
+      : h("p", { class: "nota", text: "No quedó ningún parámetro autorizado: sin tope ni moneda, el Guard escala la compra." }),
+    h("p", { class: "nota", text: i.confirmada
+      ? "La confirmaste: con estos parámetros negocia el agente del cliente y el Guard verifica antes de la firma."
+      : "No la confirmaste: quedó autorizado solo lo que dijiste con claridad; lo que deduje, no." }),
+    sinGuard.length ? [
+      h("p", { class: "rotulo", text: "Lo anoté, pero el Guard todavía no lo verifica" }),
+      listaRequisitos(sinGuard)] : null,
+    // Con un escenario de la demo que trae ficha confirmada, manda esa (la de
+    // arriba, CLAUDE.md → "Ficha en vivo"); la del intake, con un comercio real.
+    c.requisitos.length && c.estado !== "esperando_contexto" && !mismosRequisitos(c.requisitos, autorizada)
+      ? h("p", { class: "aviso t-warn" }, icono("alert"), h("span", {
+        text: "En este escenario de la demo manda la ficha confirmada del escenario (la de arriba). Con un comercio real, manda esta." }))
+      : null,
+    i.mensaje ? h("p", { class: "aviso t-warn" }, icono("alert"), h("span", { text: i.mensaje })) : null,
+    i.sin_tiempo ? h("p", { class: "nota", text: "No quedaba tiempo de la llamada para seguir preguntando." }) : null);
 }
 
 /** Lo que contestó el usuario, o el cuadro para contestar. */
@@ -186,7 +300,7 @@ function notaHabilitado(ctx, habilitado, texto) {
   return ctx.estado.fuente === "vivo" ? "Solo en vivo, con el proxy conectado." : "Replay: solo lectura.";
 }
 
-function composer(c, ctx, ahora, habilitado) {
+function composer(c, ctx, ahora, habilitado, { confirmar = false } = {}) {
   const id = c.compra_id;
   const vencido = restante(c.vence, ahora)?.vencido === true;
   const enviando = ctx.enviandoAgente(id);
@@ -194,18 +308,22 @@ function composer(c, ctx, ahora, habilitado) {
   const borrador = habilitado ? ctx.borrador(id) : "";
   const contar = (t) => `${t.trim().length}/${MAX_RESPUESTA}`;
   const puedeEnviar = (t) => activo && cuerpoContexto(id, t) !== null;
+  const repregunta = turnoActual(c) > 0;
+  const etiqueta = confirmar
+    ? "Si algo de la ficha está mal, escribí la corrección"
+    : repregunta ? "Tu respuesta: lo que me falta saber" : "Tu respuesta: para qué lo necesitás y qué es flexible";
 
   // El texto del borrador va en .value (no en el HTML): así un render que
   // dibuja lo mismo devuelve los nodos de antes y no se pierde lo escrito.
   const contador = h("span", { class: "nota mono", "aria-hidden": "true", text: contar(borrador) });
   const enviar = h("button", {
-    class: "boton boton-primario", type: "button", disabled: puedeEnviar(borrador) ? null : true,
+    class: confirmar ? "boton" : "boton boton-primario", type: "button", disabled: puedeEnviar(borrador) ? null : true,
     onclick: () => ctx.responder(c),
-  }, icono("send"), enviando ? "Enviando…" : "Enviar");
+  }, icono("send"), enviando ? "Enviando…" : confirmar ? "Enviar corrección" : "Enviar");
   const area = h("textarea", {
-    class: "composer-texto", rows: "3", maxlength: String(MAX_RESPUESTA), "data-foco": `respuesta:${id}`,
-    "aria-label": "Tu respuesta: para qué lo necesitás y qué es flexible",
-    placeholder: "Contale para qué lo necesitás y qué es flexible",
+    class: "composer-texto", rows: confirmar ? "2" : "3", maxlength: String(MAX_RESPUESTA), "data-foco": `respuesta:${id}`,
+    "aria-label": etiqueta,
+    placeholder: confirmar ? "Por ejemplo: el talle es 43" : repregunta ? "Por ejemplo: hasta 150 dólares, para el viernes" : "Contale para qué lo necesitás y qué es flexible",
     disabled: activo ? null : true,
     oninput: (e) => {
       ctx.escribir(id, e.target.value);
@@ -221,21 +339,33 @@ function composer(c, ctx, ahora, habilitado) {
   });
   area.value = borrador;
 
+  // Confirmar la ficha: el botón principal del último turno del intake.
+  const confirmarBoton = confirmar ? h("button", {
+    class: "boton boton-primario", type: "button", disabled: activo ? null : true,
+    onclick: () => ctx.confirmar(c),
+  }, icono("check"), enviando ? "Enviando…" : "Confirmar ficha") : null;
+  let nota;
+  if (confirmar) nota = "Si no confirmás, queda autorizado solo lo que dijiste con claridad: lo que deduje, no. Ctrl+Enter envía la corrección.";
+  else if (repregunta) nota = "Si omitís, la compra sigue con lo que ya dijiste; lo que falte no se autoriza. Ctrl+Enter envía.";
+  else nota = "Si no contestás u omitís, la negociación sigue con el pedido literal, sin buscar alternativas. Ctrl+Enter envía.";
+
   return mensaje("usuario", { clase: "msj-composer" },
+    confirmarBoton ? h("div", { class: "acciones" }, confirmarBoton) : null,
     area,
     h("div", { class: "acciones" },
       enviar,
       h("button", {
         class: "boton", type: "button", disabled: activo ? null : true,
         onclick: () => ctx.responder(c, { omitir: true }),
-      }, "Omitir"),
+      }, confirmar ? "No confirmar" : "Omitir"),
       contador),
     cuenta(c, ahora, {
-      falta: "para contestar",
-      vencio: "Se venció el plazo: la negociación sigue con el pedido literal (falta que el proxy lo confirme).",
+      falta: confirmar ? "para confirmar" : "para contestar",
+      vencio: repregunta
+        ? "Se venció el plazo: la compra sigue con lo que ya dijiste (falta que el proxy lo confirme)."
+        : "Se venció el plazo: la negociación sigue con el pedido literal (falta que el proxy lo confirme).",
     }),
-    h("p", { class: "nota", text: notaHabilitado(ctx, habilitado,
-      "Si no contestás u omitís, la negociación sigue con el pedido literal, sin buscar alternativas. Ctrl+Enter envía.") }),
+    h("p", { class: "nota", text: notaHabilitado(ctx, habilitado, nota) }),
     avisoPost(c, ctx));
 }
 

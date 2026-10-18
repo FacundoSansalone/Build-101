@@ -2,8 +2,9 @@
 // Fuentes de eventos: "En vivo (proxy)" por SSE o "Replay (archivo)".
 
 import {
-  TIPOS_AGENTE, comprasDesdeEventos, cuerpoContexto, cuerpoDecision, cuerpoOmitir, esperaAlUsuario,
-  fusionarCompras, mensajeErrorAgente, reemplazarCompra, restante,
+  TIPOS_AGENTE, claveEnvio, comprasDesdeEventos, cuerpoConfirmar, cuerpoContexto, cuerpoDecision,
+  cuerpoOmitir, esperaAlUsuario, fusionarCompras, mensajeErrorAgente, reemplazarCompra, restante,
+  tieneIntake, turnoActual,
 } from "./lib/agente.js";
 import { interruptorHabilitado, registrarSondeo, unaALaVez } from "./lib/conexion.js";
 import {
@@ -77,8 +78,8 @@ const aprobando = new Set(); // contextos con un POST de aprobación en curso
 const mensajesAprobacion = new Map(); // contexto → {ok, texto}
 const borradores = new Map(); // compra_id → lo que el usuario está escribiendo
 const enviandoAgente = new Set(); // compras con un POST de nuestro agente en curso
-const enviadosAgente = new Map(); // compra_id → estado en que se contestó (OK del proxy)
-const respuestasEnviadas = new Map(); // compra_id → respuesta al porqué que aceptó el proxy
+const enviadosAgente = new Map(); // compra_id → "estado:turno" en que se contestó (OK del proxy)
+const respuestasEnviadas = new Map(); // "compra_id#turno" → respuesta que aceptó el proxy
 const mensajesAgente = new Map(); // compra_id → {ok, texto}
 // "Ahora" de las cuentas regresivas: lo avanza un reloj de 1 s y lo usa
 // también el render, así un render dibuja lo mismo que el último tic.
@@ -222,10 +223,11 @@ function ctx() {
     },
     responder,
     decidir,
+    confirmar: confirmarFicha,
     enviandoAgente: (compraId) => enviandoAgente.has(compraId),
-    // Ya se contestó en este estado (el proxy todavía no lo aplicó).
-    yaEnviado: (compra) => enviadosAgente.get(compra.compra_id) === compra.estado,
-    respuestaEnviada: (compraId) => respuestasEnviadas.get(compraId) ?? null,
+    // Ya se contestó en este estado y turno (el proxy todavía no lo aplicó).
+    yaEnviado: (compra) => enviadosAgente.get(compra.compra_id) === claveEnvio(compra),
+    respuestaEnviada: (compraId, turno = 0) => respuestasEnviadas.get(`${compraId}#${turno}`) ?? null,
     mensajeAgente: (compraId) => mensajesAgente.get(compraId) ?? null,
     verificacion: (recibo) => cache.verificaciones.get(claveRecibo(recibo)) ?? null,
     verificar,
@@ -605,11 +607,11 @@ async function postAgente(compraVista, ruta, cuerpo, textoOk) {
     // El proxy contesta enseguida, pero la decisión se aplica después (sigue
     // en esperando_decision hasta el evento): los botones quedan trabados
     // mientras la compra siga en el estado en que se contestó.
-    enviadosAgente.set(id, compraVista.estado);
+    enviadosAgente.set(id, claveEnvio(compraVista));
     mensajesAgente.set(id, { ok: true, texto: textoOk });
     anunciar(textoOk);
     if (typeof cuerpo.respuesta === "string") {
-      respuestasEnviadas.set(id, cuerpo.respuesta);
+      respuestasEnviadas.set(`${id}#${turnoActual(compraVista)}`, cuerpo.respuesta);
       borradores.delete(id);
     }
   } catch (e) {
@@ -632,9 +634,28 @@ async function responder(compraVista, { omitir = false } = {}) {
   const id = compraVista?.compra_id;
   const cuerpo = omitir ? cuerpoOmitir(id) : cuerpoContexto(id, borradores.get(id));
   if (!cuerpo) return;
-  await postAgente(compraVista, "/api/proxy/guard/compras/contexto", cuerpo, omitir
-    ? "Pregunta omitida: la negociación sigue con el pedido literal."
-    : "Respuesta enviada: nuestro agente arma el contexto y la negociación sigue.");
+  // En una repregunta o en la confirmación, omitir sigue con lo que ya dijo.
+  // Con intake, después de contestar puede venir otra pregunta.
+  const repregunta = turnoActual(compraVista) > 0 || (!omitir && tieneIntake(compraVista));
+  let ok;
+  if (omitir) {
+    ok = repregunta
+      ? "Omitiste: la compra sigue con lo que ya dijiste; lo que falte no se autoriza."
+      : "Pregunta omitida: la negociación sigue con el pedido literal.";
+  } else {
+    ok = repregunta
+      ? "Respuesta enviada: nuestro agente la revisa y te dice si falta algo."
+      : "Respuesta enviada: nuestro agente arma el contexto y la negociación sigue.";
+  }
+  await postAgente(compraVista, "/api/proxy/guard/compras/contexto", cuerpo, ok);
+}
+
+/** "Confirmar ficha" en el último turno del intake. */
+async function confirmarFicha(compraVista) {
+  const cuerpo = cuerpoConfirmar(compraVista?.compra_id);
+  if (!cuerpo) return;
+  await postAgente(compraVista, "/api/proxy/guard/compras/contexto", cuerpo,
+    "Confirmaste la ficha: con esos parámetros sigue la compra.");
 }
 
 /** "Aceptar" o "Rechazar" la oportunidad. */

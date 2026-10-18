@@ -47,12 +47,28 @@ export const TEXTO_FINAL = {
 export const CAMPOS = {
   precio: "Precio", moneda: "Moneda", categoria: "Categoría", uso: "Uso", talle: "Talle",
   marca: "Marca", comercio: "Comercio", cantidad: "Cantidad", entregas: "Entregas",
+  atributo: "Atributo",
 };
+
+/** Atributos genéricos (Requisito.atributo) con nombre legible. */
+export const ATRIBUTOS = {
+  memoria_ram: "Memoria RAM", almacenamiento: "Almacenamiento", pantalla: "Pantalla",
+  color: "Color", inalambrico: "Inalámbrico", cancelacion_ruido: "Cancelación de ruido",
+};
+
+/** Parámetros necesarios del intake (y "mencion:…" para los atributos). */
+export const PARAMETROS = {
+  categoria: "Producto", cantidad: "Cantidad", precio: "Tope", moneda: "Moneda", plazo: "Plazo",
+};
+const ESTADO_PARAMETRO = { resuelto: "resuelto", a_confirmar: "a confirmar", faltante: "falta" };
+const ORIGEN_PARAMETRO = { dicho: "lo dijiste", inferido: "lo deduje" };
 
 const CAMPOS_COMPRA = [
   "estado", "creada", "contexto_id", "pedido", "pregunta", "requisitos", "contexto",
-  "oportunidad", "vence", "decision", "requisitos_autorizados",
+  "oportunidad", "vence", "decision", "requisitos_autorizados", "intake",
 ];
+// Lo que trae cada turno del intake en pedido_detectado.
+const CAMPOS_TURNO = ["faltan", "a_confirmar", "ficha_parcial", "cortado", "mensaje", "fuera_de_catalogo"];
 
 const texto = (v) => (typeof v === "string" ? v : "");
 const lista = (v) => (Array.isArray(v) ? v : []);
@@ -64,11 +80,38 @@ function compraVacia(compraId) {
     compra_id: compraId, estado: null, creada: null, contexto_id: null, pedido: "", pregunta: "",
     requisitos: [], contexto: null, oportunidad: null, vence: null, decision: null,
     requisitos_autorizados: null,
-    // Solo los traen los eventos (contexto_registrado): por qué no hubo respuesta.
+    // Intake (proxy con un agente que repregunta): el turno actual, qué falta,
+    // la ficha parcial y, al final, la ficha autorizada. null sin intake.
+    intake: null,
+    // Solo los traen los eventos: un turno por pregunta (turno 0 = el porqué)
+    // con su respuesta, y por qué no hubo respuesta al porqué.
+    turnos: [],
     omitido: null, vencidoContexto: null,
     ultimoTs: null,
   };
 }
+
+/** El turno del intake en que está la compra (0 = el porqué). */
+export function turnoActual(compra) {
+  const t = compra?.intake?.turno;
+  return Number.isInteger(t) && t >= 0 ? t : 0;
+}
+
+function turno(c, n) {
+  let t = c.turnos.find((x) => x.turno === n);
+  if (!t) {
+    t = {
+      turno: n, pregunta: "", vence: null, confirmar: false, faltan: [], a_confirmar: [],
+      ficha_parcial: [], cortado: false, mensaje: null, fuera_de_catalogo: false,
+      respuesta: null, omitido: null, vencido: null, confirmada: null,
+    };
+    c.turnos.push(t);
+    c.turnos.sort((a, b) => a.turno - b.turno);
+  }
+  return t;
+}
+
+const numeroTurno = (d) => (Number.isInteger(d.turno) && d.turno >= 0 ? d.turno : 0);
 
 // ---------------------------------------------------------------------------
 // Compras
@@ -96,18 +139,47 @@ export function comprasDesdeEventos(eventos) {
 
 function aplicarEvento(c, tipo, d, ts) {
   switch (tipo) {
-    case "pedido_detectado":
+    case "pedido_detectado": {
+      const n = numeroTurno(d);
       Object.assign(c, {
-        estado: "esperando_contexto", creada: c.creada ?? ts ?? null, pedido: texto(d.pedido),
+        estado: "esperando_contexto", creada: c.creada ?? ts ?? null,
+        pedido: texto(d.pedido) || c.pedido,
         pregunta: texto(d.pregunta), requisitos: lista(d.requisitos), vence: d.vence ?? null,
       });
+      const t = turno(c, n);
+      Object.assign(t, { pregunta: texto(d.pregunta), vence: d.vence ?? null, confirmar: d.confirmar === true });
+      for (const k of CAMPOS_TURNO) if (d[k] !== undefined) t[k] = d[k];
+      t.faltan = lista(t.faltan);
+      t.a_confirmar = lista(t.a_confirmar);
+      t.ficha_parcial = lista(t.ficha_parcial);
+      if (d.turno !== undefined || d.faltan !== undefined) {
+        c.intake = { ...(c.intake ?? {}), turno: n, confirmar: t.confirmar, faltan: t.faltan,
+          a_confirmar: t.a_confirmar, ficha_parcial: t.ficha_parcial, cortado: t.cortado === true,
+          mensaje: t.mensaje ?? null, fuera_de_catalogo: t.fuera_de_catalogo === true };
+      }
       break;
-    case "contexto_registrado":
-      Object.assign(c, {
-        estado: "negociando", contexto: objeto(d.contexto), vence: null,
-        omitido: d.omitido === true, vencidoContexto: d.vencido === true,
+    }
+    case "contexto_registrado": {
+      const n = numeroTurno(d);
+      const t = turno(c, n);
+      Object.assign(t, {
+        respuesta: typeof d.respuesta === "string" ? d.respuesta : null,
+        omitido: d.omitido === true, vencido: d.vencido === true, confirmada: d.confirmada === true,
       });
+      // Un turno sin contexto (el modelo falló) no borra el de antes.
+      const contexto = objeto(d.contexto) ?? (n > 0 ? c.contexto : null);
+      Object.assign(c, { estado: "negociando", contexto, vence: null });
+      // Cómo terminó el porqué: lo dice el primer turno.
+      if (n === 0) Object.assign(c, { omitido: d.omitido === true, vencidoContexto: d.vencido === true });
+      if (d.final === true) {
+        c.intake = { ...(c.intake ?? {}), turno: n, confirmar: false, final: true,
+          confirmada: d.confirmada === true, sin_tiempo: d.sin_tiempo === true,
+          ficha_autorizada: lista(d.ficha_autorizada), sin_verificar_guard: lista(d.sin_verificar_guard) };
+        const r = objeto(d.intake);
+        if (r) Object.assign(c.intake, { faltan: lista(r.faltan), cortado: r.cortado === true, mensaje: r.mensaje ?? null });
+      }
       break;
+    }
     case "oportunidad":
       Object.assign(c, { estado: "esperando_decision", oportunidad: objeto(d.oportunidad), vence: d.vence ?? null });
       break;
@@ -130,7 +202,19 @@ export function normalizarCompra(p) {
   c.requisitos = lista(c.requisitos);
   c.pedido = texto(c.pedido);
   c.pregunta = texto(c.pregunta);
+  c.intake = objeto(c.intake);
   return c;
+}
+
+/** Cuánto avanzó: primero el turno del intake, después el estado. */
+function avance(c) {
+  return [turnoActual(c), AVANCE[c.estado] ?? -1];
+}
+
+function masAvanzada(a, b) {
+  const [ta, ea] = avance(a);
+  const [tb, eb] = avance(b);
+  return ta !== tb ? ta > tb : ea > eb;
 }
 
 /**
@@ -152,15 +236,17 @@ export function fusionarCompras(desdeEventos, delProxy) {
 }
 
 function fusionarUna(ev, proxy) {
-  const eventosMasNuevos = (AVANCE[ev.estado] ?? -1) > (AVANCE[proxy.estado] ?? -1);
+  const eventosMasNuevos = masAvanzada(ev, proxy);
   const [base, respaldo] = eventosMasNuevos ? [ev, proxy] : [proxy, ev];
   const out = { ...base };
   // Lo que le falte a la base (por ejemplo, el pedido_detectado quedó fuera
   // del historial) se completa con la otra fuente.
-  for (const k of ["creada", "contexto_id", "pedido", "pregunta", "contexto", "oportunidad"]) {
+  for (const k of ["creada", "contexto_id", "pedido", "pregunta", "contexto", "oportunidad", "intake"]) {
     if (out[k] === null || out[k] === "") out[k] = respaldo[k];
   }
   if (!out.requisitos.length) out.requisitos = respaldo.requisitos;
+  // La historia de turnos solo la tienen los eventos.
+  out.turnos = ev.turnos;
   out.omitido = ev.omitido;
   out.vencidoContexto = ev.vencidoContexto;
   out.ultimoTs = ev.ultimoTs;
@@ -238,6 +324,25 @@ export function cuerpoOmitir(compraId) {
 export function cuerpoDecision(compraId, decision) {
   if (!idValido(compraId) || (decision !== "aceptar" && decision !== "rechazar")) return null;
   return { compra_id: compraId, decision };
+}
+
+/** "Confirmar la ficha" en el último turno del intake. */
+export function cuerpoConfirmar(compraId) {
+  return idValido(compraId) ? { compra_id: compraId, confirmar: true } : null;
+}
+
+/**
+ * Lo que identifica "a qué se contestó": el estado y el turno del intake.
+ * Contestar el turno 0 no traba el turno 1 (los dos están esperando_contexto).
+ */
+export function claveEnvio(compra) {
+  return `${compra?.estado ?? ""}:${turnoActual(compra)}`;
+}
+
+/** ¿La compra viene de un agente con intake (repregunta y confirma la ficha)? */
+export function tieneIntake(compra) {
+  const i = compra?.intake;
+  return Boolean(i && (lista(i.ficha_parcial).length || i.final === true));
 }
 
 /** Texto para el usuario cuando un POST de nuestro agente falla. */
@@ -321,14 +426,55 @@ export function formatearEntregasAcumuladas(entregas) {
  * 19/10", obligatorio}.
  */
 export function describirRequisito(q) {
-  const campo = CAMPOS[q?.campo] ?? String(q?.campo ?? "—");
-  const valor = formatearValor(q?.campo, q?.valor);
+  const campo = q?.campo === "atributo"
+    ? ATRIBUTOS[q?.atributo] ?? String(q?.atributo ?? "Atributo")
+    : CAMPOS[q?.campo] ?? String(q?.campo ?? "—");
+  const unidad = typeof q?.unidad === "string" && q.unidad ? ` ${q.unidad}` : "";
+  const valor = formatearValor(q?.campo, q?.valor) + unidad;
   let condicion;
   if (q?.operador === "maximo") condicion = `≤ ${valor}`;
+  else if (q?.operador === "minimo") condicion = `≥ ${valor}`;
   else if (q?.operador === "incluye") condicion = `incluye ${valor}`;
   else if (q?.operador === "cubre") condicion = formatearEntregasAcumuladas(q?.valor);
   else condicion = valor;
-  return { campo, condicion, obligatorio: q?.obligatorio !== false };
+  const salida = { campo, condicion, obligatorio: q?.obligatorio !== false };
+  // Solo cuando lo es: el resto de las fichas (scenarios.json) no trae origen.
+  if (q?.origen === "inferido") salida.inferido = true;
+  return salida;
+}
+
+/**
+ * ¿Dos listas de requisitos piden lo mismo? (campo, atributo, operador, valor,
+ * unidad y obligatorio; el origen no cambia lo que se verifica).
+ */
+export function mismosRequisitos(a, b) {
+  const clave = (q) => JSON.stringify([q?.campo, q?.atributo ?? null, q?.operador, q?.valor,
+    q?.unidad ?? null, q?.obligatorio !== false]);
+  const ca = lista(a).map(clave).sort();
+  const cb = lista(b).map(clave).sort();
+  return ca.length === cb.length && ca.every((x, i) => x === cb[i]);
+}
+
+/**
+ * Un parámetro de la ficha parcial del intake en palabras:
+ * {nombre: "Tope", valor: "150", estado: "resuelto" | "a confirmar" | "falta",
+ *  origen: "lo dijiste" | "lo deduje" | null, obligatorio}.
+ */
+export function describirParametro(p) {
+  const necesario = p?.necesario !== false;
+  const falta = p?.estado === "faltante";
+  // Una mención con requisito se nombra por él: "Marca · Nike".
+  const req = !necesario && objeto(p?.requisito) ? describirRequisito(p.requisito) : null;
+  const nombre = req?.campo ?? (necesario ? PARAMETROS[p?.parametro] ?? String(p?.parametro ?? "—") : "Atributo");
+  let valor = falta || !texto(p?.texto) ? "—" : texto(p.texto);
+  if (req && !falta) valor = req.condicion;
+  return {
+    nombre,
+    valor,
+    estado: ESTADO_PARAMETRO[p?.estado] ?? String(p?.estado ?? "—"),
+    origen: falta ? null : ORIGEN_PARAMETRO[p?.origen] ?? null,
+    obligatorio: p?.requisito ? p.requisito.obligatorio !== false : true,
+  };
 }
 
 /**

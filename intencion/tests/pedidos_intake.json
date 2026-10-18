@@ -1,0 +1,122 @@
+{
+  "_comentario": "Set de pedidos para medir el intake (python -m intencion.evaluar_intake). Hoy es el domingo 2026-10-18. 'respuestas' son las del usuario simulado, en orden: contesta la primera pregunta con la primera, cada repregunta con la siguiente, y confirma la ficha cuando se la piden (si se queda sin respuestas, omite). 'turno0': estado esperado de cada parámetro con el pedido solo (una lista = cualquiera de esos). 'final': valor esperado después de confirmar ('fuera_de_catalogo', null = sin plazo, 'faltante' = sigue faltando). 'repreguntas': preguntas por lo que falta después de la primera. 'menciones': atributos que tienen que quedar en la ficha ('campo' o 'atributo:nombre' → valor, o {valor, obligatorio}). 'cronograma': lo que necesita, por fecha.",
+  "hoy": "2026-10-18",
+  "categorias": ["basketball_shoes", "lifestyle_sneakers", "running_shoes", "laptops", "headphones"],
+  "casos": [
+    {
+      "id": "zapatillas_completo_es",
+      "tipo": "completo",
+      "pedido": "Comprame unas zapatillas Nike talle 42 para jugar al básquet afuera, hasta 150 dólares, para el viernes.",
+      "respuestas": ["Juego los sábados en una cancha de cemento."],
+      "turno0": {"categoria": "resuelto", "cantidad": ["a_confirmar", "resuelto"], "precio": "resuelto", "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "basketball_shoes", "cantidad": 1, "precio": 150, "moneda": "USD", "plazo": "2026-10-23"},
+      "repreguntas": 0,
+      "menciones": {"marca": "Nike", "talle": 42}
+    },
+    {
+      "id": "notebook_incompleto_es",
+      "tipo": "incompleto",
+      "pedido": "Necesito una notebook para la oficina.",
+      "respuestas": ["La uso para trabajar desde casa.", "Hasta 1200 dólares, y la necesito para el viernes."],
+      "turno0": {"categoria": "resuelto", "cantidad": ["a_confirmar", "resuelto"], "precio": "faltante", "moneda": "faltante", "plazo": "faltante"},
+      "final": {"categoria": "laptops", "cantidad": 1, "precio": 1200, "moneda": "USD", "plazo": "2026-10-23"},
+      "repreguntas": 1
+    },
+    {
+      "id": "laptops_completo_en",
+      "tipo": "completo",
+      "pedido": "Buy me 20 laptops delivered by Monday, up to 20000 USD total.",
+      "respuestas": ["10 people start on Monday and 10 more on Thursday."],
+      "turno0": {"categoria": "resuelto", "cantidad": "resuelto", "precio": "resuelto", "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "laptops", "cantidad": 20, "precio": 20000, "moneda": "USD", "plazo": "2026-10-19"},
+      "repreguntas": 0,
+      "cronograma": [[10, "2026-10-19"], [10, "2026-10-22"]]
+    },
+    {
+      "id": "demo_computadoras_es",
+      "tipo": "completo",
+      "pedido": "Comprame 20 computadoras para el lunes, hasta 20000 USD.",
+      "respuestas": ["Entran 10 trabajadores el lunes y otros 10 el jueves."],
+      "turno0": {"categoria": ["resuelto", "a_confirmar"], "cantidad": "resuelto", "precio": "resuelto", "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": ["laptops", "fuera_de_catalogo"], "cantidad": 20, "precio": 20000, "moneda": "USD", "plazo": "2026-10-19"},
+      "repreguntas": 0,
+      "cronograma": [[10, "2026-10-19"], [10, "2026-10-22"]]
+    },
+    {
+      "id": "auriculares_incompleto_en",
+      "tipo": "incompleto",
+      "pedido": "I need some headphones.",
+      "respuestas": ["For the gym.", "Wireless, under 100 dollars, and there is no rush."],
+      "turno0": {"categoria": "resuelto", "cantidad": ["a_confirmar", "resuelto"], "precio": "faltante", "moneda": "faltante", "plazo": "faltante"},
+      "final": {"categoria": "headphones", "cantidad": 1, "precio": 100, "moneda": "USD", "plazo": null},
+      "repreguntas": 1,
+      "menciones": {"atributo:inalambrico": true}
+    },
+    {
+      "id": "auriculares_por_unidad_es",
+      "tipo": "completo",
+      "pedido": "Quiero 2 auriculares Sony inalámbricos de hasta 80.000 pesos cada uno, para el sábado.",
+      "respuestas": ["Son para regalarle a mis hijos."],
+      "turno0": {"categoria": "resuelto", "cantidad": "resuelto", "precio": ["resuelto", "a_confirmar"], "moneda": ["resuelto", "a_confirmar"], "plazo": "resuelto"},
+      "final": {"categoria": "headphones", "cantidad": 2, "precio": 160000, "moneda": "ARS", "plazo": "2026-10-24"},
+      "repreguntas": 0,
+      "menciones": {"marca": "Sony", "atributo:inalambrico": true}
+    },
+    {
+      "id": "cafetera_fuera_de_catalogo_es",
+      "tipo": "fuera_de_catalogo",
+      "pedido": "Comprame una cafetera de cápsulas, hasta 300 dólares, para el jueves.",
+      "respuestas": ["Es para la oficina."],
+      "turno0": {"categoria": "resuelto", "cantidad": ["a_confirmar", "resuelto"], "precio": "resuelto", "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "fuera_de_catalogo", "cantidad": 1, "precio": 300, "moneda": "USD", "plazo": "2026-10-22"},
+      "repreguntas": 0
+    },
+    {
+      "id": "musica_ambiguo_es",
+      "tipo": "ambiguo",
+      "pedido": "Necesito algo para escuchar música, no muy caro.",
+      "respuestas": ["Para escuchar en el colectivo.", "Auriculares, hasta 50 dólares, para la semana que viene."],
+      "turno0": {"categoria": ["faltante", "a_confirmar"], "cantidad": ["a_confirmar", "faltante", "resuelto"], "precio": "faltante", "moneda": "faltante", "plazo": "faltante"},
+      "final": {"categoria": "headphones", "cantidad": 1, "precio": 50, "moneda": "USD", "plazo": "2026-10-23"},
+      "repreguntas": 1
+    },
+    {
+      "id": "zapatillas_ambiguo_en",
+      "tipo": "ambiguo",
+      "pedido": "I want new shoes, around $100.",
+      "respuestas": ["To go running in the park.", "By Friday."],
+      "turno0": {"categoria": ["faltante", "a_confirmar"], "cantidad": ["a_confirmar", "resuelto"], "precio": ["resuelto", "a_confirmar"], "moneda": ["a_confirmar", "faltante"], "plazo": "faltante"},
+      "final": {"categoria": "running_shoes", "cantidad": 1, "precio": 100, "moneda": "USD", "plazo": "2026-10-23"},
+      "repreguntas": 1
+    },
+    {
+      "id": "simbolo_pesos_es",
+      "tipo": "ambiguo",
+      "pedido": "Comprame zapatillas urbanas Apex talle 40, $200, para mañana.",
+      "respuestas": ["Para salir los fines de semana."],
+      "turno0": {"categoria": "resuelto", "cantidad": ["a_confirmar", "resuelto"], "precio": "resuelto", "moneda": ["a_confirmar", "faltante"], "plazo": "resuelto"},
+      "final": {"categoria": "lifestyle_sneakers", "cantidad": 1, "precio": 200, "moneda": ["USD", "ARS"], "plazo": "2026-10-19"},
+      "repreguntas": 0,
+      "menciones": {"marca": "Apex", "talle": 40}
+    },
+    {
+      "id": "notebooks_sin_cantidad_es",
+      "tipo": "incompleto",
+      "pedido": "Necesito notebooks para el equipo, de hasta 1500 dólares cada una, para el 30/10.",
+      "respuestas": ["Se suman 5 personas al equipo y cada una necesita la suya."],
+      "turno0": {"categoria": "resuelto", "cantidad": "faltante", "precio": ["resuelto", "a_confirmar"], "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "laptops", "cantidad": 5, "precio": 7500, "moneda": "USD", "plazo": "2026-10-30"},
+      "repreguntas": 0
+    },
+    {
+      "id": "running_preferencia_en",
+      "tipo": "completo",
+      "pedido": "Looking for running shoes, ideally Adidas, size 10, max 120 USD, by Friday.",
+      "respuestas": ["For my first marathon."],
+      "turno0": {"categoria": "resuelto", "cantidad": ["a_confirmar", "resuelto"], "precio": "resuelto", "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "running_shoes", "cantidad": 1, "precio": 120, "moneda": "USD", "plazo": "2026-10-23"},
+      "repreguntas": 0,
+      "menciones": {"marca": {"valor": "Adidas", "obligatorio": false}, "talle": 10}
+    }
+  ]
+}

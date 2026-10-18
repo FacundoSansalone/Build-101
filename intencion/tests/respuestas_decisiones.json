@@ -1,0 +1,2952 @@
+{
+ "zapatillas_completo_es#0": {
+  "latencia_s": 0.547,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame unas zapatillas Nike talle 42 para jugar al básquet afuera, hasta 150 dólares, para el viernes.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "basketball_shoes",
+    "probabilidades": {
+     "basketball_shoes": 1.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.93,
+     "no_dicha": 0.07
+    },
+    "confianza": 0.86
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.96,
+     "no_dicho": 0.04
+    },
+    "confianza": 0.92
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.86,
+     "por_unidad": 0.14
+    },
+    "confianza": 0.72
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.96,
+     "ARS": 0.02,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.95
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.95,
+     "sin_apuro": 0.02,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.93
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.29,
+     "prefiere": 0.09,
+     "sin_indicacion": 0.62
+    },
+    "confianza": 0.43
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.39,
+     "prefiere": 0.09,
+     "sin_indicacion": 0.52
+    },
+    "confianza": 0.28
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.27,
+     "prefiere": 0.07,
+     "sin_indicacion": 0.66
+    },
+    "confianza": 0.49
+   }
+  }
+ },
+ "zapatillas_completo_es#1": {
+  "latencia_s": 0.594,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame unas zapatillas Nike talle 42 para jugar al básquet afuera, hasta 150 dólares, para el viernes.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca?",
+     "respuesta": "Juego los sábados en una cancha de cemento."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "basketball_shoes",
+    "probabilidades": {
+     "basketball_shoes": 1.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.97,
+     "no_dicha": 0.03
+    },
+    "confianza": 0.94
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.97,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.94
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.94,
+     "por_unidad": 0.06
+    },
+    "confianza": 0.88
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.99,
+     "ARS": 0.01,
+     "EUR": 0.0,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.99
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.85,
+     "sin_apuro": 0.04,
+     "no_dicho": 0.11
+    },
+    "confianza": 0.77
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.18,
+     "prefiere": 0.06,
+     "sin_indicacion": 0.76
+    },
+    "confianza": 0.64
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.44,
+     "prefiere": 0.07,
+     "sin_indicacion": 0.49
+    },
+    "confianza": 0.24
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.06,
+     "prefiere": 0.01,
+     "sin_indicacion": 0.93
+    },
+    "confianza": 0.89
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.0,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.08,
+     "inferida": 0.14,
+     "no": 0.78
+    },
+    "confianza": 0.67
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.05,
+     "inferida": 0.1,
+     "no": 0.85
+    },
+    "confianza": 0.77
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.01,
+     "no": 0.98
+    },
+    "confianza": 0.97
+   }
+  }
+ },
+ "laptops_completo_en#0": {
+  "latencia_s": 0.688,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Buy me 20 laptops delivered by Monday, up to 20000 USD total.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.99,
+     "headphones": 0.01,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.99
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "n0",
+    "probabilidades": {
+     "n0": 0.97,
+     "una": 0.02,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.96
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m1",
+    "probabilidades": {
+     "m0": 0.02,
+     "m1": 0.96,
+     "no_dicho": 0.02
+    },
+    "confianza": 0.94
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.98,
+     "por_unidad": 0.02
+    },
+    "confianza": 0.96
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.98,
+     "ARS": 0.01,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.98
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.94,
+     "sin_apuro": 0.03,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.91
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.38,
+     "prefiere": 0.03,
+     "sin_indicacion": 0.59
+    },
+    "confianza": 0.38
+   }
+  }
+ },
+ "laptops_completo_en#1": {
+  "latencia_s": 0.375,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Buy me 20 laptops delivered by Monday, up to 20000 USD total.",
+   "conversacion": [
+    {
+     "pregunta": "What do you need it for? Could anything change, like the quantity, the dates or the brand?",
+     "respuesta": "10 people start on Monday and 10 more on Thursday."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 1.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "n0",
+    "probabilidades": {
+     "n0": 1.0,
+     "n1": 0.0,
+     "una": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m1",
+    "probabilidades": {
+     "m0": 0.03,
+     "m1": 0.95,
+     "m2": 0.01,
+     "no_dicho": 0.01
+    },
+    "confianza": 0.93
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 1.0,
+     "por_unidad": 0.0
+    },
+    "confianza": 1.0
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.99,
+     "ARS": 0.01,
+     "EUR": 0.0,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.99
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.98,
+     "f1": 0.01,
+     "sin_apuro": 0.0,
+     "no_dicho": 0.01
+    },
+    "confianza": 0.97
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.34,
+     "prefiere": 0.05,
+     "sin_indicacion": 0.61
+    },
+    "confianza": 0.42
+   },
+   "cron_0": {
+    "tipo": "predicado",
+    "probabilidad": 0.99
+   },
+   "cron_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "inferida",
+    "probabilidades": {
+     "dicha": 0.09,
+     "inferida": 0.72,
+     "no": 0.19
+    },
+    "confianza": 0.58
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "inferida",
+    "probabilidades": {
+     "dicha": 0.09,
+     "inferida": 0.57,
+     "no": 0.34
+    },
+    "confianza": 0.35
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.15,
+     "inferida": 0.16,
+     "no": 0.69
+    },
+    "confianza": 0.53
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "inferida",
+    "probabilidades": {
+     "dicha": 0.05,
+     "inferida": 0.86,
+     "no": 0.09
+    },
+    "confianza": 0.79
+   }
+  }
+ },
+ "demo_computadoras_es#0": {
+  "latencia_s": 0.75,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame 20 computadoras para el lunes, hasta 20000 USD.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.95,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.02,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.94
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "n0",
+    "probabilidades": {
+     "n0": 0.97,
+     "una": 0.02,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.96
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m1",
+    "probabilidades": {
+     "m0": 0.03,
+     "m1": 0.93,
+     "no_dicho": 0.04
+    },
+    "confianza": 0.89
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.94,
+     "por_unidad": 0.06
+    },
+    "confianza": 0.88
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.97,
+     "ARS": 0.01,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.97
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.88,
+     "sin_apuro": 0.05,
+     "no_dicho": 0.07
+    },
+    "confianza": 0.82
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.3,
+     "prefiere": 0.1,
+     "sin_indicacion": 0.6
+    },
+    "confianza": 0.4
+   }
+  }
+ },
+ "demo_computadoras_es#1": {
+  "latencia_s": 0.687,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame 20 computadoras para el lunes, hasta 20000 USD.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca?",
+     "respuesta": "Entran 10 trabajadores el lunes y otros 10 el jueves."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.01,
+     "laptops": 0.81,
+     "headphones": 0.01,
+     "fuera_de_catalogo": 0.09,
+     "no_dicha": 0.07
+    },
+    "confianza": 0.78
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "n0",
+    "probabilidades": {
+     "n0": 0.97,
+     "n1": 0.01,
+     "una": 0.01,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.96
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m1",
+    "probabilidades": {
+     "m0": 0.03,
+     "m1": 0.94,
+     "m2": 0.02,
+     "no_dicho": 0.01
+    },
+    "confianza": 0.92
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.9,
+     "por_unidad": 0.1
+    },
+    "confianza": 0.8
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 1.0,
+     "ARS": 0.0,
+     "EUR": 0.0,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.91,
+     "f1": 0.02,
+     "sin_apuro": 0.02,
+     "no_dicho": 0.05
+    },
+    "confianza": 0.88
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "exige",
+    "probabilidades": {
+     "exige": 0.51,
+     "prefiere": 0.04,
+     "sin_indicacion": 0.45
+    },
+    "confianza": 0.27
+   },
+   "cron_0": {
+    "tipo": "predicado",
+    "probabilidad": 0.99
+   },
+   "cron_1": {
+    "tipo": "predicado",
+    "probabilidad": 0.97
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "inferida",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.81,
+     "no": 0.16
+    },
+    "confianza": 0.72
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.06,
+     "inferida": 0.35,
+     "no": 0.59
+    },
+    "confianza": 0.38
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.06,
+     "no": 0.91
+    },
+    "confianza": 0.86
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "inferida",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.62,
+     "no": 0.35
+    },
+    "confianza": 0.43
+   }
+  }
+ },
+ "auriculares_por_unidad_es#0": {
+  "latencia_s": 0.563,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Quiero 2 auriculares Sony inalámbricos de hasta 80.000 pesos cada uno, para el sábado.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "headphones",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 1.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "n0",
+    "probabilidades": {
+     "n0": 0.96,
+     "una": 0.02,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.94
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m1",
+    "probabilidades": {
+     "m0": 0.02,
+     "m1": 0.97,
+     "no_dicho": 0.01
+    },
+    "confianza": 0.96
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "por_unidad",
+    "probabilidades": {
+     "total": 0.0,
+     "por_unidad": 1.0
+    },
+    "confianza": 1.0
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "ARS",
+    "probabilidades": {
+     "USD": 0.01,
+     "ARS": 0.93,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.04
+    },
+    "confianza": 0.92
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.86,
+     "sin_apuro": 0.05,
+     "no_dicho": 0.09
+    },
+    "confianza": 0.79
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.25,
+     "prefiere": 0.08,
+     "sin_indicacion": 0.67
+    },
+    "confianza": 0.51
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.4,
+     "prefiere": 0.09,
+     "sin_indicacion": 0.51
+    },
+    "confianza": 0.27
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "exige",
+    "probabilidades": {
+     "exige": 0.65,
+     "prefiere": 0.06,
+     "sin_indicacion": 0.29
+    },
+    "confianza": 0.48
+   }
+  }
+ },
+ "auriculares_por_unidad_es#1": {
+  "latencia_s": 0.484,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Quiero 2 auriculares Sony inalámbricos de hasta 80.000 pesos cada uno, para el sábado.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca?",
+     "respuesta": "Son para regalarle a mis hijos."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "headphones",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 1.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "n0",
+    "probabilidades": {
+     "n0": 0.97,
+     "una": 0.01,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.96
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m1",
+    "probabilidades": {
+     "m0": 0.02,
+     "m1": 0.97,
+     "no_dicho": 0.01
+    },
+    "confianza": 0.96
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "por_unidad",
+    "probabilidades": {
+     "total": 0.0,
+     "por_unidad": 1.0
+    },
+    "confianza": 1.0
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "ARS",
+    "probabilidades": {
+     "USD": 0.01,
+     "ARS": 0.96,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.95
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.94,
+     "sin_apuro": 0.02,
+     "no_dicho": 0.04
+    },
+    "confianza": 0.91
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.08,
+     "prefiere": 0.09,
+     "sin_indicacion": 0.83
+    },
+    "confianza": 0.74
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.4,
+     "prefiere": 0.08,
+     "sin_indicacion": 0.52
+    },
+    "confianza": 0.28
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.45,
+     "prefiere": 0.01,
+     "sin_indicacion": 0.54
+    },
+    "confianza": 0.31
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.0,
+     "no": 1.0
+    },
+    "confianza": 1.0
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.02,
+     "no": 0.97
+    },
+    "confianza": 0.96
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.02,
+     "inferida": 0.15,
+     "no": 0.83
+    },
+    "confianza": 0.74
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.02,
+     "no": 0.97
+    },
+    "confianza": 0.96
+   }
+  }
+ },
+ "cafetera_fuera_de_catalogo_es#0": {
+  "latencia_s": 0.562,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame una cafetera de cápsulas, hasta 300 dólares, para el jueves.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "fuera_de_catalogo",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.99,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.99
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.98,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.96
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.98,
+     "no_dicho": 0.02
+    },
+    "confianza": 0.96
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.83,
+     "por_unidad": 0.17
+    },
+    "confianza": 0.66
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.91,
+     "ARS": 0.02,
+     "EUR": 0.01,
+     "BRL": 0.01,
+     "MXN": 0.01,
+     "GBP": 0.01,
+     "no_dicha": 0.03
+    },
+    "confianza": 0.89
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.88,
+     "sin_apuro": 0.05,
+     "no_dicho": 0.07
+    },
+    "confianza": 0.82
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.29,
+     "prefiere": 0.05,
+     "sin_indicacion": 0.66
+    },
+    "confianza": 0.49
+   }
+  }
+ },
+ "cafetera_fuera_de_catalogo_es#1": {
+  "latencia_s": 0.454,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame una cafetera de cápsulas, hasta 300 dólares, para el jueves.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca?",
+     "respuesta": "Es para la oficina."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "fuera_de_catalogo",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.99,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.99
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.98,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.96
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.97,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.94
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.96,
+     "por_unidad": 0.04
+    },
+    "confianza": 0.92
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.96,
+     "ARS": 0.01,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.95
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.93,
+     "sin_apuro": 0.03,
+     "no_dicho": 0.04
+    },
+    "confianza": 0.89
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.12,
+     "prefiere": 0.05,
+     "sin_indicacion": 0.83
+    },
+    "confianza": 0.74
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.01,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.02,
+     "no": 0.97
+    },
+    "confianza": 0.96
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.19,
+     "no": 0.8
+    },
+    "confianza": 0.7
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.01,
+     "no": 0.98
+    },
+    "confianza": 0.97
+   }
+  }
+ },
+ "zapatillas_ambiguo_en#0": {
+  "latencia_s": 0.61,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "I want new shoes, around $100.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "basketball_shoes": 0.02,
+     "lifestyle_sneakers": 0.07,
+     "running_shoes": 0.02,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.01,
+     "no_dicha": 0.88
+    },
+    "confianza": 0.86
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.93,
+     "no_dicha": 0.07
+    },
+    "confianza": 0.86
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.74,
+     "no_dicho": 0.26
+    },
+    "confianza": 0.48
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.7,
+     "por_unidad": 0.3
+    },
+    "confianza": 0.4
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.55,
+     "ARS": 0.05,
+     "EUR": 0.03,
+     "BRL": 0.01,
+     "MXN": 0.02,
+     "GBP": 0.01,
+     "solo_simbolo": 0.26,
+     "no_dicha": 0.07
+    },
+    "confianza": 0.49
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicho",
+    "probabilidades": {
+     "sin_apuro": 0.01,
+     "no_dicho": 0.99
+    },
+    "confianza": 0.98
+   }
+  }
+ },
+ "zapatillas_ambiguo_en#1": {
+  "latencia_s": 0.672,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "I want new shoes, around $100.",
+   "conversacion": [
+    {
+     "pregunta": "What do you need it for? Could anything change, like the quantity, the dates or the brand? Also, to make the purchase I need to know what product exactly and by when you need it.",
+     "respuesta": "To go running in the park."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "running_shoes",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.91,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.08
+    },
+    "confianza": 0.89
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.97,
+     "no_dicha": 0.03
+    },
+    "confianza": 0.94
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.72,
+     "no_dicho": 0.28
+    },
+    "confianza": 0.44
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.97,
+     "por_unidad": 0.03
+    },
+    "confianza": 0.94
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.74,
+     "ARS": 0.01,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "solo_simbolo": 0.22,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.7
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicho",
+    "probabilidades": {
+     "sin_apuro": 0.01,
+     "no_dicho": 0.99
+    },
+    "confianza": 0.98
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.0,
+     "no": 1.0
+    },
+    "confianza": 1.0
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.01,
+     "no": 0.98
+    },
+    "confianza": 0.97
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.07,
+     "no": 0.93
+    },
+    "confianza": 0.89
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.01,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   }
+  }
+ },
+ "zapatillas_ambiguo_en#2": {
+  "latencia_s": 0.609,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "I want new shoes, around $100.",
+   "conversacion": [
+    {
+     "pregunta": "What do you need it for? Could anything change, like the quantity, the dates or the brand? Also, to make the purchase I need to know what product exactly and by when you need it.",
+     "respuesta": "To go running in the park."
+    },
+    {
+     "pregunta": "To make the purchase I still need to know by when you need it.",
+     "respuesta": "By Friday."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "running_shoes",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 1.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.95,
+     "no_dicha": 0.05
+    },
+    "confianza": 0.9
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.75,
+     "no_dicho": 0.25
+    },
+    "confianza": 0.5
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.93,
+     "por_unidad": 0.07
+    },
+    "confianza": 0.86
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.64,
+     "ARS": 0.03,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "solo_simbolo": 0.29,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.59
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.96,
+     "sin_apuro": 0.02,
+     "no_dicho": 0.02
+    },
+    "confianza": 0.94
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.31,
+     "prefiere": 0.03,
+     "sin_indicacion": 0.66
+    },
+    "confianza": 0.49
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.0,
+     "no": 1.0
+    },
+    "confianza": 1.0
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.04,
+     "inferida": 0.06,
+     "no": 0.9
+    },
+    "confianza": 0.85
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.02,
+     "inferida": 0.16,
+     "no": 0.82
+    },
+    "confianza": 0.73
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.02,
+     "no": 0.95
+    },
+    "confianza": 0.93
+   }
+  }
+ },
+ "simbolo_pesos_es#0": {
+  "latencia_s": 0.594,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame zapatillas urbanas Apex talle 40, $200, para mañana.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "lifestyle_sneakers",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.98,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.98
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.98,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.96
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.98,
+     "no_dicho": 0.02
+    },
+    "confianza": 0.96
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.71,
+     "por_unidad": 0.29
+    },
+    "confianza": 0.42
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "solo_simbolo",
+    "probabilidades": {
+     "USD": 0.01,
+     "ARS": 0.01,
+     "EUR": 0.0,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "solo_simbolo": 0.97,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.97
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.99,
+     "sin_apuro": 0.0,
+     "no_dicho": 0.01
+    },
+    "confianza": 0.99
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "exige",
+    "probabilidades": {
+     "exige": 0.48,
+     "prefiere": 0.05,
+     "sin_indicacion": 0.47
+    },
+    "confianza": 0.22
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.29,
+     "prefiere": 0.05,
+     "sin_indicacion": 0.66
+    },
+    "confianza": 0.49
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.1,
+     "prefiere": 0.07,
+     "sin_indicacion": 0.83
+    },
+    "confianza": 0.74
+   }
+  }
+ },
+ "simbolo_pesos_es#1": {
+  "latencia_s": 0.578,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Comprame zapatillas urbanas Apex talle 40, $200, para mañana.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca?",
+     "respuesta": "Para salir los fines de semana."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "lifestyle_sneakers",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.97,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.01,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.97
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.94,
+     "no_dicha": 0.06
+    },
+    "confianza": 0.88
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.52,
+     "no_dicho": 0.48
+    },
+    "confianza": 0.04
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.72,
+     "por_unidad": 0.28
+    },
+    "confianza": 0.44
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "solo_simbolo",
+    "probabilidades": {
+     "USD": 0.02,
+     "ARS": 0.02,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "solo_simbolo": 0.93,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.92
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.91,
+     "sin_apuro": 0.04,
+     "no_dicho": 0.05
+    },
+    "confianza": 0.86
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.36,
+     "prefiere": 0.06,
+     "sin_indicacion": 0.58
+    },
+    "confianza": 0.37
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.12,
+     "prefiere": 0.04,
+     "sin_indicacion": 0.84
+    },
+    "confianza": 0.76
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.27,
+     "prefiere": 0.01,
+     "sin_indicacion": 0.72
+    },
+    "confianza": 0.58
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.0,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.03,
+     "no": 0.94
+    },
+    "confianza": 0.91
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.01,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.02,
+     "inferida": 0.01,
+     "no": 0.97
+    },
+    "confianza": 0.96
+   }
+  }
+ },
+ "notebooks_sin_cantidad_es#0": {
+  "latencia_s": 0.375,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito notebooks para el equipo, de hasta 1500 dólares cada una, para el 30/10.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.99,
+     "headphones": 0.01,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.99
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.51,
+     "no_dicha": 0.49
+    },
+    "confianza": 0.02
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.95,
+     "no_dicho": 0.05
+    },
+    "confianza": 0.9
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "por_unidad",
+    "probabilidades": {
+     "total": 0.01,
+     "por_unidad": 0.99
+    },
+    "confianza": 0.98
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.95,
+     "ARS": 0.02,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.94
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.85,
+     "sin_apuro": 0.06,
+     "no_dicho": 0.09
+    },
+    "confianza": 0.77
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.36,
+     "prefiere": 0.06,
+     "sin_indicacion": 0.58
+    },
+    "confianza": 0.37
+   }
+  }
+ },
+ "notebooks_sin_cantidad_es#1": {
+  "latencia_s": 0.328,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito notebooks para el equipo, de hasta 1500 dólares cada una, para el 30/10.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca?",
+     "respuesta": "Se suman 5 personas al equipo y cada una necesita la suya."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.01,
+     "laptops": 0.93,
+     "headphones": 0.01,
+     "fuera_de_catalogo": 0.01,
+     "no_dicha": 0.03
+    },
+    "confianza": 0.92
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "n0",
+    "probabilidades": {
+     "n0": 0.93,
+     "una": 0.05,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.89
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.95,
+     "m1": 0.03,
+     "no_dicho": 0.02
+    },
+    "confianza": 0.93
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "por_unidad",
+    "probabilidades": {
+     "total": 0.15,
+     "por_unidad": 0.85
+    },
+    "confianza": 0.7
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.91,
+     "ARS": 0.02,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.01,
+     "no_dicha": 0.04
+    },
+    "confianza": 0.89
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.96,
+     "sin_apuro": 0.01,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.94
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.1,
+     "prefiere": 0.05,
+     "sin_indicacion": 0.85
+    },
+    "confianza": 0.77
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.01,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.04,
+     "inferida": 0.02,
+     "no": 0.94
+    },
+    "confianza": 0.91
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.28,
+     "no": 0.71
+    },
+    "confianza": 0.56
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.23,
+     "inferida": 0.13,
+     "no": 0.64
+    },
+    "confianza": 0.46
+   }
+  }
+ },
+ "running_preferencia_en#0": {
+  "latencia_s": 0.359,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Looking for running shoes, ideally Adidas, size 10, max 120 USD, by Friday.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "running_shoes",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 1.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.92,
+     "no_dicha": 0.08
+    },
+    "confianza": 0.84
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.97,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.94
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.67,
+     "por_unidad": 0.33
+    },
+    "confianza": 0.34
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.97,
+     "ARS": 0.02,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.97
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.93,
+     "sin_apuro": 0.02,
+     "no_dicho": 0.05
+    },
+    "confianza": 0.89
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "prefiere",
+    "probabilidades": {
+     "exige": 0.23,
+     "prefiere": 0.72,
+     "sin_indicacion": 0.05
+    },
+    "confianza": 0.58
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "prefiere",
+    "probabilidades": {
+     "exige": 0.01,
+     "prefiere": 0.99,
+     "sin_indicacion": 0.0
+    },
+    "confianza": 0.99
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "prefiere",
+    "probabilidades": {
+     "exige": 0.18,
+     "prefiere": 0.79,
+     "sin_indicacion": 0.03
+    },
+    "confianza": 0.69
+   }
+  }
+ },
+ "running_preferencia_en#1": {
+  "latencia_s": 0.641,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Looking for running shoes, ideally Adidas, size 10, max 120 USD, by Friday.",
+   "conversacion": [
+    {
+     "pregunta": "What do you need it for? Could anything change, like the quantity, the dates or the brand?",
+     "respuesta": "For my first marathon."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "running_shoes",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 1.0,
+     "laptops": 0.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.93,
+     "no_dicha": 0.07
+    },
+    "confianza": 0.86
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.97,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.94
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.89,
+     "por_unidad": 0.11
+    },
+    "confianza": 0.78
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.98,
+     "ARS": 0.01,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.98
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.95,
+     "sin_apuro": 0.02,
+     "no_dicho": 0.03
+    },
+    "confianza": 0.93
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.31,
+     "prefiere": 0.27,
+     "sin_indicacion": 0.42
+    },
+    "confianza": 0.13
+   },
+   "pide_0": {
+    "tipo": "predicado",
+    "probabilidad": 0.96
+   },
+   "firmeza_0": {
+    "tipo": "eleccion",
+    "eleccion": "prefiere",
+    "probabilidades": {
+     "exige": 0.01,
+     "prefiere": 0.97,
+     "sin_indicacion": 0.02
+    },
+    "confianza": 0.96
+   },
+   "pide_1": {
+    "tipo": "predicado",
+    "probabilidad": 1.0
+   },
+   "firmeza_1": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.33,
+     "prefiere": 0.25,
+     "sin_indicacion": 0.42
+    },
+    "confianza": 0.13
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.01,
+     "no": 0.98
+    },
+    "confianza": 0.97
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.04,
+     "no": 0.93
+    },
+    "confianza": 0.89
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "inferida",
+    "probabilidades": {
+     "dicha": 0.14,
+     "inferida": 0.46,
+     "no": 0.4
+    },
+    "confianza": 0.19
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.02,
+     "no": 0.97
+    },
+    "confianza": 0.96
+   }
+  }
+ },
+ "notebook_incompleto_es#0": {
+  "latencia_s": 0.453,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito una notebook para la oficina.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.96,
+     "headphones": 0.02,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.95
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.98,
+     "no_dicha": 0.02
+    },
+    "confianza": 0.96
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "USD": 0.01,
+     "ARS": 0.0,
+     "EUR": 0.0,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.01,
+     "no_dicha": 0.98
+    },
+    "confianza": 0.98
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicho",
+    "probabilidades": {
+     "sin_apuro": 0.01,
+     "no_dicho": 0.99
+    },
+    "confianza": 0.98
+   }
+  }
+ },
+ "notebook_incompleto_es#1": {
+  "latencia_s": 0.406,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito una notebook para la oficina.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca? Además, para hacer la compra me falta saber el tope de precio y la moneda y para cuándo lo necesitás.",
+     "respuesta": "La uso para trabajar desde casa."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.97,
+     "headphones": 0.02,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 0.97
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.97,
+     "no_dicha": 0.03
+    },
+    "confianza": 0.94
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "USD": 0.0,
+     "ARS": 0.0,
+     "EUR": 0.0,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.0,
+     "no_dicha": 1.0
+    },
+    "confianza": 1.0
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicho",
+    "probabilidades": {
+     "sin_apuro": 0.01,
+     "no_dicho": 0.99
+    },
+    "confianza": 0.98
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.0,
+     "inferida": 0.0,
+     "no": 1.0
+    },
+    "confianza": 1.0
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.01,
+     "no": 0.98
+    },
+    "confianza": 0.97
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.02,
+     "inferida": 0.16,
+     "no": 0.82
+    },
+    "confianza": 0.73
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.02,
+     "inferida": 0.02,
+     "no": 0.96
+    },
+    "confianza": 0.94
+   }
+  }
+ },
+ "notebook_incompleto_es#2": {
+  "latencia_s": 0.344,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito una notebook para la oficina.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca? Además, para hacer la compra me falta saber el tope de precio y la moneda y para cuándo lo necesitás.",
+     "respuesta": "La uso para trabajar desde casa."
+    },
+    {
+     "pregunta": "Para hacer la compra me falta saber el tope de precio y la moneda y para cuándo lo necesitás.",
+     "respuesta": "Hasta 1200 dólares, y la necesito para el viernes."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "laptops",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 1.0,
+     "headphones": 0.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.99,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.98
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 0.98,
+     "no_dicho": 0.02
+    },
+    "confianza": 0.96
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.98,
+     "por_unidad": 0.02
+    },
+    "confianza": 0.96
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.96,
+     "ARS": 0.01,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.01
+    },
+    "confianza": 0.95
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.98,
+     "sin_apuro": 0.01,
+     "no_dicho": 0.01
+    },
+    "confianza": 0.97
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.34,
+     "prefiere": 0.05,
+     "sin_indicacion": 0.61
+    },
+    "confianza": 0.42
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.0,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.01,
+     "no": 0.96
+    },
+    "confianza": 0.94
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.06,
+     "inferida": 0.37,
+     "no": 0.57
+    },
+    "confianza": 0.35
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.03,
+     "inferida": 0.01,
+     "no": 0.96
+    },
+    "confianza": 0.94
+   }
+  }
+ },
+ "musica_ambiguo_es#0": {
+  "latencia_s": 0.578,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito algo para escuchar música, no muy caro.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "basketball_shoes": 0.01,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.01,
+     "laptops": 0.0,
+     "headphones": 0.47,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.51
+    },
+    "confianza": 0.43
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.93,
+     "no_dicha": 0.07
+    },
+    "confianza": 0.86
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "USD": 0.01,
+     "ARS": 0.01,
+     "EUR": 0.01,
+     "BRL": 0.0,
+     "MXN": 0.0,
+     "GBP": 0.01,
+     "no_dicha": 0.96
+    },
+    "confianza": 0.95
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicho",
+    "probabilidades": {
+     "sin_apuro": 0.01,
+     "no_dicho": 0.99
+    },
+    "confianza": 0.98
+   }
+  }
+ },
+ "musica_ambiguo_es#1": {
+  "latencia_s": 0.391,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito algo para escuchar música, no muy caro.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca? Además, para hacer la compra me falta saber qué producto es exactamente, el tope de precio y la moneda y para cuándo lo necesitás.",
+     "respuesta": "Para escuchar en el colectivo."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.01,
+     "headphones": 0.43,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.56
+    },
+    "confianza": 0.49
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.85,
+     "no_dicha": 0.15
+    },
+    "confianza": 0.7
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "USD": 0.0,
+     "ARS": 0.0,
+     "EUR": 0.0,
+     "BRL": 0.0,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.99
+    },
+    "confianza": 0.99
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicho",
+    "probabilidades": {
+     "sin_apuro": 0.01,
+     "no_dicho": 0.99
+    },
+    "confianza": 0.98
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.0,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.04,
+     "inferida": 0.03,
+     "no": 0.93
+    },
+    "confianza": 0.89
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.26,
+     "no": 0.73
+    },
+    "confianza": 0.6
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.02,
+     "inferida": 0.01,
+     "no": 0.97
+    },
+    "confianza": 0.96
+   }
+  }
+ },
+ "musica_ambiguo_es#2": {
+  "latencia_s": 0.422,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "Necesito algo para escuchar música, no muy caro.",
+   "conversacion": [
+    {
+     "pregunta": "¿Para qué lo necesitás? ¿Hay algo que pueda variar, como la cantidad, las fechas o la marca? Además, para hacer la compra me falta saber qué producto es exactamente, el tope de precio y la moneda y para cuándo lo necesitás.",
+     "respuesta": "Para escuchar en el colectivo."
+    },
+    {
+     "pregunta": "Para hacer la compra me falta saber qué producto es exactamente, el tope de precio y la moneda y para cuándo lo necesitás.",
+     "respuesta": "Auriculares, hasta 50 dólares, para la semana que viene."
+    }
+   ]
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "headphones",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 1.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.96,
+     "no_dicha": 0.04
+    },
+    "confianza": 0.92
+   },
+   "precio": {
+    "tipo": "eleccion",
+    "eleccion": "m0",
+    "probabilidades": {
+     "m0": 1.0,
+     "no_dicho": 0.0
+    },
+    "confianza": 1.0
+   },
+   "precio_alcance": {
+    "tipo": "eleccion",
+    "eleccion": "total",
+    "probabilidades": {
+     "total": 0.97,
+     "por_unidad": 0.03
+    },
+    "confianza": 0.94
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "USD",
+    "probabilidades": {
+     "USD": 0.79,
+     "ARS": 0.03,
+     "EUR": 0.02,
+     "BRL": 0.01,
+     "MXN": 0.02,
+     "GBP": 0.01,
+     "no_dicha": 0.12
+    },
+    "confianza": 0.76
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "f0",
+    "probabilidades": {
+     "f0": 0.87,
+     "sin_apuro": 0.06,
+     "no_dicho": 0.07
+    },
+    "confianza": 0.8
+   },
+   "plazo_firmeza": {
+    "tipo": "eleccion",
+    "eleccion": "sin_indicacion",
+    "probabilidades": {
+     "exige": 0.1,
+     "prefiere": 0.03,
+     "sin_indicacion": 0.87
+    },
+    "confianza": 0.8
+   },
+   "flex_entregas_parciales": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.0,
+     "no": 0.99
+    },
+    "confianza": 0.99
+   },
+   "flex_otra_fecha": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.05,
+     "inferida": 0.04,
+     "no": 0.91
+    },
+    "confianza": 0.86
+   },
+   "flex_otra_marca": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.01,
+     "inferida": 0.07,
+     "no": 0.92
+    },
+    "confianza": 0.88
+   },
+   "flex_otra_cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "no",
+    "probabilidades": {
+     "dicha": 0.04,
+     "inferida": 0.01,
+     "no": 0.95
+    },
+    "confianza": 0.93
+   }
+  }
+ },
+ "auriculares_incompleto_en#0": {
+  "latencia_s": 0.703,
+  "estado": {
+   "hoy": "domingo 2026-10-18",
+   "pedido": "I need some headphones.",
+   "conversacion": []
+  },
+  "respuestas": {
+   "categoria": {
+    "tipo": "eleccion",
+    "eleccion": "headphones",
+    "probabilidades": {
+     "basketball_shoes": 0.0,
+     "lifestyle_sneakers": 0.0,
+     "running_shoes": 0.0,
+     "laptops": 0.0,
+     "headphones": 1.0,
+     "fuera_de_catalogo": 0.0,
+     "no_dicha": 0.0
+    },
+    "confianza": 1.0
+   },
+   "cantidad": {
+    "tipo": "eleccion",
+    "eleccion": "una",
+    "probabilidades": {
+     "una": 0.96,
+     "no_dicha": 0.04
+    },
+    "confianza": 0.92
+   },
+   "moneda": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicha",
+    "probabilidades": {
+     "USD": 0.01,
+     "ARS": 0.0,
+     "EUR": 0.0,
+     "BRL": 0.01,
+     "MXN": 0.01,
+     "GBP": 0.0,
+     "no_dicha": 0.97
+    },
+    "confianza": 0.97
+   },
+   "plazo": {
+    "tipo": "eleccion",
+    "eleccion": "no_dicho",
+    "probabilidades": {
+     "sin_apuro": 0.01,
+     "no_dicho": 0.99
+    },
+    "confianza": 0.98
+   }
+  }
+ }
+}

@@ -717,7 +717,8 @@ def _compra_id_valido(valor: Any) -> bool:
 
 def cuerpo_contexto_valido(cuerpo: Any) -> bool:
     """Exactamente `{"compra_id", "respuesta"}` (1..1000 caracteres sin los
-    espacios de los bordes) o `{"compra_id", "omitir": true}`."""
+    espacios de los bordes), `{"compra_id", "omitir": true}` o, en el turno
+    de confirmación del intake, `{"compra_id", "confirmar": true}`."""
     if not isinstance(cuerpo, dict) or not _compra_id_valido(cuerpo.get("compra_id")):
         return False
     claves = set(cuerpo)
@@ -726,6 +727,8 @@ def cuerpo_contexto_valido(cuerpo: Any) -> bool:
         return isinstance(respuesta, str) and 0 < len(respuesta.strip()) <= _MAX_RESPUESTA
     if claves == {"compra_id", "omitir"}:
         return cuerpo["omitir"] is True
+    if claves == {"compra_id", "confirmar"}:
+        return cuerpo["confirmar"] is True
     return False
 
 
@@ -758,6 +761,7 @@ async def api_proxy_compras_contexto(request: Request) -> Response:
             formato=[
                 {"compra_id": "str", "respuesta": f"str (1..{_MAX_RESPUESTA})"},
                 {"compra_id": "str", "omitir": True},
+                {"compra_id": "str", "confirmar": True},
             ],
         )
     return await _reenviar_json(
