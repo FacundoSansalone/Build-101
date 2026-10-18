@@ -260,6 +260,33 @@ async def test_json_con_charset_sirve(cliente):
     assert r.status_code == 201
 
 
+def _anidado(niveles: int) -> Any:
+    valor: Any = 1
+    for _ in range(niveles):
+        valor = [valor]
+    return valor
+
+
+async def test_cuerpo_anidado_de_mas_da_400(cliente, nucleo):
+    """Más de `MAX_PROFUNDIDAD_JSON` niveles es `json_invalido`, en todas las
+    rutas: pydantic no vuelve a serializar ~100 niveles y `deepcopy` revienta
+    en ~300 (la compra no se podía guardar ni mostrar)."""
+    ficha = {"requisitos": [
+        *FICHA_OK["requisitos"][:2],
+        {"campo": "marca", "operador": "incluye", "valor": _anidado(120), "obligatorio": False},
+    ]}
+    _error(await cliente.post("/v1/compras", json={"pedido": "x", "ficha": ficha}),
+           400, "json_invalido")
+    _error(await cliente.post("/v1/filtrar", json={"contenido": _anidado(300)}),
+           400, "json_invalido")
+    _error(await cliente.post("/v1/evaluar", json={"x": {"y": _anidado(api_v1.MAX_PROFUNDIDAD_JSON)}}),
+           400, "json_invalido")
+    assert nucleo.llamadas == []
+    # Justo en el límite pasa (el cuerpo es el primer nivel).
+    r = await cliente.post("/v1/filtrar", json={"contenido": _anidado(api_v1.MAX_PROFUNDIDAD_JSON - 1)})
+    assert r.status_code == 200, r.text
+
+
 async def test_cuerpo_grande_da_413(nucleo):
     transporte = httpx.ASGITransport(app=_app(nucleo, max_cuerpo_bytes=100))
     async with httpx.AsyncClient(transport=transporte, base_url="http://gw.test:8030") as c:
@@ -386,6 +413,31 @@ async def test_ficha_sin_tope(cliente, nucleo):
         r = await cliente.post("/v1/compras", json={**COMPRA_OK, "ficha": {"requisitos": requisitos}})
         _error(r, 400, "ficha_sin_tope")
     assert nucleo.llamadas == []
+
+
+async def test_ficha_que_pesa_de_mas_da_400(cliente, nucleo):
+    """La compra vive en memoria y en el almacén (24 h) y una clave puede tener
+    1000: con fichas de casi 1 MB (lo que deja el cuerpo) eran ~1 GB de JSON
+    por integrador, varias veces más en objetos de Python. Una ficha de 50
+    requisitos completos pesa unos pocos KB."""
+    precio, moneda, _ = FICHA_OK["requisitos"]
+    pesada = {"requisitos": [
+        precio, moneda,
+        {"campo": "marca", "operador": "incluye", "valor": ["x"] * 20_000, "obligatorio": False},
+    ]}
+    error = _error(await cliente.post("/v1/compras", json={**COMPRA_OK, "ficha": pesada}),
+                   400, "validacion")
+    assert _campos(error) == {"ficha"}
+    assert nucleo.llamadas == []
+    # El máximo de requisitos, cada uno con un atributo, entra holgado.
+    llena = {"requisitos": [precio, moneda] + [
+        {"campo": "atributo", "atributo": f"atributo_{i:02d}_con_nombre_largo", "unidad": "GB",
+         "operador": "incluye", "valor": ["valor uno", "valor dos", "valor tres"],
+         "obligatorio": False}
+        for i in range(api_v1.MAX_REQUISITOS - 2)
+    ]}
+    r = await cliente.post("/v1/compras", json={**COMPRA_OK, "ficha": llena})
+    assert r.status_code == 201, r.text
 
 
 async def test_requisito_no_soportado(cliente, nucleo):
@@ -668,9 +720,10 @@ async def test_openapi_lista_todas_las_rutas(cliente, nucleo):
     assert spec["servers"] == [{"url": URL_PUBLICA}]
     assert spec["components"]["securitySchemes"]["bearerAuth"]["scheme"] == "bearer"
 
+    # Las rutas finales (404/405 en JSON) no son operaciones: no van al spec.
     rutas = {
         (metodo.lower(), ruta.path)
-        for ruta in api_v1.rutas_v1(nucleo) if isinstance(ruta, Route)
+        for ruta in api_v1.rutas_v1(nucleo) if isinstance(ruta, Route) and ruta.include_in_schema
         for metodo in ruta.methods if metodo != "HEAD"
     }
     en_spec = {(m, p) for p, ops in spec["paths"].items() for m in ops}
@@ -692,6 +745,47 @@ async def test_openapi_lista_todas_las_rutas(cliente, nucleo):
         elif isinstance(actual, list):
             pila.extend(actual)
     assert refs <= set(spec["components"]["schemas"])
+
+
+# -- rutas que no existen -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ruta", ["/v1/nada", "/v1", "/v1/", "/v1/compras/", f"/v1/compras/{COMPRA_ID}/nada"],
+)
+async def test_ruta_inexistente_da_404_en_json(cliente, nucleo, ruta):
+    """docs/INTEGRACION.md §11 y el spec prometen `no_encontrado` en JSON, no
+    el `Not Found` en texto de Starlette (ni una redirección por la barra)."""
+    for metodo in ("GET", "POST", "PUT"):
+        r = await cliente.request(metodo, ruta, json={})
+        _error(r, 404, "no_encontrado")
+    assert nucleo.llamadas == []
+
+
+async def test_metodo_que_la_ruta_no_acepta_da_405_en_json(cliente, nucleo):
+    casos = [
+        ("DELETE", "/v1/compras", {"GET", "HEAD", "POST"}),
+        ("PUT", f"/v1/compras/{COMPRA_ID}", {"GET", "HEAD"}),
+        ("GET", f"/v1/compras/{COMPRA_ID}/decision", {"POST"}),
+        ("PATCH", "/v1/evaluar", {"POST"}),
+        ("PROPFIND", "/v1/comercios", {"GET", "HEAD"}),  # un método raro, también JSON
+    ]
+    for metodo, ruta, permitidos in casos:
+        r = await cliente.request(metodo, ruta)
+        _error(r, 405, "metodo_no_permitido")
+        assert {m.strip() for m in r.headers["allow"].split(",")} == permitidos, ruta
+    assert nucleo.llamadas == []
+
+
+async def test_sin_clave_la_ruta_inexistente_da_401(cliente, nucleo):
+    """Como el middleware: sin clave no se dice qué rutas existen. Una ruta
+    pública con otro método sí da 405 (no pide clave)."""
+    _error(await cliente.get("/v1/nada", headers={"x-anonimo": "1"}), 401, "no_autenticado")
+    _error(await cliente.delete("/v1/compras", headers={"x-anonimo": "1"}), 401, "no_autenticado")
+    r = await cliente.post("/v1/public-key", json={}, headers={"x-anonimo": "1"})
+    _error(r, 405, "metodo_no_permitido")
+    assert r.headers["allow"] == "GET, HEAD"
+    assert nucleo.llamadas == []
 
 
 async def test_docs_es_html_y_escapa(nucleo):

@@ -427,6 +427,25 @@ async def test_varios_authorization_con_clave_nuestra_se_rechaza(clave_y_registr
         assert resp.json()["error"]["codigo"] == "clave_invalida"
 
 
+async def test_clave_nuestra_mal_presentada_no_pasa_como_anonimo(clave_y_registro):
+    """En el oyente local, un `Authorization` que no es `Bearer <clave>` pasaba
+    como anónimo y se reenviaba tal cual al comercio, con la clave adentro
+    (en el tráfico anónimo `authorization` no se saca). Si trae algo con forma
+    de clave nuestra, es `clave_invalida`, nunca anónimo."""
+    clave, registro = clave_y_registro
+    for valor in (
+        clave,                       # sin esquema
+        f"Token {clave}",            # otro esquema
+        f"Bearer\t{clave}",          # tabulador en lugar de espacio
+        f"Bearer {clave.upper()}",   # el prefijo en mayúsculas
+        f"Basic {clave}",
+    ):
+        async with _cliente(_app(registro), LOCAL) as c:
+            resp = await c.post("/a2a/m/merchant_1", json={}, headers={"Authorization": valor})
+        assert resp.status_code == 401, valor
+        assert resp.json()["error"]["codigo"] == "clave_invalida"
+
+
 async def test_sin_server_en_el_scope_es_local(clave_y_registro):
     _, registro = clave_y_registro
     vistos: list[dict[str, Any]] = []

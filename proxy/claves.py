@@ -66,6 +66,10 @@ logger = logging.getLogger("proxy.claves")
 _SECRETO_RE = re.compile(r"[A-Za-z0-9_-]{16,256}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _ESQUEMA_BEARER = "bearer"
+# Algo con forma de clave nuestra en cualquier parte del header, como venga
+# (otro esquema, sin esquema, en mayúsculas). Pide el kid entero para no
+# confundirlo con un token ajeno que por azar trae "psg_".
+_PARECE_CLAVE_RE = re.compile(re.escape(PREFIJO_CLAVE) + r"[0-9a-f]{12}_", re.IGNORECASE)
 MIN_SECRETO_WEBHOOK = 32
 PREFIJO_SECRETO_WEBHOOK = "whsec_"
 
@@ -446,27 +450,37 @@ class AutenticacionGateway:
         rechaza: si pasara como anónimo, el reenvío al comercio llevaría la
         clave del integrador (en el tráfico anónimo `authorization` no se
         saca)."""
-        return len(valores) > 1 and any(extraer_bearer(v) is not None for v in valores)
+        return len(valores) > 1 and any(
+            extraer_bearer(v) is not None or _parece_clave(v) for v in valores
+        )
 
     def _exigir_clave(self, scope: Scope) -> Integrador | JSONResponse:
         valores, clave = self._claves_presentes(scope)
         if self._ambiguo(valores):
             return _clave_invalida()
         if clave is None:
-            return _no_autenticado()
+            return _clave_invalida() if any(map(_parece_clave, valores)) else _no_autenticado()
         integrador = self.registro.autenticar(clave)
         return integrador if integrador is not None else _clave_invalida()
 
     def _clave_opcional(self, scope: Scope) -> Integrador | None | JSONResponse:
         """Oyente local, `/a2a/*`: sin clave nuestra es anónimo (la demo); con
-        `Bearer psg_…` tiene que ser válida, nunca se degrada a anónimo."""
+        `Bearer psg_…` tiene que ser válida, nunca se degrada a anónimo.
+
+        Tampoco una clave mal presentada (`Token psg_…`, sin esquema, con un
+        tabulador): pasaría como anónimo y el reenvío al comercio la llevaría
+        tal cual (en el tráfico anónimo `authorization` no se saca)."""
         valores, clave = self._claves_presentes(scope)
         if self._ambiguo(valores):
             return _clave_invalida()
         if clave is None:
-            return None
+            return _clave_invalida() if any(map(_parece_clave, valores)) else None
         integrador = self.registro.autenticar(clave)
         return integrador if integrador is not None else _clave_invalida()
+
+
+def _parece_clave(valor: str) -> bool:
+    return _PARECE_CLAVE_RE.search(valor) is not None
 
 
 # -- CLI ----------------------------------------------------------------------

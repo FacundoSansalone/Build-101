@@ -79,7 +79,9 @@ Vale para `/v1/*` y para el tráfico A2A (`/a2a/m/{comercio}`). Solo
 `/v1/public-key`, `/v1/openapi.json` y `/v1/docs` no la piden.
 
 - Sin clave: 401 `no_autenticado`. Con una clave que no existe o está dada de
-  baja: 401 `clave_invalida`.
+  baja: 401 `clave_invalida`. También es `clave_invalida` una clave mal
+  presentada (`Token psg_…`, la clave sola, sin el espacio después de
+  `Bearer`): nunca pasa como un pedido sin clave.
 - **Tus compras son tuyas.** Una compra de otro integrador da 404
   `compra_desconocida`, igual que una que no existe.
 - **La clave nunca llega al comercio.** El gateway saca `Authorization` y
@@ -132,6 +134,8 @@ Lo que tenés que saber de la ficha:
 - `obligatorio: false` es un preferido: suma en el ranking, pero no bloquea.
 - `categoria_taxonomia` (opcional) es el ID de la taxonomía de productos de
   Google, solo dígitos.
+- La ficha entera pesa como mucho 32 KB en JSON compacto (sobra para 50
+  requisitos); si no, 400 `validacion` en `ficha`.
 - Claves desconocidas en el cuerpo dan 400 `validacion`, con la lista de
   problemas en `detalle.campos`.
 
@@ -236,8 +240,12 @@ Lo que puede pasar mientras esa llamada está abierta:
    ```sh
    curl -s -X POST "$GW/v1/compras/cmp-0123456789abcdef/decision" \
      -H "Authorization: Bearer $CLAVE" -H "Content-Type: application/json" \
-     -d '{"oportunidad_id": "op-…", "decision": "aceptar"}'
+     -d '{"oportunidad_id": "opo-…", "decision": "aceptar"}'
    ```
+
+   El `oportunidad_id` es el `pendiente.oportunidad.id` (empieza con `opo-`).
+   La respuesta ya trae la compra con la decisión aplicada (`aceptada` o
+   `rechazada`, y la ficha nueva si aceptó).
 
    Si acepta, la respuesta le llega a tu agente con un artefacto
    `guard.parametros_autorizados` y la ficha de la compra pasa a ser esa. Si
@@ -387,20 +395,27 @@ def verificar_webhook(secreto: str, cuerpo: bytes, cabecera: str) -> bool:
     crudos del POST, antes de parsear el JSON."""
     partes = dict(p.strip().split("=", 1) for p in cabecera.split(",") if "=" in p)
     t, recibida = partes.get("t", ""), partes.get("v1", "")
-    if not t.isdigit() or abs(time.time() - int(t)) > TOLERANCIA_S:
+    # isascii: "²".isdigit() es True, pero int("²") lanza.
+    if not (t.isascii() and t.isdigit()) or abs(time.time() - int(t)) > TOLERANCIA_S:
         return False
     esperada = hmac.new(
         secreto.encode(), f"{t}.".encode() + cuerpo, hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(esperada, recibida)
+    # En bytes: con un str que no es ASCII, compare_digest lanza en vez de dar False.
+    return hmac.compare_digest(esperada.encode(), recibida.encode("utf-8", "replace"))
 ```
 
 Además:
 
-- **Deduplicá por `X-Guard-Entrega`.** Un reintento trae el mismo id (y una
-  firma nueva: `t` es el momento de cada intento).
+- **Deduplicá por el `id` del cuerpo** (es el mismo valor que
+  `X-Guard-Entrega`, pero el header no está firmado: quien reenvía una
+  entrega dentro de la tolerancia puede cambiarlo; el cuerpo no). Un
+  reintento trae el mismo id (y una firma nueva: `t` es el momento de cada
+  intento). Por lo mismo, el tipo leelo de `tipo` en el cuerpo, no de
+  `X-Guard-Evento`.
 - **El orden no está garantizado.** Ordená por `compra.actualizada`.
-- **Contestá 2xx rápido** (hay 10 s de timeout) y procesá aparte.
+- **Contestá 2xx rápido** (cada intento tiene 10 s en total, cuerpo de la
+  respuesta incluido) y procesá aparte.
 - **Reintentos:** hasta 6 intentos, con espera creciente (1 s, 4 s, 16 s,
   1 min, 5 min, con algo de azar), ante error de red, timeout, 5xx, 408 o
   429. Otro 4xx o una redirección cuentan como falla y no se reintentan.
@@ -414,7 +429,9 @@ Además:
 `GET /v1/webhooks/entregas` muestra cómo le fue a cada entrega (`estado`:
 `pendiente`, `entregada`, `fallida` o `descartada`, y `error` con un código
 fijo: `red`, `timeout`, `http_4xx`, `http_5xx`, `redireccion`,
-`destino_no_permitido`, `cola_llena`, `cerrado`).
+`destino_no_permitido`, `cola_llena`, `cerrado`). `cola_llena` quiere decir
+que tu webhook ya tiene demasiadas entregas pendientes (200): mientras no
+contesta, las nuevas se descartan.
 
 ## 8. Modo mínimo: `POST /v1/evaluar`
 
@@ -514,7 +531,7 @@ reabrirías el canal que el gateway cierra.
 
 | HTTP | `codigo` | Qué significa |
 |---|---|---|
-| 400 | `json_invalido` | El cuerpo no es JSON estricto (sin `NaN`, `Infinity` ni números que desbordan) |
+| 400 | `json_invalido` | El cuerpo no es JSON estricto (sin `NaN`, `Infinity` ni números que desbordan) o tiene más de 32 niveles de objetos y listas |
 | 400 | `validacion` | Falta algo, sobra una clave o un valor no sirve (`detalle.campos`) |
 | 400 | `ficha_sin_tope` | La ficha no tiene precio máximo y moneda obligatorios |
 | 400 | `requisito_no_soportado` | Un requisito que el Guard no sabe verificar |
@@ -522,6 +539,7 @@ reabrirías el canal que el gateway cierra.
 | 401 | `no_autenticado`, `clave_invalida` | Falta la clave o no vale |
 | 403 | `comercio_no_permitido` | El comercio no existe o no está habilitado para tu clave |
 | 404 | `compra_desconocida`, `no_encontrado` | La compra no existe (o no es tuya); la ruta no existe |
+| 405 | `metodo_no_permitido` | La ruta existe pero no acepta ese método (los que acepta van en `Allow`) |
 | 409 | `estado` | La compra no está esperando eso (`detalle.estado`) |
 | 409 | `oportunidad_distinta` | Esa no es la propuesta vigente |
 | 409 | `sin_escalar` | No hay un checkout retenido para aprobar |

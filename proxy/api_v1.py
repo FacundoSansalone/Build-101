@@ -24,6 +24,7 @@ verificar entera no es una autorización.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -33,7 +34,8 @@ from typing import Any
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
-from starlette.routing import Route
+from starlette.routing import Match, Route
+from starlette.types import Receive, Scope, Send
 
 from contracts import CheckoutVisto, Ficha, OfertasVistas, Requisito
 from proxy import a2a, openapi, vistas
@@ -41,6 +43,7 @@ from proxy.tipos_gateway import (
     ID_COMPRA_RE,
     ID_SEGURO_RE,
     ID_SLUG_RE,
+    RUTAS_V1_PUBLICAS,
     ErrorApi,
     FotoCompra,
     Integrador,
@@ -64,6 +67,15 @@ MAX_REQUISITOS = 50
 MAX_CARTS = 200
 LIMITE_POR_DEFECTO = 50
 LIMITE_MAXIMO = 200
+# Niveles de objetos y listas en un cuerpo (el cuerpo es el primero). La API
+# usa como mucho 6 (un cronograma `cubre`); pydantic no vuelve a serializar
+# ~100 y `copy.deepcopy` revienta en ~300: una compra así validaba pero no se
+# podía guardar ni mostrar.
+MAX_PROFUNDIDAD_JSON = 32
+# La ficha de una compra, en JSON compacto. Vive en memoria y en el almacén
+# hasta 24 h y una clave puede tener 1000 compras activas: con el tope del
+# cuerpo (1 MB) eran ~1 GB por integrador. 50 requisitos completos son pocos KB.
+MAX_BYTES_FICHA = 32_768
 
 CATEGORIA_RE = re.compile(r"[0-9]{1,12}")
 MONEDA_RE = re.compile(r"[A-Z]{3}")
@@ -185,7 +197,8 @@ def integrador_de(request: Request) -> Integrador:
 async def leer_json(request: Request, max_bytes: int) -> Any:
     """El cuerpo JSON de un POST: 415 sin `application/json`, 413 si supera
     el tope (se corta al leer, no se confía en `Content-Length`) y 400 si
-    no es JSON estricto (sin NaN, Infinity ni números que desbordan)."""
+    no es JSON estricto (sin NaN, Infinity ni números que desbordan) o si
+    está anidado a más de `MAX_PROFUNDIDAD_JSON` niveles."""
     tipo = request.headers.get("content-type", "")
     if tipo.split(";", 1)[0].strip().lower() != "application/json":
         raise ErrorApi(415, "se_espera_json", "El cuerpo tiene que ser application/json.")
@@ -205,7 +218,36 @@ async def leer_json(request: Request, max_bytes: int) -> Any:
     datos, motivo = a2a.parsear_json(crudo)
     if motivo is not None:
         raise ErrorApi(400, "json_invalido", "El cuerpo no es JSON válido.")
+    if _anidado_de_mas(datos, MAX_PROFUNDIDAD_JSON):
+        raise ErrorApi(
+            400, "json_invalido",
+            f"El cuerpo tiene más de {MAX_PROFUNDIDAD_JSON} niveles de anidamiento.",
+        )
     return datos
+
+
+def _bytes_json(datos: Any) -> int:
+    """Lo que pesa `datos` en JSON compacto (UTF-8). Viene de `leer_json`:
+    siempre se puede volver a escribir (estricto y con la profundidad acotada)."""
+    return len(json.dumps(datos, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+
+
+def _anidado_de_mas(datos: Any, maximo: int) -> bool:
+    """¿Hay objetos o listas a más de `maximo` niveles? Iterativo: no depende
+    del límite de recursión (que es justo lo que se quiere evitar)."""
+    pila: list[tuple[Any, int]] = [(datos, 1)]
+    while pila:
+        actual, nivel = pila.pop()
+        if isinstance(actual, dict):
+            hijos: Any = actual.values()
+        elif isinstance(actual, list):
+            hijos = actual
+        else:
+            continue
+        if nivel > maximo:
+            return True
+        pila.extend((hijo, nivel + 1) for hijo in hijos)
+    return False
 
 
 # -- ficha -------------------------------------------------------------------
@@ -381,6 +423,8 @@ def validar_solicitud_compra(body: Any) -> SolicitudCompra:
     ficha: Ficha | None = None
     if "ficha" not in datos:
         problemas.agregar("ficha", "obligatorio")
+    elif _bytes_json(datos["ficha"]) > MAX_BYTES_FICHA:
+        problemas.agregar("ficha", f"supera {MAX_BYTES_FICHA} bytes")
     else:
         # Con el pedido inválido igual se mira la forma de la ficha, para
         # devolver todos los problemas juntos.
@@ -572,6 +616,52 @@ def _protegido(nombre: str, handler: Handler) -> Handler:
     return envuelto
 
 
+class _RutaFinal:
+    """Endpoint ASGI de las rutas finales de `/v1`. Es una clase (no una
+    función) para que Starlette no le fije métodos: atiende cualquiera, también
+    uno raro (`PROPFIND`), y así nada de `/v1` sale con el texto plano de
+    Starlette."""
+
+    def __init__(self, handler: Handler) -> None:
+        self.handler = handler
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        respuesta = await self.handler(Request(scope, receive))
+        await respuesta(scope, receive, send)
+
+
+def _rutas_finales(rutas: list[Route]) -> list[Route]:
+    """Lo que ninguna ruta de `/v1` atendió, con el `ErrorApi` documentado:
+    405 `metodo_no_permitido` (con `Allow`) si la ruta existe con otro método,
+    404 `no_encontrado` si no existe. Van al final y fuera del spec."""
+
+    async def no_encontrado(request: Request) -> Response:
+        permitidos = sorted({
+            metodo
+            for ruta in rutas
+            if ruta.matches(request.scope)[0] is Match.PARTIAL
+            for metodo in ruta.methods or ()
+        })
+        if request.scope.get("path") not in RUTAS_V1_PUBLICAS:
+            # Sin clave, 401 como en el middleware: no se dice qué rutas existen.
+            integrador_de(request)
+        if not permitidos:
+            raise ErrorApi(404, "no_encontrado", "No existe.")
+        respuesta = respuesta_error(
+            ErrorApi(405, "metodo_no_permitido", "La ruta no acepta ese método.")
+        )
+        respuesta.headers["Allow"] = ", ".join(permitidos)
+        return respuesta
+
+    final = _RutaFinal(_protegido("no_encontrado", no_encontrado))
+    return [
+        Route("/v1", final, include_in_schema=False),
+        # `{resto:path}` también toma `/v1/` y `/v1/compras/`: 404 en JSON en
+        # lugar de la redirección de Starlette por la barra final.
+        Route("/v1/{resto:path}", final, include_in_schema=False),
+    ]
+
+
 def rutas_v1(
     nucleo: NucleoGateway, *, max_cuerpo_bytes: int = 1_048_576,
     url_publica: str = "http://localhost:8030",
@@ -697,7 +787,8 @@ def rutas_v1(
         ("/v1/openapi.json", "GET", especificacion),
         ("/v1/docs", "GET", pagina),
     ]
-    return [
+    rutas = [
         Route(path, _protegido(handler.__name__, handler), methods=[metodo])
         for path, metodo, handler in tabla
     ]
+    return [*rutas, *_rutas_finales(rutas)]

@@ -50,6 +50,9 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
     "Error": {
         "type": "object",
         "required": ["error"],
+        "description": "Todo error de `/v1` tiene esta forma, también una ruta que no "
+        "existe (404 `no_encontrado`) o un método que la ruta no acepta (405 "
+        "`metodo_no_permitido`, con los que acepta en `Allow`).",
         "properties": {
             "error": {
                 "type": "object",
@@ -95,7 +98,8 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
         "required": ["requisitos"],
         "additionalProperties": False,
         "description": "Tiene que incluir `precio`/`maximo`/obligatorio (> 0) y "
-        "`moneda`/`igual`/obligatorio (ISO 4217); si no, 400 `ficha_sin_tope`.",
+        "`moneda`/`igual`/obligatorio (ISO 4217); si no, 400 `ficha_sin_tope`. "
+        "En `POST /v1/compras`, hasta 32 KB en JSON compacto.",
         "properties": {
             "requisitos": {"type": "array", "minItems": 1, "maxItems": 50, "items": _ref("Requisito")},
             "categoria_taxonomia": _nullable({"type": "string", "pattern": "^[0-9]{1,12}$"}),
@@ -398,12 +402,12 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
      "Solo con la compra en `esperando_contexto`. El silencio no es autorización: si "
      "vence, se sigue el pedido literal.",
      "SolicitudRespuesta", {"200": ("Compra", "VistaCompra")},
-     ["400", "401", "404", "409", "413", "415"], False),
+     ["400", "401", "404", "409", "413", "415", "503"], False),
     ("post", "/v1/compras/{compra_id}/decision", "Decidir una oportunidad",
      "Solo con la compra en `esperando_decision` y la oportunidad vigente. La decide "
-     "un humano, nunca un LLM.",
+     "un humano, nunca un LLM. La respuesta trae la compra con la decisión aplicada.",
      "SolicitudDecision", {"200": ("Compra", "VistaCompra")},
-     ["400", "401", "404", "409", "413", "415"], False),
+     ["400", "401", "404", "409", "413", "415", "503"], False),
     ("post", "/v1/compras/{compra_id}/aprobaciones", "Aprobar un checkout escalado",
      "Aprueba el checkout retenido por `escalar` (un solo uso; vale para ese "
      "contexto, cart y total firmado). Nunca hace pasar un `bloqueado`. Lo aprueba un "
@@ -427,7 +431,7 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
     ("get", "/v1/webhooks/entregas", "Entregas de webhooks",
      "Las últimas entregas (en memoria: no sobreviven a un reinicio). Parámetro "
      "`limite` (1 a 200).",
-     None, {"200": ("Entregas", "ListaEntregas")}, ["400", "401"], False),
+     None, {"200": ("Entregas", "ListaEntregas")}, ["400", "401", "409"], False),
     ("post", "/v1/webhooks/prueba", "Probar el webhook",
      "Manda un `ping` firmado en un solo intento. Cuerpo: `{}`.",
      "SolicitudVacia", {"200": ("Entrega", "EntregaWebhook")},

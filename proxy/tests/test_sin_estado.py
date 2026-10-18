@@ -16,6 +16,7 @@ import hashlib
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -231,6 +232,21 @@ async def test_sin_ofertas_arma_el_cart_con_lo_firmado(tmp_path):
     assert resp["comercio_firmado"] == "merchant_1"
     assert resp["ts"] == AHORA.isoformat()
     assert resp["evaluador"] == "guard"
+
+
+async def test_sin_ahora_la_evaluacion_usa_un_solo_instante(tmp_path):
+    """El `ts` de la vista, la fecha del recibo y el `exp`/`iat` del JWT se
+    juzgan con el mismo instante: el Guard no toma otro reloj por su cuenta."""
+    espia, llamadas = evaluador_espia()  # el stub: el recibo lleva `ahora`
+    checkout = armar_checkout(cart_de("cart_1"))
+    async with cliente() as c:
+        resp = await sin_estado.evaluar_sin_estado(
+            solicitud(checkout), evaluador=espia, key_path=tmp_path / "guard_key.pem",
+            client=c, comercio=None, politica=None,
+        )
+    (llamada,) = llamadas
+    assert llamada["ahora"] is not None
+    assert datetime.fromisoformat(resp["ts"]) == llamada["ahora"]
 
 
 async def test_carts_desde_checkout_sin_total_es_none():
@@ -485,6 +501,45 @@ async def test_con_fabricante_sin_fuente_deja_el_catalogo():
     assert datos["fuente"] == "ninguna"
 
 
+class FuenteQueAnota:
+    """Anota en qué hilo la consultan (y no tiene dato: se escala igual)."""
+
+    nombre = "anota"
+
+    def __init__(self) -> None:
+        self.hilos: list[str] = []
+
+    def consultar(self, gtin: Any) -> Any:
+        self.hilos.append(threading.current_thread().name)
+        raise LookupError("sin dato")
+
+
+async def test_con_fabricante_usa_el_ejecutor_si_se_lo_pasan():
+    fuente = FuenteQueAnota()
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="gw-test") as ejecutor:
+        await sin_estado.con_fabricante(
+            fuente, {}, [{"sku": "SKU-1", "gtin": "4006381333931"}], ejecutor=ejecutor
+        )
+    assert fuente.hilos and all(h.startswith("gw-test") for h in fuente.hilos)
+
+
+async def test_evaluar_le_pasa_el_ejecutor_al_fabricante(tmp_path):
+    espia, _ = evaluador_espia("aprobado")
+    fuente = FuenteQueAnota()
+    ofertas = OfertasVistas(
+        carts=[cart_de("cart_1")], offer_details=[{"sku": "SKU-1", "gtin": "4006381333931"}],
+    )
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="gw-test") as ejecutor:
+        async with cliente() as c:
+            await sin_estado.evaluar_sin_estado(
+                solicitud(armar_checkout(cart_de("cart_1")), ofertas=ofertas),
+                evaluador=espia, key_path=tmp_path / "guard_key.pem", client=c,
+                comercio=None, politica=None, fabricante=fuente, ahora=AHORA,
+                ejecutor=ejecutor,
+            )
+    assert fuente.hilos and all(h.startswith("gw-test") for h in fuente.hilos)
+
+
 async def test_con_fabricante_lento_sigue_sin_dato():
     catalogo = {"SKU-1": {"sku": "SKU-1"}}
     nuevo, datos = await sin_estado.con_fabricante(
@@ -593,3 +648,24 @@ async def test_filtro_lento_bloquea_por_timeout():
     assert resp["status"] == "bloqueado"
     assert resp["motivo"] == sin_estado.MOTIVO_FALLA
     assert resp["senales"] == ["filtro:timeout"]
+
+
+async def test_filtrar_usa_el_ejecutor_si_se_lo_pasan():
+    hilos: list[str] = []
+
+    def filtro(respuesta: dict[str, Any]) -> ResultadoFiltro:
+        hilos.append(threading.current_thread().name)
+        return ResultadoFiltro(pasa=True)
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="gw-test") as ejecutor:
+        resp = await _filtrar(filtro, ejecutor=ejecutor)
+    assert resp["status"] == "pasa"
+    assert len(hilos) == 1 and hilos[0].startswith("gw-test")
+
+
+async def test_ejecutor_cerrado_falla_cerrado():
+    """Un ejecutor que ya no acepta trabajo es una falla del filtro: bloqueado."""
+    ejecutor = ThreadPoolExecutor(max_workers=1)
+    ejecutor.shutdown()
+    resp = await _filtrar(filtrar_con(ResultadoFiltro(pasa=True)), ejecutor=ejecutor)
+    assert resp["status"] == "bloqueado" and resp["senales"] == ["filtro:error"]

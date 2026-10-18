@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -151,6 +153,36 @@ def test_firma_acepta_varios_v1() -> None:
     assert verificar_firma(SECRETO, b"c", f"{cabecera},{otra}", ahora=1000)
 
 
+def _verificar_de_la_doc() -> Any:
+    """`verificar_webhook` tal como lo muestra docs/INTEGRACION.md §7."""
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "INTEGRACION.md").read_text("utf-8")
+    [bloque] = [
+        b.split("\n", 1)[1] for b in doc.split("```python")[1:]
+        if "def verificar_webhook" in b.split("```", 1)[0]
+    ]
+    espacio: dict[str, Any] = {}
+    exec(bloque.split("```", 1)[0], espacio)  # noqa: S102 - código de la doc, no de afuera
+    return espacio["verificar_webhook"]
+
+
+def test_el_ejemplo_de_la_doc_verifica_y_nunca_lanza() -> None:
+    """El receptor copia ese ejemplo: tiene que aceptar lo que firma el
+    gateway y rechazar (sin lanzar) una cabecera rara. Antes, `v1` con un
+    carácter no ASCII o `t=²` hacían lanzar a `compare_digest` / `int`."""
+    verificar = _verificar_de_la_doc()
+    secreto = SECRETO.decode()
+    cuerpo = cuerpo_webhook(
+        entrega_id="whe-1", tipo="ping", integrador_id="acme",
+        creado=datetime(2026, 10, 18, tzinfo=timezone.utc), compra=None,
+    )
+    ahora = int(time.time())
+    assert verificar(secreto, cuerpo, firmar(SECRETO, cuerpo, ahora)) is True
+    assert verificar(secreto, cuerpo + b" ", firmar(SECRETO, cuerpo, ahora)) is False
+    assert verificar(secreto, cuerpo, firmar(SECRETO, cuerpo, ahora - 3600)) is False
+    for rara in (f"t={ahora},v1=ñ", "t=²,v1=00", "v1=00", "", "t=,v1="):
+        assert verificar(secreto, cuerpo, rara) is False, rara
+
+
 def test_cuerpo_compacto_y_ordenado() -> None:
     cuerpo = cuerpo_webhook(
         entrega_id="whe-1", tipo="compra.veredicto", integrador_id="acme",
@@ -251,6 +283,8 @@ def test_url_estatica_valida_y_modo_inseguro() -> None:
         ["::5db8:d822"],            # IPv4-compatible, aunque la de adentro sea pública
         ["::ffff:0:7f00:1"],        # IPv4-traducida
         ["2002:7f00:1::1"],         # 6to4 → 127.0.0.1
+        ["fec0::1"],                # site-local (obsoleta): `is_global` la acepta
+        ["feff::1"],                # el final de fec0::/10
     ],
 )
 async def test_resolver_destino_rechaza_ips_no_globales(ips: list[str]) -> None:
@@ -601,6 +635,110 @@ async def test_cola_llena() -> None:
     await d.esperar()
     por_id = {e["id"]: e for e in d.entregas("acme")}
     assert por_id[a]["estado"] == por_id[b]["estado"] == "entregada"
+    await d.cerrar()
+
+
+class Goteo(httpx.AsyncByteStream):
+    """Un cuerpo que nunca termina: un byte cada tanto (slowloris)."""
+
+    async def __aiter__(self):
+        while True:
+            await asyncio.sleep(0.01)
+            yield b"x"
+
+
+def receptor_que_gotea(status: int):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, stream=Goteo())
+
+    return handler
+
+
+async def _sin_colgarse(d: Despachador) -> None:
+    """`d.esperar()` con un tope: antes del arreglo, estos tests no terminaban."""
+    await asyncio.wait_for(d.esperar(), 3)
+
+
+async def test_un_receptor_que_no_contesta_no_retiene_el_intento() -> None:
+    """Los timeouts de httpx son por operación: un receptor que manda un byte
+    cada 9 s retenía la entrega horas (y su lugar en la cola, que es de todos).
+    Cada intento tiene un tope total (`timeout_s`)."""
+    nunca = asyncio.Event()
+
+    async def colgado(request: httpx.Request) -> httpx.Response:
+        await nunca.wait()
+        return httpx.Response(200)
+
+    d = Despachador(
+        {"acme": integrador()}.get, transport=httpx.MockTransport(colgado),
+        resolver=resolver_publico, timeout_s=0.05, max_intentos=1,
+    )
+    d.notificar("acme", "compra.veredicto", COMPRA)
+    await _sin_colgarse(d)
+    [e] = d.entregas("acme")
+    assert (e["estado"], e["error"]) == ("fallida", "timeout")
+    # El ping de /v1/webhooks/prueba tampoco se cuelga.
+    ping = await asyncio.wait_for(d.probar("acme"), 3)
+    assert (ping["estado"], ping["error"]) == ("fallida", "timeout")
+    await d.cerrar()
+
+
+async def test_un_2xx_con_cuerpo_que_gotea_se_entrega_sin_leerlo() -> None:
+    d = Despachador(
+        {"acme": integrador()}.get, transport=httpx.MockTransport(receptor_que_gotea(200)),
+        resolver=resolver_publico, timeout_s=0.2, max_intentos=1,
+    )
+    d.notificar("acme", "compra.veredicto", COMPRA)
+    await _sin_colgarse(d)
+    [e] = d.entregas("acme")
+    assert (e["estado"], e["status_http"]) == ("entregada", 200)
+    await d.cerrar()
+
+
+async def test_un_error_con_cuerpo_que_gotea_vale_por_su_status() -> None:
+    """El cuerpo de un error se lee solo para el log: si el tope corta esa
+    lectura, cuenta el status que ya llegó (un 400 no se vuelve reintentable)."""
+    for status, error, estado in ((500, "http_5xx", "fallida"), (400, "http_4xx", "fallida")):
+        d = Despachador(
+            {"acme": integrador()}.get,
+            transport=httpx.MockTransport(receptor_que_gotea(status)),
+            resolver=resolver_publico, timeout_s=0.05, max_intentos=1,
+        )
+        d.notificar("acme", "compra.veredicto", COMPRA)
+        await _sin_colgarse(d)
+        [e] = d.entregas("acme")
+        assert (e["estado"], e["error"], e["status_http"]) == (estado, error, status)
+        await d.cerrar()
+
+
+async def test_un_integrador_no_llena_la_cola_de_los_demas() -> None:
+    """La cola (1000 entregas) es de todos: un integrador cuyo webhook no
+    contesta (o falla y se reintenta) la llenaba y los webhooks de los demás
+    se descartaban (`cola_llena`). Cada uno tiene su parte."""
+    nunca = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "malo.example":
+            await nunca.wait()
+        return httpx.Response(200)
+
+    integradores = {
+        "malo": integrador("malo", "https://malo.example/hook"),
+        "acme": integrador(),
+    }
+    d = Despachador(integradores.get, transport=httpx.MockTransport(handler),
+                    resolver=resolver_publico)
+    for _ in range(1000):
+        d.notificar("malo", "compra.veredicto", COMPRA)
+    estados = [e["estado"] for e in d.entregas("malo", 500)]
+    assert estados.count("pendiente") < 1000
+    d.notificar("acme", "compra.veredicto", COMPRA)
+    for _ in range(100):
+        if d.entregas("acme")[0]["estado"] != "pendiente":
+            break
+        await asyncio.sleep(0.01)
+    [e] = d.entregas("acme")
+    assert (e["estado"], e["error"]) == ("entregada", None)
     await d.cerrar()
 
 
