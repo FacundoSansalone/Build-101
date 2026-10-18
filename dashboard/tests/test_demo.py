@@ -924,3 +924,25 @@ def test_un_escenario_que_el_mundo_no_tiene_no_se_ofrece(tmp_path, monkeypatch):
     monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: None)
     with TestClient(_app(tmp_path), base_url=BASE) as c:
         assert ("computadoras_malicioso", "inyección") in _opciones(c)["Computadoras"]
+
+
+def test_mientras_se_registra_el_pedido_la_conversacion_queda_ocupada(tmp_path):
+    """Otro mensaje que llega en ese momento recibe 409: así el pedido que se
+    registró es el mismo que se le manda al agente."""
+    _escribir_token(tmp_path)
+    proxy = FakeProxy()
+    vistos: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/guard/compras/pedido":
+            vistos.append(app.state.demo.ocupado)  # la conversación, en ese momento
+        return proxy.handler(request)
+
+    app = create_app(Config(
+        repo_root=tmp_path, proxy_url=PROXY, adk_url=ADK, world_temp_dir=tmp_path / "world-temp",
+        proxy_transport=httpx.MockTransport(handler), adk_transport=httpx.MockTransport(FakeADK().handler),
+    ))
+    with TestClient(app, base_url=BASE) as c:
+        assert _post(c, "/api/demo/mensaje", {"texto": "una notebook"}).status_code == 202
+        _esperar(c)
+    assert vistos == [True]

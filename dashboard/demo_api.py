@@ -788,8 +788,12 @@ async def api_demo_mensaje(request: Request) -> Response:
         # que así lee las palabras del usuario y no solo la paráfrasis del
         # agente (proxy/pedido_usuario.py). Antes que el agente, que busca
         # enseguida. Si el proxy no está o no lo acepta, todo sigue igual.
-        await _reenviar_json(cfg, "POST", RUTA_PEDIDO_USUARIO, cuerpo={"texto": texto})
-        if conversacion.ocupado:  # otro mensaje llegó mientras tanto
-            return _error(409, "agente_ocupado", destino="agente")
+        # Mientras tanto la conversación queda ocupada: otro mensaje da 409 y
+        # el pedido registrado es el mismo que va al agente.
+        conversacion.ocupado = True
+        try:
+            await _reenviar_json(cfg, "POST", RUTA_PEDIDO_USUARIO, cuerpo={"texto": texto})
+        finally:
+            conversacion.ocupado = False
     conversacion.iniciar(texto)
     return JSONResponse({"destino": "agente"}, status_code=202)
