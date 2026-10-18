@@ -171,6 +171,8 @@ _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
 # Una repregunta del intake solo si queda al menos esto de la llamada (si
 # no, sigue con lo que tiene: la consulta de una oportunidad también espera).
 _MINIMO_REPREGUNTA_S = 30.0
+# La taxonomía (unas 3 llamadas cortas) solo si queda al menos esto.
+_MINIMO_TAXONOMIA_S = 10.0
 _TIMEOUT_LLM_S = 45.0
 _TIMEOUT_FILTRO_S = 30.0
 _TIMEOUT_FABRICANTE_S = 15.0  # todas las consultas de una compra (Icecat: 3 s cada una)
@@ -185,14 +187,21 @@ def _filtrar(headers: Any, excluidos: set[str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in excluidos}
 
 
-def _ficha_verificable(texto: str, requisitos: list[Requisito]) -> Ficha | None:
+def _ficha_verificable(
+    texto: str, requisitos: list[Requisito], categoria_taxonomia: str | None = None
+) -> Ficha | None:
     """La ficha del agente con lo que el Guard sabe chequear (None si nada)."""
     from intencion.agente_decisiones import requisitos_verificables
 
     verificables, _ = requisitos_verificables(list(requisitos))
     if not verificables:
         return None
-    return Ficha(pedido_original=texto, requisitos=verificables, confirmada=True)
+    return Ficha(
+        pedido_original=texto,
+        requisitos=verificables,
+        confirmada=True,
+        categoria_taxonomia=categoria_taxonomia,
+    )
 
 
 def _nueva_espera(compra: Compra, pregunta: str) -> None:
@@ -217,6 +226,7 @@ class EstadoIntake:
     confirmada: bool | None = None
     ficha_autorizada: list[Requisito] | None = None
     sin_verificar_guard: list[Requisito] | None = None
+    categoria_taxonomia: str | None = None  # taxonomía de Google (si hay cliente)
 
     def intake_json(self) -> dict[str, Any]:
         r = self.resultado
@@ -239,6 +249,7 @@ class EstadoIntake:
             "sin_verificar_guard": [
                 q.model_dump(mode="json") for q in self.sin_verificar_guard or []
             ],
+            "categoria_taxonomia": self.categoria_taxonomia,
         }
 
     def a_json(self) -> dict[str, Any]:
@@ -1126,7 +1137,10 @@ class ProxyGuard:
                 if con_intake:
                     datos["intake"] = estado.resultado.a_json()
                     if not otra:
-                        self._cerrar_intake(compra, texto, estado, confirmada=confirmo)
+                        categoria = await self._clasificar(llamada, texto, turnos)
+                        self._cerrar_intake(
+                            compra, texto, estado, confirmada=confirmo, categoria_taxonomia=categoria
+                        )
                         datos.update(estado.cierre_json(), sin_tiempo=sin_tiempo)
                 self._emitir(
                     "contexto_registrado",
@@ -1215,8 +1229,34 @@ class ProxyGuard:
             )
             return None
 
+    async def _clasificar(self, llamada: Llamada, texto: str, turnos: list[Turno]) -> str | None:
+        """La categoría de la taxonomía de Google para la ficha del intake.
+
+        Solo con un agente que sabe clasificar (`clasificar_taxonomia`, el de
+        decisiones) y si queda tiempo en la llamada. Es una propuesta que se
+        registra en la ficha: el Guard no depende de ella. Si falla, vacía.
+        """
+        funcion = getattr(self.agente, "clasificar_taxonomia", None)
+        if not callable(funcion) or self._restante(llamada) - _MARGEN_S < _MINIMO_TAXONOMIA_S:
+            return None
+        descripcion = " / ".join([texto, *(t.respuesta for t in turnos if t.respuesta)])
+        try:
+            categoria = await self._llm(funcion, descripcion)
+        except Exception as e:  # noqa: BLE001 - sin taxonomía, la ficha sigue igual
+            logger.exception("El agente de intención no pudo clasificar el pedido")
+            self._error(
+                llamada, f"El agente de intención no pudo clasificar el pedido ({type(e).__name__})"
+            )
+            return None
+        return categoria if isinstance(categoria, str) and categoria.isdigit() else None
+
     def _cerrar_intake(
-        self, compra: Compra, texto: str, estado: EstadoIntake, confirmada: bool
+        self,
+        compra: Compra,
+        texto: str,
+        estado: EstadoIntake,
+        confirmada: bool,
+        categoria_taxonomia: str | None = None,
     ) -> None:
         """Los parámetros autorizados que salen del intake.
 
@@ -1234,8 +1274,9 @@ class ProxyGuard:
         verificables, fuera = requisitos_verificables(requisitos)
         estado.final, estado.confirmar, estado.confirmada = True, False, confirmada
         estado.ficha_autorizada, estado.sin_verificar_guard = verificables, fuera
+        estado.categoria_taxonomia = categoria_taxonomia
         if not compra.ficha_resuelta:
-            compra.ficha_llm = _ficha_verificable(texto, verificables)
+            compra.ficha_llm = _ficha_verificable(texto, verificables, categoria_taxonomia)
 
     def _compra_json(self, datos: dict[str, Any]) -> dict[str, Any]:
         """La compra del registro + el estado del intake (turno, faltan…)."""
@@ -1391,6 +1432,7 @@ class ProxyGuard:
                     pedido_original=compra.pedido,
                     requisitos=compra.requisitos_autorizados,
                     confirmada=True,
+                    categoria_taxonomia=compra.ficha.categoria_taxonomia if compra.ficha else None,
                 )
                 compra.estado = compra.decision = "aceptada"
             elif decision == "rechazar":

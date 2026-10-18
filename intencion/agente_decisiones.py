@@ -13,6 +13,9 @@ Implementa el protocolo `intencion.agente.Agente` que usa el proxy, más
   código.
 - `detectar_oportunidad()`: se delega en el detector existente
   (`AgenteGemini`), si hay; sin detector no hay oportunidades.
+- `clasificar_taxonomia()`: la categoría de la taxonomía de Google para la
+  ficha (`taxonomia.clasificar`, nivel por nivel con el mismo cliente). Es
+  una propuesta: el Guard no depende de ella.
 
 El modelo nunca escribe nada que lea el usuario ni ningún valor de la ficha:
 elige entre opciones y el código decide con umbrales.
@@ -83,6 +86,24 @@ def requisitos_verificables(
     for r in requisitos:
         (si if r.campo in campos and r.operador in operadores else no).append(r)
     return si, no
+
+
+def categoria_taxonomia(
+    descripcion: str, cliente: ClienteDecisiones | None, taxonomia: Any = None
+) -> str | None:
+    """El ID de la taxonomía de Google para el pedido, o None.
+
+    `taxonomia.clasificar` baja nivel por nivel mientras la confianza alcance
+    y devuelve el último nivel seguro (también si la API falla). Sin cliente
+    de decisiones, o si no llega ni al primer nivel, queda vacía. Por
+    defecto usa el subconjunto del repo (ramas de la demo, sin red).
+    """
+    if cliente is None or not (descripcion or "").strip():
+        return None
+    from taxonomia import cargar_subconjunto, clasificar
+
+    arbol = taxonomia if taxonomia is not None else cargar_subconjunto()
+    return clasificar(descripcion.strip()[:intake.LARGO_TEXTO], arbol, cliente).id
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +205,11 @@ class AgenteDecisiones:
         cliente: ClienteDecisiones,
         detector: Any = None,
         umbrales: Umbrales | None = None,
+        taxonomia: Any = None,
     ) -> None:
         self.cliente = cliente
         self.detector = detector  # algo con detectar_oportunidad(contexto, ficha, ofertas)
+        self.taxonomia = taxonomia  # taxonomia.Taxonomia; None = el subconjunto del repo
         self.umbrales = umbrales or intake.UMBRALES
         self._lock = threading.Lock()
         self._cache: OrderedDict[tuple, tuple[ResultadoIntake, Contexto | None]] = OrderedDict()
@@ -240,6 +263,10 @@ class AgenteDecisiones:
         if len(verificables) != len(ficha.requisitos):
             ficha = ficha.model_copy(update={"requisitos": verificables})
         return self.detector.detectar_oportunidad(contexto, ficha, ofertas)
+
+    def clasificar_taxonomia(self, descripcion: str) -> str | None:
+        """`Ficha.categoria_taxonomia` para el pedido (None si no se pudo)."""
+        return categoria_taxonomia(descripcion, self.cliente, self.taxonomia)
 
     # -- intake ----------------------------------------------------------------------
 
