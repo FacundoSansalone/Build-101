@@ -44,6 +44,8 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control, nuevo en cada arranque (modo 0600 donde aplica). Lo lee el servidor del dashboard |
 | `PROXY_ALLOW_STUB` | `0` | `1` para arrancar con el stub si no hay `guard.evaluar()` real (solo pruebas) |
 | `PROXY_MAX_RESPUESTA_BYTES` | `5242880` | Tope por respuesta del comercio (5 MB) |
+| `SUPABASE_URL` | — | Proyecto de Supabase (`https://<ref>.supabase.co`). Con la clave, activa el registro en Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | — | Clave de servicio de Supabase. **Secreta**: va en el entorno o en un `.env` ignorado por git, nunca en el repo |
 
 Los servicios locales van por `127.0.0.1` y no por `localhost`: en Windows
 `localhost` prueba primero `::1`, donde el comercio y el catálogo no
@@ -204,11 +206,40 @@ Además van a `GUARD_EVENTS_JSONL`, una línea por evento. `escenario` es el
 - Los textos que el proxy manda al agente son plantillas fijas; los detalles
   de errores (que pueden traer texto del comercio) solo van al evento `error`.
 
+## Registro en Supabase (opcional)
+
+Con `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` en el entorno, `python -m
+proxy` registra en Supabase (`persistencia.py`):
+
+- **`veredictos`**: una fila por evento `veredicto`, con el `Veredicto`
+  completo y el recibo firmado (`recibo_jws`). Las `verificaciones` del
+  recibo traen, campo por campo, lo declarado contra el catálogo público: es
+  la evidencia de por qué se rechazó. No se suben mandatos ni el
+  `checkout_jwt` (solo su `checkout_hash`).
+- **`aprobaciones`**: cada aprobación humana al crearse y al usarse. Es
+  auditoría: la regla de un solo uso sigue en memoria y no se recarga al
+  arrancar (las ofertas de ese contexto ya no están).
+
+Es solo registro: escribe en segundo plano (timeout 5 s) y, si Supabase no
+responde, el proxy sigue igual, avisa con un evento `error` una vez por caída
+y el JSONL queda como copia completa. Sin las variables no se escribe nada.
+Los tests nunca usan el entorno: la persistencia se inyecta en `create_app`.
+
+Tablas: `sql/001_persistencia.sql` (RLS activado y sin políticas: la clave
+anon no lee ni escribe). Para subir corridas del benchmark:
+
+```sh
+world/ap2/.venv/bin/python -m proxy.subir_benchmark results/*.json
+```
+
+Hace upsert en `benchmark_corridas` y `benchmark_escenarios` por nombre de
+archivo: subir la misma corrida dos veces no la duplica.
+
 ## Código
 
 | Archivo | Qué es |
 |---|---|
-| `app.py` | `create_app(config, transport=None, evaluador=None)`: rutas, reenvío, decisión sobre el checkout (JSON y SSE), caché de decisiones, API de control |
+| `app.py` | `create_app(config, transport=None, evaluador=None, persistencia=None)`: rutas, reenvío, decisión sobre el checkout (JSON y SSE), caché de decisiones, API de control |
 | `a2a.py` | Helpers puros sobre el JSON de A2A (pedido, ofertas, checkouts, `guard.veredicto` ajeno y versión para el agente, tareas bloqueadas, total firmado exacto, huella del checkout, lectura acotada y SSE saneado) |
 | `aprobaciones.py` | Registro de aprobaciones humanas (un solo uso, atadas a contexto, cart y monto) |
 | `seguridad.py` | Middleware de la API de control (`Host`, `Origin`, `Content-Type`, `X-Guard-Token`) y el token por arranque |
@@ -217,6 +248,9 @@ Además van a `GUARD_EVENTS_JSONL`, una línea por evento. `escenario` es el
 | `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta 20) y JSONL |
 | `fuentes.py` | Intent, catálogo público (con su fuente) y `ap2_check` con respaldo en `fixtures/` |
 | `config.py` | Variables de entorno y chequeo de loopback |
+| `persistencia.py` | Registro opcional en Supabase (veredictos y aprobaciones), en segundo plano y sin cortar el flujo si falla |
+| `subir_benchmark.py` | `python -m proxy.subir_benchmark results/*.json`: sube corridas del benchmark a Supabase |
+| `sql/001_persistencia.sql` | Tablas de Supabase |
 | `scripts/smoke_checkout.py` | Prueba real de punta a punta con el cliente A2A del sample |
 
 ## Tests

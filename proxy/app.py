@@ -16,6 +16,8 @@ Se mete entre el Shopping Agent y el Merchant Agent sin tocar AP2:
   contexto, respuesta ilegible, red caída) no llega a la firma.
 - Emite `Evento`s para el dashboard (SSE + JSONL) y expone el interruptor y
   las aprobaciones humanas.
+- Si hay credenciales de Supabase, registra ahí los veredictos y las
+  aprobaciones (`proxy.persistencia`). Es solo registro: si falla, sigue.
 
 El proxy no decide: decide `guard/`. El proxy solo transporta, registra,
 aplica el veredicto y bloquea lo que no pudo evaluar (fail-closed).
@@ -63,6 +65,7 @@ from proxy.evaluador import (
 )
 from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import cargar_catalogo, cargar_intent, violaciones_ap2
+from proxy.persistencia import Persistencia
 from proxy.seguridad import ControlLocal, escribir_token, generar_token
 
 logger = logging.getLogger("proxy")
@@ -213,6 +216,7 @@ class ProxyGuard:
         evaluador: EvaluadorCargado,
         ping_segundos: float = 15.0,
         api_token: str | None = None,
+        persistencia: Persistencia | None = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -228,6 +232,11 @@ class ProxyGuard:
         # Secreto de los POST de /guard/* (N4): uno por arranque.
         self.api_token = api_token or generar_token()
         self.aprobaciones = RegistroAprobaciones()
+        self.persistencia = persistencia
+        if persistencia is not None and persistencia.al_fallar is None:
+            persistencia.al_fallar = lambda mensaje: self._emitir(
+                "error", {"mensaje": mensaje}, guard_activo=self.guard_activo
+            )
         self._ofertas: OrderedDict[str, OfertasGuardadas] = OrderedDict()
         self._decisiones: OrderedDict[str, Decision] = OrderedDict()
         self._ficha: Ficha | None = None
@@ -248,13 +257,16 @@ class ProxyGuard:
         contexto_id: str | None = None,
         escenario: str | None = None,
     ) -> Evento:
-        return self.bus.emitir(
+        evento = self.bus.emitir(
             tipo,
             datos,
             guard_activo=guard_activo,
             contexto_id=contexto_id,
             escenario=escenario,
         )
+        if self.persistencia is not None:
+            self.persistencia.guardar_evento(evento)  # solo los `veredicto`
+        return evento
 
     def _escenario(self, contexto_id: str | None) -> str | None:
         guardadas = self._ofertas.get(contexto_id) if contexto_id else None
@@ -1045,6 +1057,8 @@ class ProxyGuard:
                 aprobacion=aprobacion,
             )
             if aprobacion:
+                if self.persistencia is not None:
+                    self.persistencia.guardar_aprobacion(aprobacion)
                 logger.warning(
                     "Aprobación humana %s usada: pasa el checkout de %s (contexto %s)",
                     aprobacion.id, decision.cart_id, decision.contexto_id,
@@ -1150,6 +1164,8 @@ class ProxyGuard:
         except SinEscalar as e:
             return JSONResponse({"error": "sin_escalar", "detalle": str(e)}, status_code=409)
         if creada:
+            if self.persistencia is not None:
+                self.persistencia.guardar_aprobacion(aprobacion)
             logger.warning(
                 "Aprobación humana %s registrada: contexto %s, %s, %s centavos",
                 aprobacion.id, aprobacion.contexto_id, aprobacion.cart_id, aprobacion.centavos,
@@ -1221,8 +1237,13 @@ def create_app(
     transport: httpx.AsyncBaseTransport | None = None,
     evaluador: EvaluadorCargado | None = None,
     ping_segundos: float = 15.0,
+    persistencia: Persistencia | None = None,
 ) -> Starlette:
-    """Arma la app. `transport` permite inyectar el comercio en los tests."""
+    """Arma la app. `transport` permite inyectar el comercio en los tests.
+
+    `persistencia` (Supabase) la arma `python -m proxy` desde el entorno; acá
+    no se lee el entorno, así los tests nunca escriben en la base real.
+    """
     config = config or Config.desde_entorno()
     # Fail-closed antes de abrir nada: sin Guard real (o stub sin permiso) no
     # hay app (EvaluadorNoDisponible).
@@ -1233,7 +1254,7 @@ def create_app(
         timeout=httpx.Timeout(600.0, connect=5.0),  # create_checkout usa un LLM
         trust_env=False,
     )
-    proxy = ProxyGuard(config, client, evaluador, ping_segundos)
+    proxy = ProxyGuard(config, client, evaluador, ping_segundos, persistencia=persistencia)
     if config.api_token_path is not None:
         # Para el servidor del dashboard (lo lee y lo agrega en su reenvío).
         escribir_token(config.api_token_path, proxy.api_token)
@@ -1248,6 +1269,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         yield
+        if persistencia is not None:
+            await persistencia.cerrar()
         await client.aclose()
 
     rpc_path = config.rpc_path
