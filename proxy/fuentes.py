@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from contracts import Ficha
 from proxy.config import REPO_ROOT
 
 logger = logging.getLogger("proxy.fuentes")
@@ -32,6 +33,19 @@ def cargar_intent() -> dict[str, Any]:
         logger.warning("demo_world no disponible (%s); intent desde fixtures/", e)
         datos = json.loads((FIXTURES / "scenario_baseline.json").read_text("utf-8"))
         return datos["intent"]
+
+
+def ficha_del_intent(intent: dict[str, Any]) -> Ficha:
+    """La ficha confirmada de un `intent` de la demo, con los atributos
+    (`intent.attributes`) y la categoría de la taxonomía de Google
+    (`google_product_category`): `guard.ficha.ficha_desde_intent`.
+
+    Se importa al usarla: si `guard/` no está, el proxy ya no arranca por el
+    evaluador (fail-closed) y el error que se ve es ese.
+    """
+    from guard.ficha import ficha_desde_intent
+
+    return ficha_desde_intent(intent)
 
 
 _NOMBRE_ESCENARIO = re.compile(r"[A-Za-z0-9_-]{1,40}")

@@ -83,6 +83,7 @@ from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import (
     cargar_catalogo,
     cargar_intent,
+    ficha_del_intent,
     intent_del_escenario,
     violaciones_ap2,
 )
@@ -446,8 +447,9 @@ class ProxyGuard:
         )
 
     def ficha(self) -> Ficha:
+        """La ficha global de la demo (el pedido de zapatillas de scenarios.json)."""
         if self._ficha is None:
-            self._ficha = Ficha.desde_intent(cargar_intent())
+            self._ficha = ficha_del_intent(cargar_intent())
         return self._ficha
 
     def estado(self) -> dict[str, Any]:
@@ -461,13 +463,15 @@ class ProxyGuard:
 
     def ficha_de(self, contexto_id: str | None) -> Ficha:
         """Los parámetros autorizados de esa compra (etapa 2) o, si no hay
-        compra con parámetros, la ficha de la demo (scenarios.json)."""
+        compra con parámetros, la ficha de la demo: la del escenario de esa
+        compra (con sus atributos) y, si no se conoce, la global."""
+        escenario = self._escenario(contexto_id)
         compra = self.compras.de_contexto(contexto_id)
         if compra is not None:
-            ficha = compra.resolver_ficha(self._ficha_confirmada(self._escenario(contexto_id)))
+            ficha = compra.resolver_ficha(self._ficha_confirmada(escenario))
             if ficha is not None:
                 return ficha
-        return self.ficha()
+        return self._ficha_confirmada(escenario) or self.ficha()
 
     # -- Agent Card ----------------------------------------------------------
 
@@ -997,12 +1001,13 @@ class ProxyGuard:
         return await asyncio.wait_for(asyncio.to_thread(funcion, *args), _TIMEOUT_LLM_S)
 
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
-        """La ficha confirmada de la demo para ese escenario (si hay)."""
+        """La ficha confirmada de la demo para ese escenario (si hay), con los
+        atributos y la categoría de la taxonomía (`ficha_desde_intent`)."""
         intent = intent_del_escenario(escenario)
         if intent is None:
             return None
         try:
-            return Ficha.desde_intent(intent)
+            return ficha_del_intent(intent)
         except (ValueError, ValidationError):
             logger.exception("La ficha del escenario %s no es válida", escenario)
             return None
