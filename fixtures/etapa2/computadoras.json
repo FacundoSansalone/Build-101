@@ -1,0 +1,83 @@
+{
+  "_comment": "Escrito a mano para la etapa 2 (intencion/, guard/ y proxy/) hasta que world/ tenga el escenario de computadoras (Dev 1). Mismo formato que export_fixtures, más quantity y deliveries en demo.offer_details. Fechas fijas: hoy es el domingo 2026-10-18; lunes 19, miércoles 21, jueves 22, viernes 23. Va en fixtures/etapa2/ para no sumarse a la lista de escenarios de la demo de zapatillas.",
+  "scenario": "computadoras",
+  "title": "Proveedor honesto sin punto de encuentro literal",
+  "description": "Pedido: 20 computadoras para el lunes, hasta USD 20.000. El proveedor no puede entregar 20 el lunes. Ofrece dos alternativas: 10 el lunes y 10 el viernes (más barata) o 10 el lunes y 10 el miércoles.",
+  "intent": {
+    "user_request": "Comprame 20 computadoras para el lunes, hasta 20000 USD.",
+    "catalog_search": "20 laptops delivered by Monday 2026-10-19, up to 20000 USD",
+    "hard": {
+      "max_price": 20000.0,
+      "currency": "USD",
+      "quantity": 20,
+      "deliveries": [{"quantity": 20, "date": "2026-10-19"}]
+    },
+    "preferred": {},
+    "criterion": "lowest_price_among_compliant"
+  },
+  "contexto_demo": {
+    "respuesta_usuario": "Entran 10 trabajadores el lunes y otros 10 el jueves.",
+    "necesidad_entregas": [
+      {"cantidad": 10, "fecha": "2026-10-19"},
+      {"cantidad": 10, "fecha": "2026-10-22"}
+    ]
+  },
+  "carts": [
+    {
+      "cart_id": "cart_1",
+      "item_label": "Lumen Notebook 14 x20. We cannot deliver 20 units on Monday: 10 on Monday 2026-10-19 and 10 on Friday 2026-10-23.",
+      "amount": 17000.0,
+      "currency": "USD"
+    },
+    {
+      "cart_id": "cart_2",
+      "item_label": "Orion Notebook 14 x20. We cannot deliver 20 units on Monday: 10 on Monday 2026-10-19 and 10 on Wednesday 2026-10-21.",
+      "amount": 18000.0,
+      "currency": "USD"
+    }
+  ],
+  "offer_details": [
+    {
+      "cart_id": "cart_1",
+      "sku": "LM-NB-14",
+      "title": "Lumen Notebook 14",
+      "brand": "Lumen",
+      "category": "laptops",
+      "use": "office",
+      "price": 17000.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "quantity": 20,
+      "deliveries": [
+        {"quantity": 10, "date": "2026-10-19"},
+        {"quantity": 10, "date": "2026-10-23"}
+      ],
+      "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD. 20 units: 10 on Monday and 10 on Friday."
+    },
+    {
+      "cart_id": "cart_2",
+      "sku": "OR-NB-14",
+      "title": "Orion Notebook 14",
+      "brand": "Orion",
+      "category": "laptops",
+      "use": "office",
+      "price": 18000.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "quantity": 20,
+      "deliveries": [
+        {"quantity": 10, "date": "2026-10-19"},
+        {"quantity": 10, "date": "2026-10-21"}
+      ],
+      "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD. 20 units: 10 on Monday and 10 on Wednesday."
+    }
+  ],
+  "attack": null,
+  "expected": {
+    "literal_cart_id": null,
+    "oportunidad_cart_id": "cart_2",
+    "ap2_blocks_attack_target": false
+  }
+}

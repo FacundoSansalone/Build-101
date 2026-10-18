@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import date, datetime
 from typing import Any
 
 # Tolerancia para comparar montos (medio centavo).
@@ -74,3 +75,56 @@ def contiene(elementos: list | tuple, valor: Any) -> bool:
 
 def contiene_todos(elementos: list | tuple, valores: list | tuple) -> bool:
     return all(contiene(elementos, valor) for valor in valores)
+
+
+def _entrega(valor: Any) -> tuple[date, int] | None:
+    """(fecha, cantidad) de una `Entrega`, o de un dict con `cantidad`/`fecha`
+    (o `quantity`/`date`, como lo declara el comercio). Si no, None."""
+    if isinstance(valor, dict):
+        cantidad = valor.get("cantidad", valor.get("quantity"))
+        fecha = valor.get("fecha", valor.get("date"))
+    else:
+        cantidad = getattr(valor, "cantidad", None)
+        fecha = getattr(valor, "fecha", None)
+    if isinstance(cantidad, bool) or not isinstance(cantidad, int) or cantidad <= 0:
+        return None
+    if isinstance(fecha, str):
+        try:
+            fecha = date.fromisoformat(fecha.strip())
+        except ValueError:
+            return None
+    if isinstance(fecha, datetime) or not isinstance(fecha, date):
+        return None
+    return fecha, cantidad
+
+
+def entregas_validas(valor: Any) -> list[tuple[date, int]] | None:
+    """Cronograma [(fecha, cantidad)] ordenado por fecha, o None.
+
+    Una lista vacía o con algún elemento inválido no es un cronograma: None
+    (el chequeo que lo necesita no puede comparar y escala).
+    """
+    if not isinstance(valor, (list, tuple)) or not valor:
+        return None
+    cronograma = [_entrega(v) for v in valor]
+    if any(e is None for e in cronograma):
+        return None
+    return sorted(cronograma)  # type: ignore[arg-type]
+
+
+def cubre_entregas(ofrecidas: Any, pedidas: Any) -> bool | None:
+    """¿El cronograma ofrecido cubre el pedido?
+
+    Para cada fecha pedida, lo ofrecido acumulado hasta esa fecha tiene que
+    alcanzar lo pedido acumulado. [10 lun, 10 mié] cubre [10 lun, 10 jue]
+    pero no [20 lun]. None si alguno no es un cronograma válido.
+    """
+    oferta, pedido = entregas_validas(ofrecidas), entregas_validas(pedidas)
+    if oferta is None or pedido is None:
+        return None
+    pedido_acumulado = 0
+    for fecha, cantidad in pedido:
+        pedido_acumulado += cantidad
+        if sum(c for f, c in oferta if f <= fecha) < pedido_acumulado:
+            return False
+    return True
