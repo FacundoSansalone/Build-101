@@ -1375,6 +1375,7 @@ class ProxyGuard:
             compra.estado = "sin_oportunidad"
             return "pasar", None
 
+        ofertas: list[Any] = []
         try:
             from guard.extractor import extraer
             from guard.verificador import verificar_todas
@@ -1389,7 +1390,9 @@ class ProxyGuard:
             )
             # Verificadas como las verifica el Guard: con el fabricante y los
             # atributos que pide la ficha de la compra.
-            atributos = [r.atributo for r in compra.ficha.requisitos if r.campo == "atributo" and r.atributo]
+            atributos = [
+                r.atributo for r in compra.ficha.requisitos if r.campo == "atributo" and r.atributo
+            ]
             ofertas = verificar_todas(extraer(vistas).ofertas, catalogo, atributos)
             oportunidad = await self._llm(
                 self.agente.detectar_oportunidad, compra.contexto, compra.ficha, ofertas
