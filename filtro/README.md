@@ -41,6 +41,21 @@ mano: `FiltroSeguridad(cliente=..., solo_heuristicas=...)` y
 | `DECISIONES_MODELO_OPENAI` / `DECISIONES_MODELO_JEV` | `gpt-6-luna` / `jev-latest` | Modelo |
 | `FILTRO_TIMEOUT_S` | `8` | Timeout por intento (entre 1 y 9). El adaptador hace hasta 3 intentos y el proxy corta el filtro a los 30 s |
 
+`filtro.describir(env=None) -> str` da el modo efectivo en un texto corto,
+para mostrarlo al arrancar o en el panel:
+
+| Modo | Texto |
+|---|---|
+| Con cliente de decisiones | `heurísticas + modelo openai/gpt-6-luna` (o `jev/<modelo>`) |
+| `FILTRO_SOLO_HEURISTICAS=1` | `solo heurísticas` |
+| Sin cliente | `sin cliente: bloquea todo` (con `(DECISIONES_PROVEEDOR inválido)` si el proveedor no existe) |
+
+Sin argumentos describe el filtro que usa `filtrar()` si ya está armado
+(`configurar()` o la primera llamada) y, si no, el que armaría con el
+entorno del proceso, sin guardarlo; con `env`, el de ese entorno. No llama a
+la red, no escribe en el log y nunca muestra la clave. Un
+`FiltroSeguridad` armado a mano tiene el mismo método (`f.describir()`).
+
 ## Qué decide
 
 Para cada respuesta (el `result` de la tarea A2A, un evento SSE o el cuerpo
