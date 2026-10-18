@@ -41,6 +41,7 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import ValidationError
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.datastructures import Headers
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -505,9 +506,14 @@ async def api_catalogo(request: Request) -> Response:
 
 
 def _replays(cfg: Config) -> dict[str, tuple[Path, str]]:
-    """nombre → (ruta, origen). Lista blanca: solo lo que hay en disco."""
+    """nombre → (ruta, origen). Lista blanca: solo lo que hay en disco.
+
+    Con el panel publicado (`DASHBOARD_PUBLIC_ORIGINS`), solo las grabaciones
+    de `dashboard/demo/`: `.logs/guard_events.jsonl` es el registro entero del
+    proxy (pedidos, contextos, checkouts y mandatos) y no tiene token.
+    """
     out: dict[str, tuple[Path, str]] = {}
-    if cfg.log_eventos.is_file():
+    if cfg.log_eventos.is_file() and not cfg.origenes_publicos:
         out[REPLAY_LOG] = (cfg.log_eventos, ".logs")
     if cfg.demo_dir.is_dir():
         for path in sorted(cfg.demo_dir.glob("*.jsonl")):
@@ -893,6 +899,12 @@ async def api_proxy_eventos(request: Request) -> Response:
         await cliente.aclose()
         return _error(502, "proxy_sin_eventos", status=respuesta.status_code)
 
+    async def cerrar() -> None:
+        # Las dos son idempotentes: se llaman al terminar el cuerpo y otra vez
+        # al final de la respuesta.
+        await respuesta.aclose()
+        await cliente.aclose()
+
     async def cuerpo():
         # aiter_bytes y no aiter_raw: no reenviamos Content-Encoding, así que
         # el cuerpo tiene que salir decodificado.
@@ -902,13 +914,16 @@ async def api_proxy_eventos(request: Request) -> Response:
         except httpx.HTTPError:
             return
         finally:
-            await respuesta.aclose()
-            await cliente.aclose()
+            await cerrar()
 
+    # Si el navegador corta mientras se le escribe, Starlette cancela el envío
+    # con el generador parado en el `yield` y su `finally` no corre hasta que
+    # lo junte el recolector: la tarea de fondo cierra el SSE del proxy igual.
     return StreamingResponse(
         cuerpo(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        background=BackgroundTask(cerrar),
     )
 
 

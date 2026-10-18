@@ -707,3 +707,24 @@ def test_evaluar_propaga_la_falla_del_cliente():
 def test_evaluar_con_pedido_vacio_es_error():
     with pytest.raises(ValueError):
         evaluar("  ", [], HOY, DecisionesFalso(lambda e, q: {}))
+
+
+def test_fuera_de_catalogo_la_confirmacion_lo_dice_sin_confundir():
+    """En la confirmación, un producto fuera del catálogo público se dice tal
+    cual: no figura ahí y lo que declare el comercio se verifica con otras
+    fuentes. No "no está entre las categorías del catálogo del proveedor"
+    (en computadoras, los productos no están en el catálogo a propósito)."""
+    cands = extraer([PEDIDO_COMPLETO], HOY)
+    resp = _respuestas_completas(cands)
+    resp["categoria"] = eleccion("categoria", "fuera_de_catalogo", 0.95)
+    r = interpretar(resp, cands, CATEGORIAS, respondidos=1)
+    assert r.siguiente == "confirmar" and r.fuera_de_catalogo is True
+    assert "categorías del catálogo del proveedor" not in r.pregunta
+    assert "no figura en el catálogo público del comercio" in r.pregunta
+    assert "otras fuentes" in r.pregunta and "te lo consultamos" in r.pregunta
+    assert _parametro(r, "categoria").texto == "fuera del catálogo público"
+    ingles = extraer(["I need 20 laptops by Monday, up to 20000 dollars"], HOY)
+    resp_en = _respuestas_completas(ingles)
+    resp_en["categoria"] = eleccion("categoria", "fuera_de_catalogo", 0.95)
+    r_en = interpretar(resp_en, ingles, CATEGORIAS, respondidos=1)
+    assert "public catalog" in r_en.pregunta and "catalog categories" not in r_en.pregunta

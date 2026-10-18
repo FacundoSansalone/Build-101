@@ -266,6 +266,18 @@ prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
    **taxonomía de Google** (`taxonomia.clasificar`, unas 3 llamadas; sin
    cliente queda vacía). Solo se repregunta si quedan al menos 30 s de la
    llamada. Con Gemini (sin intake) es una sola pregunta, como antes.
+
+   **El pedido con las palabras del usuario** (`proxy/pedido_usuario.py`):
+   el agente de compras le pasa al comercio una paráfrasis ("20
+   computadoras por un total de 20000 USD") y puede perder lo que dijo el
+   usuario ("para el lunes", "hasta"). `/demo` registra el primer mensaje
+   de cada compra (`POST /guard/compras/pedido`) y la próxima compra nueva
+   lo lee junto con la búsqueda (`"<usuario> / <búsqueda>"`; solo lo del
+   usuario si la búsqueda no agrega nada). Solo por la API de control (con
+   token), hasta 1000 caracteres, vence a los 180 s y se usa una vez. Sin
+   registro, el pedido es la búsqueda, como siempre. No autoriza nada por
+   sí: umbrales y confirmación de siempre, y la ficha de la demo sigue
+   mandando. Las compras de integrador no lo usan.
 2. **Filtro.** Con un filtro cargado (`GUARD_FILTRO`, de Dev 1), cada
    respuesta del proveedor pasa por él antes que nada. Si bloquea o falla,
    el agente del cliente recibe una tarea `failed` con un texto fijo y
@@ -342,6 +354,7 @@ Reglas que no dependen de la demo:
 | `GET /guard/compras` | `{"compras": [Compra]}`, la más nueva primero. `Compra`: `compra_id`, `estado` (`esperando_contexto`, `negociando`, `esperando_decision`, `sin_oportunidad`, `bloqueada`, `aceptada`, `rechazada`, `vencida`), `creada`, `contexto_id`, `pedido`, `pregunta`, `requisitos`, `contexto`, `oportunidad`, `vence`, `decision`, `requisitos_autorizados` e `intake` (`turno`, `confirmar` y, con intake, lo que falta, la ficha parcial y, al final, la autorizada) |
 | `POST /guard/compras/contexto` con `{"compra_id", "respuesta"}`, `{"compra_id", "omitir": true}` o `{"compra_id", "confirmar": true}` y `X-Guard-Token` | 200 con la compra; 404 `compra_desconocida`; 409 `{"error": "estado", "estado"}` si no está esperando una respuesta (o, para `confirmar`, si el turno no es el de confirmar la ficha); 400 si el cuerpo no es exactamente eso (respuesta de 1 a 1000 caracteres) |
 | `POST /guard/compras/decision` con `{"compra_id", "decision": "aceptar"\|"rechazar"}` y `X-Guard-Token` | Igual: 200, 404, 409 (si no hay una consulta pendiente) o 400 |
+| `POST /guard/compras/pedido` con `{"texto"}` y `X-Guard-Token` | Lo que escribió el usuario en `/demo` para el intake de la próxima compra nueva (reemplaza al anterior; vence a los 180 s; un uso). 200 `{"registrado": true, "vence"}` (sin el texto), o `{"registrado": false, "motivo": "intermediario_apagado" \| "sin_agente_de_intencion"}` si ninguna compra lo usaría (no se guarda); 400 si no es exactamente eso (1 a 1000 caracteres) |
 
 `GET /guard/state` suma `"intencion"` (nombre del agente o `null`) y
 `"filtro"` (bool).

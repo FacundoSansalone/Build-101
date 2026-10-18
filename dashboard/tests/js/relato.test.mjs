@@ -3,7 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { armarRelato, formatearMedida, humanizarAtributo, limpiarTexto, textoCorteFiltro } from "../../static/lib/relato.js";
+import {
+  armarRelato, filasFicha, formatearMedida, humanizarAtributo, limpiarTexto, textoCorteFiltro,
+} from "../../static/lib/relato.js";
 import { itemsDeEventos, itemsDeMensajes, lineaDeTiempo } from "../../static/lib/demo.js";
 
 let n = 0;
@@ -120,12 +122,112 @@ test("las preguntas de nuestro agente y lo que entendió", () => {
     ["Nuestro agente pregunta: ¿Para cuándo lo necesitás?"]);
   assert.deepEqual(textos(relato([evento("pedido_detectado", { compra_id: "c", pregunta: "¿Te sirve esta ficha?", turno: 2, confirmar: true })])),
     ["Nuestro agente te pide confirmar: ¿Te sirve esta ficha?"]);
-  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 0, contexto: { necesidad: "programar todo el día" } })])),
-    ["Nuestro agente entendió: programar todo el día"]);
+  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 0, respuesta: "Para programar todo el día.",
+    contexto: { necesidad: "texto libre de un modelo", necesidad_entregas: [], flexibilidades: [] } })])),
+    ["Nuestro agente entendió: «Para programar todo el día.»"]);
   assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 0, omitido: true, contexto: null })])),
     ["Sin el porqué: tu agente sigue con el pedido literal"]);
   assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 2, final: true, confirmada: true })])),
     ["Confirmaste la ficha: con eso negocia tu agente"]);
+});
+
+// El contexto como lo arma el agente de decisiones: la necesidad son las
+// palabras del primer turno; el cronograma y las flexibilidades, juicios.
+const CONTEXTO_COMPUTADORAS = {
+  pedido: "20 computadoras por un total de 20000 USD", pregunta: "¿Para qué?",
+  respuesta: "Entran 10 trabajadores el lunes y otros 10 el jueves.", historial: [],
+  necesidad: "Entran 10 trabajadores el lunes y otros 10 el jueves.",
+  necesidad_entregas: [{ cantidad: 10, fecha: "2026-10-19" }, { cantidad: 10, fecha: "2026-10-22" }],
+  flexibilidades: [
+    { descripcion: "Acepta recibir la compra en partes (entregas escalonadas).", origen: "dicha" },
+    { descripcion: "Acepta otra marca u otro modelo.", origen: "inferida" },
+  ],
+};
+
+test("lo que entendió nuestro agente: una plantilla con el cronograma y lo que dijiste flexible, no el eco", () => {
+  const registrado = (turno, respuesta, contexto) =>
+    evento("contexto_registrado", { compra_id: "cmp-pc", turno, respuesta, omitido: false, vencido: false, contexto });
+  const lineas = textos(relato([
+    registrado(0, CONTEXTO_COMPUTADORAS.respuesta, CONTEXTO_COMPUTADORAS),
+    // El turno siguiente trae el mismo contexto: no se repite la línea.
+    registrado(1, "Hasta 20000 dólares.", { ...CONTEXTO_COMPUTADORAS,
+      historial: [{ pregunta: "¿El tope?", respuesta: "Hasta 20000 dólares." }] }),
+  ]));
+  assert.deepEqual(lineas, ["Nuestro agente entendió: necesitás 10 el lun 19/10 y 10 el jue 22/10; aceptás recibir en partes"]);
+  // La flexibilidad inferida no se dice como si la hubiera dicho el usuario.
+  assert.ok(!lineas[0].includes("otra marca"));
+  // La de Gemini va con la etiqueta del campo; su texto libre no se muestra.
+  const gemini = { ...CONTEXTO_COMPUTADORAS, necesidad_entregas: [],
+    flexibilidades: [{ descripcion: "Entregas: texto libre del modelo", origen: "dicha" },
+      { descripcion: "Otro: más texto libre", origen: "dicha" }] };
+  assert.deepEqual(textos(relato([registrado(0, "x", gemini)])), ["Nuestro agente entendió: pueden variar las entregas"]);
+});
+
+test("sin datos estructurados, lo que entendió es la última respuesta, no la primera", () => {
+  const vacio = { ...CONTEXTO_COMPUTADORAS, necesidad_entregas: [], flexibilidades: [] };
+  const lineas = textos(relato([
+    evento("contexto_registrado", { compra_id: "cmp-x", turno: 0, respuesta: "Para la oficina.", contexto: vacio }),
+    evento("contexto_registrado", { compra_id: "cmp-x", turno: 1, respuesta: "Hasta 900 dólares, para el viernes.",
+      contexto: { ...vacio, historial: [{ pregunta: "q", respuesta: "Hasta 900 dólares, para el viernes." }] } }),
+  ]));
+  assert.deepEqual(lineas, [
+    "Nuestro agente entendió: «Para la oficina.»",
+    "Nuestro agente entendió: «Hasta 900 dólares, para el viernes.»",
+  ]);
+  // Un cronograma inválido no se muestra (ni se rompe).
+  const malo = { ...vacio, necesidad_entregas: [{ cantidad: "diez", fecha: "lunes" }, null] };
+  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "cmp-y", turno: 0, respuesta: "Para la oficina.", contexto: malo })])),
+    ["Nuestro agente entendió: «Para la oficina.»"]);
+});
+
+// La ficha parcial del intake como la manda el proxy (Parametro.a_json).
+const FICHA_PARCIAL = [
+  { parametro: "categoria", estado: "resuelto", valor: "laptops", origen: "dicho", probabilidad: 0.95, texto: "laptops", necesario: true,
+    requisito: { campo: "categoria", operador: "igual", valor: "laptops", obligatorio: true, origen: "dicho" } },
+  { parametro: "cantidad", estado: "resuelto", valor: 20, origen: "dicho", probabilidad: 0.97, texto: "20", necesario: true,
+    requisito: { campo: "cantidad", operador: "igual", valor: 20, obligatorio: true, origen: "dicho" } },
+  { parametro: "precio", estado: "resuelto", valor: 20000, origen: "dicho", probabilidad: 0.9, texto: "20000", necesario: true,
+    requisito: { campo: "precio", operador: "maximo", valor: 20000, obligatorio: true, origen: "dicho" } },
+  { parametro: "moneda", estado: "a_confirmar", valor: "USD", origen: "inferido", probabilidad: 0.85, texto: "USD", necesario: true,
+    requisito: { campo: "moneda", operador: "igual", valor: "USD", obligatorio: true, origen: "inferido" } },
+  { parametro: "plazo", estado: "faltante", valor: null, origen: null, probabilidad: 0.7, texto: "", necesario: true, requisito: null },
+  { parametro: "mencion:marca:orion", estado: "a_confirmar", valor: "Orion", origen: "dicho", probabilidad: 0.7, texto: "marca Orion",
+    necesario: false, requisito: { campo: "marca", operador: "igual", valor: "Orion", obligatorio: false, origen: "dicho" } },
+];
+
+test("al pedir confirmar, la ficha se ve: parámetro, valor y si lo dijiste, lo dedujo o falta", () => {
+  const [l] = relato([evento("pedido_detectado", { compra_id: "cmp-pc", pregunta: "Armé la ficha de la compra. ¿La confirmás?",
+    turno: 1, confirmar: true, ficha_parcial: FICHA_PARCIAL })]);
+  assert.equal(l.texto, "Nuestro agente te pide confirmar: Armé la ficha de la compra. ¿La confirmás?");
+  assert.deepEqual(l.ficha.map((f) => [f.nombre, f.valor, f.marca, f.tono]), [
+    ["Producto", "notebooks", "lo dijiste", "ok"],
+    ["Cantidad", "20", "lo dijiste", "ok"],
+    ["Tope", "20000", "lo dijiste", "ok"],
+    ["Moneda", "USD", "lo deduje: confirmalo", "aviso"],
+    ["Plazo", "—", "falta", "crit"],
+    ["Marca", "Orion", "a confirmar", "aviso"],
+  ]);
+  assert.deepEqual(l.ficha.map((f) => f.preferido), [false, false, false, false, false, true]);
+  assert.match(l.nota, /Si no confirmás, queda autorizado solo lo que dijiste con claridad/);
+  // Fuera de la confirmación, la pregunta no lleva la ficha.
+  const [repregunta] = relato([evento("pedido_detectado", { compra_id: "cmp-pc", pregunta: "Me falta saber…", turno: 1,
+    confirmar: false, ficha_parcial: FICHA_PARCIAL })]);
+  assert.equal(repregunta.ficha, undefined);
+  // La pregunta de confirmar (con lo deducido, lo que falta y el aviso del
+  // catálogo) es larga: no se corta a la mitad.
+  const larga = `Armé la ficha de la compra. ¿La confirmás? ${"Esto lo deduje yo, revisalo. ".repeat(12)}Fin.`;
+  const [completa] = relato([evento("pedido_detectado", { compra_id: "cmp-pc", pregunta: larga, turno: 1, confirmar: true })]);
+  assert.ok(completa.texto.endsWith("Fin."), completa.texto);
+});
+
+test("filasFicha: el producto en palabras y nada que no sea de la plantilla", () => {
+  const fuera = { parametro: "categoria", estado: "resuelto", valor: "fuera_de_catalogo", origen: "dicho", texto: "x", necesario: true };
+  const dicha = { ...fuera, valor: "dicha" };
+  const otra = { ...fuera, valor: "gaming_chairs" };
+  assert.deepEqual(filasFicha([fuera, dicha, otra]).map((f) => f.valor),
+    ["fuera del catálogo público", "el que pediste", "gaming chairs"]);
+  assert.deepEqual(filasFicha(null), []);
+  assert.deepEqual(filasFicha([null, "x", { parametro: "cantidad" }]).map((f) => f.nombre), ["Cantidad"]);
 });
 
 test("la oportunidad y la decisión", () => {

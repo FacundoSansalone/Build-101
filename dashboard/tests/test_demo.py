@@ -121,12 +121,19 @@ class FakeProxy:
         self.compras = compras or []
         self.caido = caido
         self.posts: list[httpx.Request] = []
+        self.pedidos: list[httpx.Request] = []  # POST /guard/compras/pedido
+        self.orden: list[str] | None = None  # si se fija, el camino de cada pedido
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        if self.orden is not None:
+            self.orden.append(f"proxy {request.url.path}")
         if self.caido:
             raise httpx.ConnectError("proxy caído", request=request)
         if request.method == "GET" and request.url.path == "/guard/compras":
             return httpx.Response(200, json={"compras": self.compras})
+        if request.method == "POST" and request.url.path == "/guard/compras/pedido":
+            self.pedidos.append(request)
+            return httpx.Response(200, json={"vence": _iso(_ahora() + timedelta(minutes=3))})
         if request.method == "POST" and request.url.path in (
             "/guard/compras/contexto", "/guard/compras/decision"
         ):
@@ -810,3 +817,132 @@ def test_config_de_la_demo_desde_el_entorno(monkeypatch):
     assert cfg.adk_url == "http://127.0.0.1:8000" and cfg.demo_auto is True
     assert cfg.demo_pausa_auto_s == 0.0
     assert cfg.world_temp_dir.parts[-3:] == ("world", "ap2", ".temp-db")
+
+
+def test_el_relato_conoce_las_flexibilidades_fijas_del_intake():
+    """`lib/relato.js` dice "lo que entendió" con las flexibilidades del agente
+    de decisiones, que son texto fijo: si cambian acá, la línea las perdería."""
+    from intencion.agente_decisiones import FLEXIBILIDADES
+
+    relato = (Path(demo.__file__).parent / "static" / "lib" / "relato.js").read_text(encoding="utf-8")
+    for _, descripcion in FLEXIBILIDADES.values():
+        assert json.dumps(descripcion, ensure_ascii=False) in relato, descripcion
+
+
+# ---------------------------------------------------------------------------
+# El pedido con las palabras del usuario (proxy/pedido_usuario.py)
+# ---------------------------------------------------------------------------
+
+
+def test_el_primer_mensaje_de_la_compra_se_registra_en_el_proxy_antes_que_el_agente(tmp_path):
+    """El agente de compras le pasa al comercio una paráfrasis: el intake del
+    proxy lee además lo que escribió el usuario (una vez por compra)."""
+    _escribir_token(tmp_path)
+    adk, proxy = FakeADK(), FakeProxy()
+    orden: list[str] = []
+    proxy.orden = orden
+    adk_handler = adk.handler
+    adk.handler = lambda request: (orden.append(f"adk {request.url.path}"), adk_handler(request))[1]
+    with TestClient(_app(tmp_path, adk=adk, proxy=proxy), base_url=BASE) as c:
+        pedido = "Comprame 20 computadoras para el lunes, hasta 20000 USD."
+        assert _post(c, "/api/demo/mensaje", {"texto": f"  {pedido} "}).status_code == 202
+        _esperar(c)
+        _post(c, "/api/demo/mensaje", {"texto": "Sí, la primera."})  # sigue la misma compra
+        _esperar(c)
+        _post(c, "/api/demo/nueva", {})
+        _post(c, "/api/demo/mensaje", {"texto": "Ahora unos auriculares."})
+        _esperar(c)
+    assert [json.loads(r.content) for r in proxy.pedidos] == [{"texto": pedido}, {"texto": "Ahora unos auriculares."}]
+    for r in proxy.pedidos:  # con el token del proxy, como los otros POST de /guard/*
+        assert r.headers["x-guard-token"] == TOKEN and "origin" not in r.headers
+    assert orden.index("proxy /guard/compras/pedido") < orden.index("adk /run_sse")
+    assert adk.mensajes == [pedido, "Sí, la primera.", "Ahora unos auriculares."]
+
+
+def test_sin_proxy_o_sin_token_el_mensaje_va_igual_al_agente(tmp_path):
+    for proxy, token in ((FakeProxy(caido=True), True), (FakeProxy(), False)):
+        if token:
+            _escribir_token(tmp_path)
+        else:
+            (tmp_path / ".temp-db" / "guard_api_token").unlink(missing_ok=True)
+        adk = FakeADK()
+        with TestClient(_app(tmp_path, adk=adk, proxy=proxy), base_url=BASE) as c:
+            r = _post(c, "/api/demo/mensaje", {"texto": "una notebook"})
+            assert r.status_code == 202 and r.json() == {"destino": "agente"}
+            _esperar(c)
+        assert adk.mensajes == ["una notebook"]
+        assert proxy.pedidos == []
+
+
+def test_la_respuesta_a_nuestro_agente_no_se_registra_como_pedido(tmp_path):
+    _escribir_token(tmp_path)
+    proxy = FakeProxy([_compra("esperando_contexto")])
+    with TestClient(_app(tmp_path, proxy=proxy), base_url=BASE) as c:
+        assert _post(c, "/api/demo/mensaje", {"texto": "Entran 10 el lunes y 10 el jueves."}).status_code == 200
+    assert proxy.pedidos == [] and len(proxy.posts) == 1
+
+
+def test_la_ruta_y_el_tope_del_pedido_son_los_del_proxy():
+    from proxy.app import RUTAS_POST_CONTROL
+    from proxy.pedido_usuario import LARGO_MAXIMO
+
+    assert demo.RUTA_PEDIDO_USUARIO in RUTAS_POST_CONTROL  # con token, Host local y JSON
+    assert demo.MAX_TEXTO <= LARGO_MAXIMO  # todo lo que acepta el input entra
+
+
+# ---------------------------------------------------------------------------
+# Computadoras con proveedor malicioso (el escenario lo agrega world/)
+# ---------------------------------------------------------------------------
+
+
+def _opciones(c: TestClient) -> dict[str, list[tuple[str, str]]]:
+    datos = c.get("/api/demo/escenarios").json()
+    return {g["categoria"]: [(o["id"], o["etiqueta"]) for o in g["opciones"]] for g in datos["grupos"]}
+
+
+def test_computadoras_con_inyeccion_si_el_mundo_lo_conoce(tmp_path, monkeypatch):
+    conocidos = {e for _, opciones in demo.GRUPOS for e, _ in opciones}
+    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: conocidos)
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert _opciones(c)["Computadoras"] == [
+            ("computadoras", "entrega en dos partes"), ("computadoras_malicioso", "inyección"),
+        ]
+        r = _post(c, "/api/demo/escenario", {"escenario": "computadoras_malicioso"})
+        assert r.status_code == 200 and r.json()["activo"] == "computadoras_malicioso"
+
+
+def test_un_escenario_que_el_mundo_no_tiene_no_se_ofrece(tmp_path, monkeypatch):
+    """Mientras world/ no tenga `computadoras_malicioso`, el botón no aparece
+    (y elegirlo igual da 400, como hoy)."""
+    sin = {e for _, opciones in demo.GRUPOS for e, _ in opciones} - {"computadoras_malicioso"}
+    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: sin)
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert _opciones(c)["Computadoras"] == [("computadoras", "entrega en dos partes")]
+        assert len(_opciones(c)["Notebook"]) == 3  # el resto, igual
+        assert _post(c, "/api/demo/escenario", {"escenario": "computadoras_malicioso"}).status_code == 400
+    # Sin demo_world (no se puede saber), se ofrece la lista entera.
+    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: None)
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert ("computadoras_malicioso", "inyección") in _opciones(c)["Computadoras"]
+
+
+def test_mientras_se_registra_el_pedido_la_conversacion_queda_ocupada(tmp_path):
+    """Otro mensaje que llega en ese momento recibe 409: así el pedido que se
+    registró es el mismo que se le manda al agente."""
+    _escribir_token(tmp_path)
+    proxy = FakeProxy()
+    vistos: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/guard/compras/pedido":
+            vistos.append(app.state.demo.ocupado)  # la conversación, en ese momento
+        return proxy.handler(request)
+
+    app = create_app(Config(
+        repo_root=tmp_path, proxy_url=PROXY, adk_url=ADK, world_temp_dir=tmp_path / "world-temp",
+        proxy_transport=httpx.MockTransport(handler), adk_transport=httpx.MockTransport(FakeADK().handler),
+    ))
+    with TestClient(app, base_url=BASE) as c:
+        assert _post(c, "/api/demo/mensaje", {"texto": "una notebook"}).status_code == 202
+        _esperar(c)
+    assert vistos == [True]

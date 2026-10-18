@@ -401,6 +401,55 @@ def test_sse_se_reenvia_tal_cual(tmp_path):
     assert caido.status_code == 502
 
 
+def test_sse_cierra_el_del_proxy_si_el_navegador_corta(tmp_path):
+    """El navegador cierra la pestaña mientras el panel le escribe: el SSE del
+    proxy se cierra ahí mismo (no cuando el recolector de basura se acuerde),
+    así no se acumulan suscriptores en el proxy (tope de conexiones)."""
+    import asyncio
+
+    class SSEDelProxy(httpx.AsyncByteStream):
+        cerrado = False
+
+        async def __aiter__(self):
+            yield b"event: evento\ndata: {}\n\n"
+            await asyncio.Event().wait()  # como el del proxy: no termina solo
+
+        async def aclose(self) -> None:
+            self.cerrado = True
+
+    origen = SSEDelProxy()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=origen)
+
+    app = create_app(Config(repo_root=tmp_path, proxy_url=PROXY, proxy_transport=httpx.MockTransport(handler)))
+    ruta = "/api/proxy/guard/events"
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
+        "method": "GET", "scheme": "http", "path": ruta, "raw_path": ruta.encode(), "query_string": b"",
+        "root_path": "", "headers": [(b"host", b"localhost:8020")],
+        "client": ("127.0.0.1", 50000), "server": ("localhost", 8020),
+    }
+
+    async def correr() -> bool:
+        escrito, nunca = asyncio.Event(), asyncio.Event()
+
+        async def receive():
+            await escrito.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(mensaje):
+            if mensaje["type"] == "http.response.body" and mensaje.get("body"):
+                escrito.set()
+                await nunca.wait()  # el navegador ya no lee: corta mientras se le escribe
+
+        async with asyncio.timeout(5):
+            await app(scope, receive, send)
+        return origen.cerrado  # antes de devolverle el control al loop
+
+    assert asyncio.run(correr()) is True
+
+
 # ---------------------------------------------------------------------------
 # Test cruzado: recibo firmado en Python, verificado con el JS del navegador
 # ---------------------------------------------------------------------------

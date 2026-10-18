@@ -58,6 +58,23 @@ queda como "Detalle técnico" (`/`).
   Si no, va al agente de compras por la API de `adk web` (`ADK_URL`): una
   sesión por compra (`POST /apps/shopping_agent/users/demo/sessions`) y
   `POST /run_sse`, en segundo plano (202). Con el agente trabajando, 409.
+- **El pedido con tus palabras.** El primer mensaje de cada compra que va al
+  agente se registra antes en el proxy (`POST /guard/compras/pedido
+  {"texto"}`, con el token): el intake de la próxima compra lee lo que
+  escribiste además de la paráfrasis que el agente le pasa al comercio, y no
+  repregunta lo que ya dijiste ("para el lunes", "hasta 20000"). Vence a los
+  180 s y se usa una vez; si el proxy no está o no lo acepta, el mensaje va
+  igual al agente. Detalle y garantías en
+  [proxy/README.md](../proxy/README.md#etapa-2-contexto-filtro-y-oportunidad).
+- **Lo que pregunta y entiende nuestro agente.** Las preguntas del intake se
+  ven enteras. Al pedir confirmar la ficha, la línea trae **la ficha**
+  (`ficha_parcial` del `pedido_detectado`): parámetro, valor y si lo dijiste,
+  lo dedujo (confirmalo), está a confirmar o falta, y qué pasa si no
+  confirmás. "Nuestro agente entendió" sale del contexto estructurado (el
+  cronograma y lo que dijiste flexible: "necesitás 10 el lun 19/10 y 10 el
+  jue 22/10; aceptás recibir en partes"), una vez por compra; sin eso, tu
+  respuesta de ese turno. Nunca `contexto.necesidad` (texto de un modelo o
+  el eco de la primera respuesta).
 - **Modo demo** (`DEMO_AUTO=1` por defecto; botón "Respuestas automáticas"):
   contesta solos billetera y permiso (Google Wallet, "sí"), la tarjeta
   terminada en 4444 (de la lista que devolvió `get_payment_methods`), la
@@ -70,10 +87,13 @@ queda como "Detalle técnico" (`/`).
   de la billetera ✓"). `DEMO_PAUSA_AUTO_S` espacia las respuestas (con el
   plan gratuito de Gemini, 15 pedidos/min, usar 6–8).
 - **Selector de comercio** visible, por categoría (zapatillas, notebook,
-  auriculares, computadoras): `POST /api/demo/escenario {"escenario"}` escribe
+  auriculares, computadoras: "entrega en dos partes" e "inyección", la de
+  las cuatro corridas de FLUJO.md): `POST /api/demo/escenario {"escenario"}` escribe
   `demo_scenario` donde lo lee el comercio (`WORLD_TEMP_DB_DIR`, por defecto
   `world/ap2/.temp-db`, el `TEMP_DB_DIR` de `run_world.sh`), valida contra
   `demo_world.scenario` (solo lectura) y empieza una compra nueva.
+  `GET /api/demo/escenarios` solo ofrece los que `demo_world` conoce (sin
+  `demo_world`, todos): un escenario que world/ todavía no tiene no aparece.
 - **Interruptor "Intermediario: activado/desactivado"**: `POST
   /api/proxy/guard/state` (el reenvío con token de siempre) después de una
   compra nueva. Apagado, el proxy deja fuera filtro, intake, oportunidades y
@@ -85,8 +105,9 @@ queda como "Detalle técnico" (`/`).
   en `localStorage` (`psg.demo.comparacion`) y se muestra lado a lado para el
   comercio elegido ("Se compró Zento Slim 14, con 8 GB de memoria RAM
   (pediste 16 GB)" / "Frenada antes de la firma: no se pagó nada").
-- **Replay (plan B)**: el selector "Grabación…" reproduce un `.jsonl` de
-  `dashboard/demo/` o `.logs/` con el mismo diagrama y relato.
+- **Replay (plan B)**: en `/demo/clasico`, el selector "Grabación…"
+  reproduce un `.jsonl` de `dashboard/demo/` o `.logs/` con el mismo
+  diagrama y relato. `/demo` no lo usa.
 
 | Variable | Default | Para qué |
 |---|---|---|
@@ -119,8 +140,10 @@ Lógica sin DOM (la vista solo la pinta; testeada con `node --test`):
   `resultadoCorrida(items, {escenario, guardActivo})`,
   `resumenComparacion(sin, con)`, `guardarResultado(mapa, resultado)`.
 - `lib/relato.js`: `armarRelato(items, {filtro})` → `[{id, ts, hora, texto,
-  tono, actor}]` (tono: `neutro|tenue|ok|aviso|crit|usuario|agente`; actor:
-  `usuario|agente|guard|comercio|sistema|ap2`), `resumirAgente`,
+  tono, actor, ficha?, nota?}]` (tono: `neutro|tenue|ok|aviso|crit|usuario|agente`; actor:
+  `usuario|agente|guard|comercio|sistema|ap2`; `ficha` solo al pedir
+  confirmarla), `filasFicha(ficha_parcial)` → `[{nombre, valor, marca, tono,
+  preferido}]`, `textoEntendido(contexto)`, `resumirAgente`,
   `limpiarTexto`, `humanizarAtributo`, `formatearMedida`.
 - `lib/diagrama.js`: `geometria("horizontal"|"vertical")` (nodos, paths de
   las aristas, cuánto se corre el Guard apagado), `estadoInicial`,
@@ -143,7 +166,9 @@ Arriba a la derecha se elige la fuente de eventos:
   que el proxy no necesita CORS. Al conectar (y al reconectar) la página pide
   además `GET /api/proxy/guard/events/history`: aunque el SSE tarde o se corte,
   las compras se arman igual (los eventos no se duplican). El SSE se cierra al
-  recargar o salir de la página. El estado del proxy se consulta cada 4 s, con
+  recargar o salir de la página, y el servidor cierra en ese momento el que
+  abrió con el proxy (`background` de la respuesta: no espera al recolector,
+  así no se acumulan suscriptores en el proxy). El estado del proxy se consulta cada 4 s, con
   un solo pedido en vuelo, y el panel dice **"proxy desconectado"** recién
   después de 3 sondeos fallidos seguidos (uno suelto no cambia nada); reintenta
   solo. Con el evaluador `stub`, cada evento `veredicto` trae `evaluador: "stub"`.
@@ -323,7 +348,7 @@ avisa que esa capa está apagada.
 | `GET /api/results/{results\|world}/{nombre}` | Un archivo puntual |
 | `GET /api/fixtures` · `/api/fixtures/{escenario}` · `/api/fixtures/{escenario}/ficha` | Fixtures y la ficha armada con el contrato |
 | `GET /api/catalog` | `fixtures/public_catalog.json` |
-| `GET /api/replay` · `/api/replay/{nombre}` | Archivos `.jsonl` y sus `Evento` validados (las líneas inválidas se cuentan en `X-Lineas-Invalidas`) |
+| `GET /api/replay` · `/api/replay/{nombre}` | Archivos `.jsonl` y sus `Evento` validados (las líneas inválidas se cuentan en `X-Lineas-Invalidas`). Con `DASHBOARD_PUBLIC_ORIGINS` (panel publicado), solo los de `dashboard/demo/`: `.logs/guard_events.jsonl` es el registro entero del proxy y no se sirve |
 | `GET /api/public-key` | Clave pública del Guard (proxy o local) |
 | `GET/POST /api/proxy/guard/state`, `GET /api/proxy/guard/events` (SSE), `GET /api/proxy/guard/events/history` | Reenvío al proxy (el POST, con el token) |
 | `GET /api/proxy/guard/aprobaciones` | Reenvío de `GET :8010/guard/aprobaciones` (`{"pendientes", "usadas"}`) |

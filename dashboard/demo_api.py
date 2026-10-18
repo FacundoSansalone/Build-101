@@ -74,7 +74,9 @@ GRUPOS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("notebook_dato_falso", "miente un dato"),
     )),
     ("Auriculares", (("auriculares_honesto", "honesto"), ("auriculares_malicioso", "inyección"))),
-    ("Computadoras", (("computadoras", "entrega en dos partes"),)),
+    ("Computadoras", (
+        ("computadoras", "entrega en dos partes"), ("computadoras_malicioso", "inyección"),
+    )),
 )
 ESCENARIOS = frozenset(e for _, opciones in GRUPOS for e, _ in opciones)
 ARCHIVO_ESCENARIO = "demo_scenario"  # demo_world.scenario.SCENARIO_FILE_NAME
@@ -432,6 +434,9 @@ class Conversacion:
         self.ocupado = False
         self.fin: str | None = None
         self.enviados: Counter = Counter()
+        # Si el usuario ya le escribió al agente en esta compra: solo el
+        # primer mensaje se registra en el proxy como su pedido.
+        self.pedido_enviado = False
 
     def nueva(self) -> None:
         self._generacion += 1
@@ -459,6 +464,7 @@ class Conversacion:
     def iniciar(self, texto: str) -> None:
         """Le manda el texto al agente en segundo plano (puede tardar minutos)."""
         self.ocupado = True
+        self.pedido_enviado = True
         self.registrar("usuario", texto=texto, destino="agente")
         self._tarea = asyncio.create_task(self._correr(texto, self._generacion))
 
@@ -675,12 +681,16 @@ async def api_demo_estado(request: Request) -> Response:
 
 async def api_demo_escenarios(request: Request) -> Response:
     cfg: Config = request.app.state.cfg
+    # Solo lo que el comercio conoce (como `fijar_escenario`): un escenario
+    # que world/ todavía no tiene no aparece. Sin demo_world, la lista entera.
+    del_mundo = _escenarios_del_mundo()
     grupos = [
         {
             "categoria": categoria,
             "opciones": [
                 {"id": e, "etiqueta": etiqueta, "pedido": _pedido_de_ejemplo(cfg, e)}
                 for e, etiqueta in opciones
+                if del_mundo is None or e in del_mundo
             ],
         }
         for categoria, opciones in GRUPOS
@@ -741,6 +751,7 @@ RUTAS_PROXY = {
     "omitir": "/guard/compras/contexto",
     "decision": "/guard/compras/decision",
 }
+RUTA_PEDIDO_USUARIO = "/guard/compras/pedido"
 
 
 async def api_demo_mensaje(request: Request) -> Response:
@@ -772,5 +783,17 @@ async def api_demo_mensaje(request: Request) -> Response:
 
     if conversacion.ocupado:
         return _error(409, "agente_ocupado", destino="agente")
+    if not conversacion.pedido_enviado:
+        # El primer mensaje de la compra: el proxy lo guarda para el intake,
+        # que así lee las palabras del usuario y no solo la paráfrasis del
+        # agente (proxy/pedido_usuario.py). Antes que el agente, que busca
+        # enseguida. Si el proxy no está o no lo acepta, todo sigue igual.
+        # Mientras tanto la conversación queda ocupada: otro mensaje da 409 y
+        # el pedido registrado es el mismo que va al agente.
+        conversacion.ocupado = True
+        try:
+            await _reenviar_json(cfg, "POST", RUTA_PEDIDO_USUARIO, cuerpo={"texto": texto})
+        finally:
+            conversacion.ocupado = False
     conversacion.iniciar(texto)
     return JSONResponse({"destino": "agente"}, status_code=202)
