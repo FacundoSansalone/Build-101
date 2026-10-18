@@ -242,6 +242,24 @@ def test_get_reenviado_no_manda_el_token(tmp_path, ruta):
     assert all("x-guard-token" not in p.headers for p in recibidos)
 
 
+@pytest.mark.parametrize(
+    "ruta, cuerpo",
+    [("/api/proxy/guard/state", {"guard_activo": False}),
+     ("/api/proxy/guard/aprobaciones", {"contexto_id": "c", "cart_id": "x"})],
+)
+def test_post_sin_origin_no_se_reenvia_con_el_token(tmp_path, ruta, cuerpo):
+    """Un proceso local (o el agente con una herramienta HTTP) no puede usar
+    el panel para saltear el token: el reenvío con token es solo same-origin
+    (el navegador siempre manda Origin en un POST)."""
+    _escribir_token(tmp_path)
+    c = _cliente(tmp_path, _no_llamar)
+    r = c.post(ruta, json=cuerpo)
+    assert r.status_code == 403
+    assert r.json()["error"] == "origen_requerido"
+    r = c.post(ruta, json=cuerpo, headers={"Origin": BASE, "Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+
+
 def test_sin_token_del_proxy_el_post_da_503_sin_llamar(tmp_path):
     c = _cliente(tmp_path, _no_llamar)
     r = c.post("/api/proxy/guard/state", json={"guard_activo": False}, headers={"Origin": BASE})
