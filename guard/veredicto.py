@@ -42,8 +42,9 @@ from guard.chequeos import (
 from guard.extractor import extraer
 from guard.ranking import chequeo_integridad, rankear
 from guard.recibo import armar_recibo
+from guard.fuentes import NOMBRE_FUENTE, ORDEN_FUENTES
 from guard.textos import acotar, sin_control
-from guard.verificador import verificar_todas
+from guard.verificador import verificar_con_rotulos
 
 _STATUS_POR_RESULTADO: dict[str, Status] = {
     "bloquea": "bloqueado",
@@ -95,8 +96,12 @@ def _motivo_aprobado(chequeos: list[Chequeo]) -> str:
     if cumplidos:
         plural = "s" if cumplidos != 1 else ""
         partes.append(f"{cumplidos} requisito{plural} del pedido cumplido{plural}")
-    if any(c.tipo == "evidencia" for c in ok):
-        partes.append("los datos coinciden con el catálogo público")
+    origenes = {c.origen for c in ok if c.tipo == "evidencia"}
+    if origenes:
+        fuentes = [NOMBRE_FUENTE[o] for o in ORDEN_FUENTES if o in origenes]
+        if len(fuentes) > 1:
+            fuentes = [", ".join(fuentes[:-1]) + " y " + fuentes[-1]]
+        partes.append(f"los datos coinciden con {fuentes[0] if fuentes else 'el catálogo público'}")
     if any(c.tipo == "politica" and c.origen != "checkout_firmado" for c in ok):
         partes.append("la política de compras se cumple")
     if any(c.tipo == "integridad" and c.origen is None for c in ok):
@@ -129,7 +134,10 @@ def evaluar(
         politica = Politica()
     comercio_id = ofertas_vistas.comercio_id
     extraccion = extraer(ofertas_vistas)
-    ofertas = verificar_todas(extraccion.ofertas, catalogo)
+    nombres = [r.atributo for r in ficha.requisitos if r.campo == "atributo" and r.atributo]
+    verificadas = [verificar_con_rotulos(o, catalogo, nombres) for o in extraccion.ofertas]
+    ofertas = [oferta for oferta, _ in verificadas]
+    fixtures = {oferta.cart_id: rotulos for oferta, rotulos in verificadas}
     puntajes = rankear(ficha, ofertas, comercio_id)
     ranking = [p.cart_id for p in puntajes]
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
@@ -151,7 +159,7 @@ def evaluar(
         puntaje_elegido = next(p for p in puntajes if p.cart_id == cart_id_elegido)
         chequeos += [
             *requisitos_por_oferta[elegida.cart_id],
-            *chequeos_evidencia(elegida),
+            *chequeos_evidencia(elegida, fixtures[elegida.cart_id]),
             chequeo_integridad(puntajes, puntaje_elegido, elegida.moneda),
             *chequeos_politica(politica, elegida, comercio_id),
         ]

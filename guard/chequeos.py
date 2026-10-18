@@ -31,18 +31,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Politica, Requisito
+from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Politica, Requisito, ValorAtributo
+from guard.atributos import clave_atributo, comparar, formatear_atributo, mostrable_declarado
+from guard.fuentes import ORIGENES_INDEPENDIENTES, nombre_fuente
 from guard.normalizar import (
     EPSILON_MONTO,
     contiene,
     contiene_todos,
     cubre_entregas,
     entregas_validas,
+    gtin_valido,
     iguales,
     monto_valido,
     numero,
 )
 from guard.textos import ELEMENTOS_MAXIMOS, LARGO_MAXIMO, acotar, moneda_legible, sin_control
+from guard.verificador import PREFIJO_ATRIBUTO, acotar_atributo, clave_evidencia_atributo
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
 ATRIBUTO_POR_CAMPO: dict[str, str] = {
@@ -78,11 +82,29 @@ _NOMBRES = {
     "sku": "SKU",
     "cantidad": "Cantidad",
     "entregas": "Entregas",
+    "gtin": "GTIN",
+    "categoria_taxonomia": "Categoría (taxonomía de Google)",
 }
 
 
 def nombre_campo(campo: str) -> str:
+    """Nombre para un `detalle`. Un atributo se nombra como en la ficha (ya
+    canonicalizado: solo minúsculas, dígitos y `_`), nunca como lo escribe el
+    comercio."""
+    if campo.startswith(PREFIJO_ATRIBUTO):
+        return campo.removeprefix(PREFIJO_ATRIBUTO)
     return _NOMBRES.get(campo, campo)
+
+
+def clave_evidencia(requisito: Requisito) -> str:
+    """Qué evidencia de la oferta respalda este requisito."""
+    if requisito.campo == "atributo":
+        return clave_evidencia_atributo(requisito.atributo or "")
+    return ATRIBUTO_POR_CAMPO.get(requisito.campo, requisito.campo)
+
+
+def _es_gtin(requisito: Requisito) -> bool:
+    return requisito.campo == "atributo" and clave_atributo(requisito.atributo or "") == "gtin"
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +116,8 @@ def valor_observado(campo: str, oferta: Oferta, comercio_id: str | None = None) 
     """Valor de la oferta para un campo de la ficha. None = sin dato."""
     if campo == "comercio":
         return comercio_id or None
+    if campo not in ATRIBUTO_POR_CAMPO:
+        return None  # "atributo" necesita el nombre: usar observado_de(requisito, ...)
     valor = getattr(oferta, ATRIBUTO_POR_CAMPO[campo])
     if valor in ("", None) or valor == []:
         return None
@@ -102,13 +126,46 @@ def valor_observado(campo: str, oferta: Oferta, comercio_id: str | None = None) 
     return valor
 
 
+def observado_de(
+    requisito: Requisito, oferta: Oferta, comercio_id: str | None = None
+) -> Any:
+    """Valor de la oferta para un requisito (un `ValorAtributo` si es un
+    atributo; el GTIN como texto). None = sin dato."""
+    if requisito.campo != "atributo":
+        return valor_observado(requisito.campo, oferta, comercio_id)
+    if _es_gtin(requisito):
+        return oferta.gtin
+    return oferta.atributos.get(clave_atributo(requisito.atributo or ""))
+
+
+def _cumple_gtin(requisito: Requisito, gtin: str) -> bool | None:
+    pedidos = requisito.valor if isinstance(requisito.valor, (list, tuple)) else [requisito.valor]
+    normalizados = [gtin_valido(p) for p in pedidos]
+    if not normalizados or any(n is None for n in normalizados):
+        return None  # un GTIN pedido inválido no se puede comparar
+    if requisito.operador == "incluye" or (requisito.operador == "igual" and len(normalizados) > 1):
+        return gtin in normalizados
+    if requisito.operador == "igual":
+        return gtin == normalizados[0]
+    return None
+
+
 def cumple(
     requisito: Requisito, oferta: Oferta, comercio_id: str | None = None
 ) -> bool | None:
     """True/False si se puede decidir; None si falta el dato para comparar."""
-    observado = valor_observado(requisito.campo, oferta, comercio_id)
+    observado = observado_de(requisito, oferta, comercio_id)
     if observado is None:
         return None
+    if requisito.campo == "atributo":
+        if _es_gtin(requisito):
+            return _cumple_gtin(requisito, observado)
+        return comparar(observado, requisito.operador, requisito.valor, requisito.unidad)
+    if requisito.operador == "minimo":
+        valor, minimo = numero(observado), numero(requisito.valor)
+        if valor is None or minimo is None:
+            return None
+        return valor >= minimo - EPSILON_MONTO
     if requisito.operador == "maximo":
         valor, tope = numero(observado), monto_valido(requisito.valor)
         if valor is None or tope is None:  # monto o tope inválido: no se puede comparar
@@ -219,7 +276,7 @@ def respaldado(requisito: Requisito, oferta: Oferta) -> bool:
         or requisito.campo == "comercio"
     ):
         return True
-    evidencia = oferta.evidencia.get(ATRIBUTO_POR_CAMPO[requisito.campo])
+    evidencia = oferta.evidencia.get(clave_evidencia(requisito))
     return evidencia is not None and evidencia.estado != "solo_declarado"
 
 
@@ -243,51 +300,67 @@ def _chequeo_requisito(
         resultado = "escalar" if requisito.obligatorio else "aviso"
     else:
         resultado = "bloquea" if requisito.obligatorio else "aviso"
-    observado = valor_observado(requisito.campo, oferta, comercio_id)
-    if sin_respaldo:
+    observado = observado_de(requisito, oferta, comercio_id)
+    clave = clave_evidencia(requisito)
+    if sin_respaldo and requisito.campo == "atributo":
+        detalle = (
+            f"{nombre_campo(clave)}: solo lo declara el comercio (no hay una fuente "
+            "independiente: fabricante, página pública ni catálogo) y es obligatorio "
+            f"({_pedido(requisito)})."
+        )
+    elif sin_respaldo:
         detalle = (
             f"{nombre_campo(requisito.campo)}: solo lo declara el comercio (no hay "
             f"dato del catálogo público) y es obligatorio ({formatear(requisito.valor)})."
         )
     else:
         detalle = _detalle_requisito(
-            requisito, oferta, _mostrable(requisito.campo, oferta, observado),
+            requisito, oferta, _mostrable(requisito, oferta, observado),
             resultado_cumple, tipo,
         )
+    es_atributo = requisito.campo == "atributo" and not _es_gtin(requisito)
     return Chequeo(
         tipo=tipo,
         resultado=resultado,
         detalle=detalle,
-        campo=requisito.campo,
+        campo=clave if requisito.campo == "atributo" else requisito.campo,
         esperado=requisito.valor,
-        observado=acotar(observado),
-        origen=origen_del_campo(requisito.campo, oferta),
+        observado=acotar_atributo(observado) if es_atributo else acotar(observado),
+        origen=origen_del_campo(clave if requisito.campo == "atributo" else requisito.campo, oferta),
     )
 
 
-def _mostrable(campo: str, oferta: Oferta, observado: Any) -> Any:
+def _mostrable(requisito: Requisito, oferta: Oferta, observado: Any) -> Any:
     """El valor observado solo si se puede escribir en un `detalle`; si no, None.
 
-    Se puede: el dato del catálogo público, el comercio (lo da quien llama),
-    los talles (enteros), los montos y una moneda ISO. Lo que declara el
-    comercio (texto) va solo en `observado`, acotado.
+    Se puede: el dato de una fuente independiente (catálogo público, página
+    pública, fabricante, comprador), el comercio (lo da quien llama), los
+    talles (enteros), los montos, una moneda ISO, un GTIN validado y, de un
+    atributo declarado, un booleano o un número con una unidad conocida. Lo
+    que declara el comercio como texto va solo en `observado`, acotado.
     """
+    campo = requisito.campo
     if observado is None:
         return None
     if campo in ("comercio", "precio", "talle", *CAMPOS_COMPROMISO):
         return observado  # enteros y fechas ya validados por el extractor
     if campo == "moneda":
         return moneda_legible(observado) or None
-    return observado if origen_del_campo(campo, oferta) == "catalogo_publico" else None
+    if _es_gtin(requisito):
+        return observado  # 14 dígitos con verificador válido
+    independiente = origen_del_campo(clave_evidencia(requisito), oferta) in ORIGENES_INDEPENDIENTES
+    if campo == "atributo":
+        return observado if independiente or mostrable_declarado(observado) else None
+    return observado if independiente else None
 
 
 def origen_del_campo(campo: str, oferta: Oferta) -> Origen | None:
-    """Qué fuente usó el chequeo para este campo."""
+    """Qué fuente usó el chequeo para este campo (o clave de evidencia)."""
     if campo in ("precio", "moneda"):
         return "cart_ap2"
     if campo == "comercio":
         return None
-    evidencia = oferta.evidencia.get(ATRIBUTO_POR_CAMPO[campo])
+    evidencia = oferta.evidencia.get(ATRIBUTO_POR_CAMPO.get(campo, campo))
     return evidencia.origen_usado if evidencia else "declarado"
 
 
@@ -296,8 +369,12 @@ def origen_del_campo(campo: str, oferta: Oferta) -> Origen | None:
 # ---------------------------------------------------------------------------
 
 
-def chequeos_evidencia(oferta: Oferta) -> list[Chequeo]:
-    """Un chequeo por campo verificable de la oferta (ya verificada)."""
+def chequeos_evidencia(oferta: Oferta, fixtures: frozenset[str] = frozenset()) -> list[Chequeo]:
+    """Un chequeo por campo verificable de la oferta (ya verificada).
+
+    `fixtures`: claves de evidencia cuyo dato salió de una fuente rotulada
+    como fixture (datos de prueba); el `detalle` lo dice.
+    """
     chequeos = []
     for evidencia in oferta.evidencia.values():
         if evidencia.estado == "no_verificable":
@@ -311,7 +388,9 @@ def chequeos_evidencia(oferta: Oferta) -> list[Chequeo]:
             Chequeo(
                 tipo="evidencia",
                 resultado=resultado,
-                detalle=_detalle_evidencia(evidencia, oferta.moneda),
+                detalle=_detalle_evidencia(
+                    evidencia, oferta.moneda, fixture=evidencia.campo in fixtures
+                ),
                 campo=evidencia.campo,
                 esperado=evidencia.publico,
                 observado=evidencia.declarado,
@@ -321,8 +400,8 @@ def chequeos_evidencia(oferta: Oferta) -> list[Chequeo]:
     return chequeos
 
 
-def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
-    """Sin lo que declara el comercio: solo el nombre, el dato público y montos."""
+def _detalle_evidencia(evidencia: Evidencia, moneda: str, fixture: bool = False) -> str:
+    """Sin lo que declara el comercio: solo el nombre, el dato de la fuente y montos."""
     nombre = nombre_campo(evidencia.campo)
     if evidencia.campo == "precio":
         cobrado = monto(evidencia.declarado, moneda)
@@ -333,12 +412,13 @@ def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
             return f"Precio {cobrado}: no está en el catálogo público para compararlo."
         return f"Precio {cobrado} coincide con el catálogo público."
 
-    publico = formatear(evidencia.publico)
+    if evidencia.campo.startswith(PREFIJO_ATRIBUTO):
+        publico = formatear_atributo(evidencia.publico)
+    else:
+        publico = formatear(evidencia.publico)
+    fuente = nombre_fuente(evidencia.origen_usado, fixture)
     if evidencia.estado == "contradicho":
-        return (
-            f"{nombre}: lo que declara el comercio no coincide con el catálogo "
-            f"público ({publico})."
-        )
+        return f"{nombre}: lo que declara el comercio no coincide con {fuente} ({publico})."
     if evidencia.estado == "solo_declarado":
         if evidencia.declarado is None:
             return (
@@ -349,7 +429,7 @@ def _detalle_evidencia(evidencia: Evidencia, moneda: str) -> str:
             f"{nombre}: solo lo declara el comercio, no hay fuente independiente "
             "para verificarlo."
         )
-    return f"{nombre} {publico}: coincide con el catálogo público."
+    return f"{nombre} {publico}: coincide con {fuente}."
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +565,9 @@ def _detalle_requisito(
         return f"Precio {cobrado} supera el tope {tope}."
 
     # `observado` llega ya filtrado por `_mostrable`: None si es texto del comercio.
-    pedido = formatear(requisito.valor)
+    pedido = _pedido(requisito)
+    if requisito.campo == "atributo":
+        return _detalle_atributo(requisito, observado, resultado_cumple, referencia, pedido)
     if resultado_cumple is None:
         return f"{nombre}: sin dato para comparar con {referencia} ({pedido})."
 
@@ -508,3 +590,38 @@ def _detalle_requisito(
     if resultado_cumple:
         return f"{nombre} {formatear(observado)} cumple {referencia} ({pedido})."
     return f"{nombre} {formatear(observado)} no cumple {referencia} ({pedido})."
+
+
+_OPERADOR_LEGIBLE = {"minimo": "mínimo", "maximo": "máximo", "incluye": "que incluya"}
+
+
+def _pedido(requisito: Requisito) -> str:
+    """Lo pedido, legible: "mínimo 16 GB", "que incluya bluetooth", "sí"."""
+    if requisito.campo != "atributo":
+        return formatear(requisito.valor)
+    if _es_gtin(requisito) or isinstance(requisito.valor, dict):
+        valor = formatear(requisito.valor)
+    else:
+        valor = formatear_atributo(ValorAtributo(valor=requisito.valor, unidad=requisito.unidad))
+    operador = _OPERADOR_LEGIBLE.get(requisito.operador)
+    return f"{operador} {valor}" if operador else valor
+
+
+def _detalle_atributo(
+    requisito: Requisito,
+    observado: Any,
+    resultado_cumple: bool | None,
+    referencia: str,
+    pedido: str,
+) -> str:
+    """Ej.: "memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)"."""
+    nombre = nombre_campo(clave_evidencia(requisito))
+    if resultado_cumple is None:
+        return f"{nombre}: sin dato para comparar con {referencia} ({pedido})."
+    if observado is None:
+        if resultado_cumple:
+            return f"{nombre}: lo que indica el comercio cumple {referencia} ({pedido})."
+        return f"{nombre}: lo que indica el comercio no cumple {referencia} ({pedido})."
+    valor = observado if isinstance(observado, str) else formatear_atributo(observado)
+    verbo = "cumple" if resultado_cumple else "no cumple"
+    return f"{nombre} {valor} {verbo} {referencia} ({pedido})."

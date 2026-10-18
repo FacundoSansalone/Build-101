@@ -139,7 +139,9 @@ def test_unidades_distintas_en_el_pedido_y_la_oferta(ahora):
     cumplimiento = _por_campo(veredicto, "cumplimiento")
     assert cumplimiento["atributo:almacenamiento"].resultado == "ok"
     assert cumplimiento["atributo:weight"].resultado == "aviso"  # 1,8 kg > 1,5 kg
-    assert veredicto.status == "con_avisos"
+    # La Lumen cumple lo mismo, también el preferido, y es más barata: la domina.
+    assert veredicto.status == "escalar"
+    assert _por_campo(veredicto, "integridad")["cart_id"].resultado == "escalar"
 
 
 def test_malicioso_dentro_del_tope_se_bloquea_por_el_atributo(ahora):
