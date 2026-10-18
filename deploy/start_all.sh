@@ -53,10 +53,21 @@ export FILTRO_SOLO_HEURISTICAS="${FILTRO_SOLO_HEURISTICAS:-1}"
 export DEMO_PAUSA_AUTO_S="${DEMO_PAUSA_AUTO_S:-8}"
 
 PY="world/ap2/.venv/bin/python"
+# Windows (Git Bash): el venv tiene Scripts/python.exe, y Python espera
+# PYTHONPATH con ";" y rutas de Windows (no entiende /c/... ni el ":").
+WINDOWS=""
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) WINDOWS=1 ;; esac
+SEP=":"
+RAIZ_PY="$ROOT"
+if [ -n "$WINDOWS" ]; then
+  PY="world/ap2/.venv/Scripts/python.exe"
+  SEP=";"
+  RAIZ_PY="$(cygpath -m "$ROOT")"
+fi
 # Los paquetes editables (ap2, demo_world) también por PYTHONPATH: en macOS,
 # con el repo en una carpeta sincronizada, los .pth del venv quedan ocultos y
 # Python 3.13 los ignora.
-export PYTHONPATH="$ROOT/world/ap2/code/sdk/python:$ROOT/world/ap2/code/samples/python/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$RAIZ_PY/world/ap2/code/sdk/python$SEP$RAIZ_PY/world/ap2/code/samples/python/src${PYTHONPATH:+$SEP$PYTHONPATH}"
 LOG_DIR="$ROOT/.logs"
 mkdir -p "$LOG_DIR"
 
@@ -103,12 +114,21 @@ done
 set -m
 pids=()
 nombres=()
+matar() {  # matar <pid>: el proceso y sus hijos
+  # En Windows los hijos son procesos nativos (python.exe) que el kill de Git
+  # Bash no alcanza por grupo: taskkill /T baja el árbol entero.
+  if [ -n "$WINDOWS" ] && [ -r "/proc/$1/winpid" ]; then
+    taskkill //F //T //PID "$(cat "/proc/$1/winpid")" >/dev/null 2>&1 || true
+  else
+    kill -TERM -- "-$1" 2>/dev/null || true
+  fi
+}
 apagar() {
   trap - EXIT INT TERM
   echo ""
   echo "Apagando..."
   # ${pids[@]+...}: bash 3.2 (macOS) trata un array vacío como no definido.
-  for pid in ${pids[@]+"${pids[@]}"}; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+  for pid in ${pids[@]+"${pids[@]}"}; do matar "$pid"; done
   wait 2>/dev/null || true
 }
 trap apagar EXIT INT TERM
@@ -150,7 +170,7 @@ esperar "Merchant :8001" "http://127.0.0.1:8001/" 120
 
 echo "-> proxy del Guard :8010"
 lanzar "proxy" "$LOG_DIR/proxy.log" \
-  env PYTHONUTF8=1 PYTHONPATH=".:$PYTHONPATH" "$PY" -m proxy
+  env PYTHONUTF8=1 PYTHONPATH=".$SEP$PYTHONPATH" "$PY" -m proxy
 esperar "proxy :8010" "http://127.0.0.1:8010/guard/state" 120
 if [ "$GATEWAY" = 1 ]; then
   # El proxy abre el oyente público solo con al menos una clave activa: un
@@ -169,7 +189,7 @@ if [ -n "${DASHBOARD_PUBLIC_ORIGINS:-}" ]; then
   export DASHBOARD_HOST=0.0.0.0 DASHBOARD_ALLOW_REMOTE=1
 fi
 lanzar "dashboard" "$LOG_DIR/dashboard.log" \
-  env PYTHONUTF8=1 PYTHONPATH=".:$PYTHONPATH" "$PY" -m dashboard
+  env PYTHONUTF8=1 PYTHONPATH=".$SEP$PYTHONPATH" "$PY" -m dashboard
 esperar "dashboard :8020" "http://127.0.0.1:8020/" 60
 
 esperar "Shopping Agent :8000" "http://127.0.0.1:8000/list-apps" 180
