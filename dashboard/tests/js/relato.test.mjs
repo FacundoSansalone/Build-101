@@ -120,12 +120,62 @@ test("las preguntas de nuestro agente y lo que entendió", () => {
     ["Nuestro agente pregunta: ¿Para cuándo lo necesitás?"]);
   assert.deepEqual(textos(relato([evento("pedido_detectado", { compra_id: "c", pregunta: "¿Te sirve esta ficha?", turno: 2, confirmar: true })])),
     ["Nuestro agente te pide confirmar: ¿Te sirve esta ficha?"]);
-  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 0, contexto: { necesidad: "programar todo el día" } })])),
-    ["Nuestro agente entendió: programar todo el día"]);
+  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 0, respuesta: "Para programar todo el día.",
+    contexto: { necesidad: "texto libre de un modelo", necesidad_entregas: [], flexibilidades: [] } })])),
+    ["Nuestro agente entendió: «Para programar todo el día.»"]);
   assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 0, omitido: true, contexto: null })])),
     ["Sin el porqué: tu agente sigue con el pedido literal"]);
   assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 2, final: true, confirmada: true })])),
     ["Confirmaste la ficha: con eso negocia tu agente"]);
+});
+
+// El contexto como lo arma el agente de decisiones: la necesidad son las
+// palabras del primer turno; el cronograma y las flexibilidades, juicios.
+const CONTEXTO_COMPUTADORAS = {
+  pedido: "20 computadoras por un total de 20000 USD", pregunta: "¿Para qué?",
+  respuesta: "Entran 10 trabajadores el lunes y otros 10 el jueves.", historial: [],
+  necesidad: "Entran 10 trabajadores el lunes y otros 10 el jueves.",
+  necesidad_entregas: [{ cantidad: 10, fecha: "2026-10-19" }, { cantidad: 10, fecha: "2026-10-22" }],
+  flexibilidades: [
+    { descripcion: "Acepta recibir la compra en partes (entregas escalonadas).", origen: "dicha" },
+    { descripcion: "Acepta otra marca u otro modelo.", origen: "inferida" },
+  ],
+};
+
+test("lo que entendió nuestro agente: una plantilla con el cronograma y lo que dijiste flexible, no el eco", () => {
+  const registrado = (turno, respuesta, contexto) =>
+    evento("contexto_registrado", { compra_id: "cmp-pc", turno, respuesta, omitido: false, vencido: false, contexto });
+  const lineas = textos(relato([
+    registrado(0, CONTEXTO_COMPUTADORAS.respuesta, CONTEXTO_COMPUTADORAS),
+    // El turno siguiente trae el mismo contexto: no se repite la línea.
+    registrado(1, "Hasta 20000 dólares.", { ...CONTEXTO_COMPUTADORAS,
+      historial: [{ pregunta: "¿El tope?", respuesta: "Hasta 20000 dólares." }] }),
+  ]));
+  assert.deepEqual(lineas, ["Nuestro agente entendió: necesitás 10 el lun 19/10 y 10 el jue 22/10; aceptás recibir en partes"]);
+  // La flexibilidad inferida no se dice como si la hubiera dicho el usuario.
+  assert.ok(!lineas[0].includes("otra marca"));
+  // La de Gemini va con la etiqueta del campo; su texto libre no se muestra.
+  const gemini = { ...CONTEXTO_COMPUTADORAS, necesidad_entregas: [],
+    flexibilidades: [{ descripcion: "Entregas: texto libre del modelo", origen: "dicha" },
+      { descripcion: "Otro: más texto libre", origen: "dicha" }] };
+  assert.deepEqual(textos(relato([registrado(0, "x", gemini)])), ["Nuestro agente entendió: pueden variar las entregas"]);
+});
+
+test("sin datos estructurados, lo que entendió es la última respuesta, no la primera", () => {
+  const vacio = { ...CONTEXTO_COMPUTADORAS, necesidad_entregas: [], flexibilidades: [] };
+  const lineas = textos(relato([
+    evento("contexto_registrado", { compra_id: "cmp-x", turno: 0, respuesta: "Para la oficina.", contexto: vacio }),
+    evento("contexto_registrado", { compra_id: "cmp-x", turno: 1, respuesta: "Hasta 900 dólares, para el viernes.",
+      contexto: { ...vacio, historial: [{ pregunta: "q", respuesta: "Hasta 900 dólares, para el viernes." }] } }),
+  ]));
+  assert.deepEqual(lineas, [
+    "Nuestro agente entendió: «Para la oficina.»",
+    "Nuestro agente entendió: «Hasta 900 dólares, para el viernes.»",
+  ]);
+  // Un cronograma inválido no se muestra (ni se rompe).
+  const malo = { ...vacio, necesidad_entregas: [{ cantidad: "diez", fecha: "lunes" }, null] };
+  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "cmp-y", turno: 0, respuesta: "Para la oficina.", contexto: malo })])),
+    ["Nuestro agente entendió: «Para la oficina.»"]);
 });
 
 test("la oportunidad y la decisión", () => {

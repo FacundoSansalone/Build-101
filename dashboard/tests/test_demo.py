@@ -810,3 +810,13 @@ def test_config_de_la_demo_desde_el_entorno(monkeypatch):
     assert cfg.adk_url == "http://127.0.0.1:8000" and cfg.demo_auto is True
     assert cfg.demo_pausa_auto_s == 0.0
     assert cfg.world_temp_dir.parts[-3:] == ("world", "ap2", ".temp-db")
+
+
+def test_el_relato_conoce_las_flexibilidades_fijas_del_intake():
+    """`lib/relato.js` dice "lo que entendió" con las flexibilidades del agente
+    de decisiones, que son texto fijo: si cambian acá, la línea las perdería."""
+    from intencion.agente_decisiones import FLEXIBILIDADES
+
+    relato = (Path(demo.__file__).parent / "static" / "lib" / "relato.js").read_text(encoding="utf-8")
+    for _, descripcion in FLEXIBILIDADES.values():
+        assert json.dumps(descripcion, ensure_ascii=False) in relato, descripcion

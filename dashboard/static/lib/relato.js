@@ -203,6 +203,7 @@ function nuevoContexto(opciones) {
     filtro: opciones?.filtro !== false,
     ofertas: new Map(),
     busquedas: new Set(),
+    entendido: new Map(), // compra_id → lo último que se dijo que entendió nuestro agente
     apagadoDicho: false, // "Intermediario apagado…" una vez por corrida
   };
 }
@@ -270,14 +271,68 @@ function lineaPedido(item, d) {
   return linea(item, `Nuestro agente pregunta: ${pregunta}`, "aviso", "guard");
 }
 
-function lineaContexto(item, d) {
+// Lo que el usuario dijo flexible, en palabras de la plantilla. Las
+// descripciones del agente de decisiones son texto fijo
+// (intencion/agente_decisiones.py → FLEXIBILIDADES); las de Gemini llevan la
+// etiqueta del campo ("Entregas: …", intencion/agente.py) y su texto libre no
+// se muestra. Una "Otro: …" o una sin etiqueta conocida, tampoco.
+const FLEXIBLES_FIJAS = {
+  "Acepta recibir la compra en partes (entregas escalonadas).": "aceptás recibir en partes",
+  "Acepta otra fecha de entrega.": "aceptás otra fecha de entrega",
+  "Acepta otra marca u otro modelo.": "aceptás otra marca u otro modelo",
+  "Acepta otra cantidad.": "aceptás otra cantidad",
+};
+const FLEXIBLES_POR_CAMPO = {
+  Cantidad: "puede variar la cantidad", Entregas: "pueden variar las entregas", Marca: "puede variar la marca",
+  Categoría: "puede variar el producto", Uso: "puede variar el uso", Talle: "puede variar el talle",
+};
+const MAX_ENTREGAS_ENTENDIDO = 6;
+
+function fraseFlexibilidad(f) {
+  const descripcion = String(f?.descripcion ?? "");
+  return FLEXIBLES_FIJAS[descripcion] ?? FLEXIBLES_POR_CAMPO[descripcion.split(": ")[0]] ?? null;
+}
+
+const entregaValida = (e) => Number.isInteger(e?.cantidad) && e.cantidad > 0
+  && /^\d{4}-\d{2}-\d{2}$/.test(String(e?.fecha ?? ""));
+
+/**
+ * Lo que entendió nuestro agente, armado con el contexto estructurado: el
+ * cronograma de la necesidad y las flexibilidades que el usuario dijo
+ * ("necesitás 10 el lun 19/10 y 10 el jue 22/10; aceptás recibir en partes").
+ * null si no hay nada de eso. Nunca usa `necesidad` (texto de un modelo o el
+ * eco de la primera respuesta).
+ */
+export function textoEntendido(contexto) {
+  const partes = [];
+  const entregas = (Array.isArray(contexto?.necesidad_entregas) ? contexto.necesidad_entregas : []).filter(entregaValida);
+  if (entregas.length) {
+    const resto = entregas.length - MAX_ENTREGAS_ENTENDIDO;
+    partes.push(`necesitás ${formatearEntregas(entregas.slice(0, MAX_ENTREGAS_ENTENDIDO))}${resto > 0 ? ` y ${resto} entregas más` : ""}`);
+  }
+  const dichas = (Array.isArray(contexto?.flexibilidades) ? contexto.flexibilidades : [])
+    .filter((f) => f?.origen === "dicha").map(fraseFlexibilidad).filter(Boolean);
+  partes.push(...new Set(dichas));
+  return partes.length ? partes.join("; ") : null;
+}
+
+function lineaContexto(item, d, ctx) {
   if (d.final && d.confirmada) return linea(item, "Confirmaste la ficha: con eso negocia tu agente", "ok", "guard");
   if (d.omitido || d.vencido) {
     return linea(item, Number(d.turno) > 0 ? "Sin más respuestas: sigue con lo que ya dijiste"
       : "Sin el porqué: tu agente sigue con el pedido literal", "tenue", "guard");
   }
-  const necesidad = d.contexto?.necesidad;
-  if (necesidad) return linea(item, `Nuestro agente entendió: ${necesidad}`, "neutro", "guard");
+  const entendido = d.contexto ? textoEntendido(d.contexto) : null;
+  const compra = String(d.compra_id ?? "");
+  if (entendido && ctx.entendido.get(compra) !== entendido) {
+    ctx.entendido.set(compra, entendido);
+    return linea(item, `Nuestro agente entendió: ${entendido}`, "neutro", "guard");
+  }
+  // Sin cronograma ni flexibilidades: la respuesta de este turno (la última).
+  const respuesta = typeof d.respuesta === "string" ? d.respuesta.trim() : "";
+  if (!entendido && d.contexto && respuesta) {
+    return linea(item, `Nuestro agente entendió: «${recortar(respuesta, 160)}»`, "neutro", "guard");
+  }
   if (d.final) return linea(item, "Ficha lista: con eso negocia tu agente", "neutro", "guard");
   return null;
 }
@@ -371,7 +426,7 @@ function lineasDeEventoSolo(item, ctx) {
     case "pedido_detectado":
       return [lineaPedido(item, d)];
     case "contexto_registrado":
-      return [lineaContexto(item, d)].filter(Boolean);
+      return [lineaContexto(item, d, ctx)].filter(Boolean);
     case "oportunidad":
       return [lineaOportunidad(item, d)];
     case "oportunidad_decidida": {
