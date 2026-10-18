@@ -184,6 +184,34 @@ test("lo que dice el usuario y lo que dice su agente (sin markdown)", () => {
   assert.equal(lineas[1].actor, "agente");
 });
 
+test("una respuesta larga del agente se resume en su recomendación y su pregunta", () => {
+  const largo = [
+    "He encontrado las siguientes opciones que se ajustan a tus criterios:",
+    "",
+    "1.  **Lumen Book 14 Pro**",
+    "    *   Precio: 1.099 USD",
+    "    *   ID: `cart_1`",
+    "2.  **Orion Book 15**",
+    "    *   Precio: 1.149 USD",
+    "",
+    "**Mi recomendación:**",
+    "Considero que la **Lumen Book 14 Pro (`cart_1`)** es la mejor opción para ti, ya que cumple con todas tus especificaciones y está diseñada para programadores, dentro de tu presupuesto.",
+    "",
+    "¿Cuál de estas opciones prefieres comprar? Por favor, indícame el ID del producto.",
+  ].join("\n");
+  const [l] = relato([], [mensaje("agente", { texto: largo, autor: "shopper", oculto: false })]);
+  assert.match(l.texto, /^Tu agente: Considero que la Lumen Book 14 Pro \(cart_1\) es la mejor opción/);
+  assert.match(l.texto, /¿Cuál de estas opciones prefieres comprar\?$/);
+  assert.ok(l.texto.length <= 360, l.texto.length);
+
+  const charla = "Hola, soy el agente **shopper**. Mi función es ayudarte a encontrar el producto ideal. " +
+    "Voy a buscar opciones que se ajusten a tus especificaciones, con todo el detalle que haga falta. ".repeat(4) +
+    "\n\n*Status: Buscando productos en el catálogo...*";
+  const [c] = relato([], [mensaje("agente", { texto: charla, autor: "shopper", oculto: false })]);
+  assert.match(c.texto, /^Tu agente: Hola, soy el agente shopper\./);
+  assert.ok(c.texto.endsWith("…"));
+});
+
 test("los pasos automáticos se resumen en una línea", () => {
   const msgs = [
     mensaje("auto", { paso: "billetera", texto: "Google Wallet" }),

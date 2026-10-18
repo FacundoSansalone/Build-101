@@ -68,6 +68,28 @@ export function limpiarTexto(texto, max = MAX_LINEA) {
   return recortar(limpio, max);
 }
 
+const RECOMIENDA = /recomiend|recomendaci[oó]n|recommend|mejor opci[oó]n|best (option|match|choice)/i;
+
+/**
+ * Lo que dijo el agente, en una línea: si es largo, su recomendación (o la
+ * primera frase) y su última pregunta. Es el momento que importa en la
+ * demo: qué recomienda el agente y qué le pregunta al usuario.
+ */
+export function resumirAgente(texto, max = 260) {
+  const completo = limpiarTexto(texto, Number.POSITIVE_INFINITY);
+  if (completo.length <= max) return completo;
+  const frases = String(texto ?? "").split(/\n+/)
+    .flatMap((parrafo) => limpiarTexto(parrafo, Number.POSITIVE_INFINITY).split(/(?<=[.!?…])\s+/))
+    .map((f) => f.trim())
+    .filter((f) => f && !(f.endsWith(":") && f.length < 40)); // títulos como "Mi recomendación:"
+  const principal = frases.find((f) => RECOMIENDA.test(f)) ?? frases[0] ?? completo;
+  const pregunta = [...frases].reverse().find((f) => f.includes("?"));
+  const partes = [recortar(principal, 170)];
+  if (pregunta && pregunta !== principal) partes.push(recortar(pregunta, 120));
+  const resumen = partes.join(" ");
+  return partes.length === 1 && !resumen.endsWith("…") ? `${resumen} …` : resumen;
+}
+
 /** En una línea y recortado (sin tocar el contenido). */
 function recortar(texto, max = MAX_LINEA) {
   const limpio = String(texto ?? "").replace(/\s+/g, " ").trim();
@@ -328,7 +350,7 @@ function lineasDeMensaje(item, ctx) {
       return [linea(item, `Vos: ${item.texto ?? ""}`, "usuario", "usuario")];
     case "agente":
       if (item.oculto) return [];
-      return [linea(item, `Tu agente: ${limpiarTexto(item.texto)}`, "agente", "agente")];
+      return [linea(item, `Tu agente: ${resumirAgente(item.texto)}`, "agente", "agente")];
     case "herramienta": {
       const args = item.args || {};
       if (item.nombre === "find_products" && args.catalog_search) {
