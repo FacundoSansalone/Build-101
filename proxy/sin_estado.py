@@ -19,12 +19,16 @@ del Guard (`tipos_gateway.vista_veredicto`).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
+import functools
 import logging
 import re
+from collections.abc import Callable
+from concurrent.futures import Executor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 from pydantic import ValidationError
@@ -76,6 +80,24 @@ MOTIVO_SIN_TOTAL = (
 )
 TIMEOUT_FABRICANTE_S = 15.0  # igual que el proxy: todas las consultas de una evaluación
 
+_T = TypeVar("_T")
+
+
+async def _en_hilo(ejecutor: Executor | None, funcion: Callable[..., _T], *args: Any) -> _T:
+    """`funcion(*args)` en otro hilo, sin frenar el loop.
+
+    Con `ejecutor` (el que le pase la integración, para acotar cuántos hilos
+    usa el gateway), en ese; con None, `asyncio.to_thread` como siempre. El
+    contexto va copiado, igual que en `to_thread`. Un ejecutor cerrado lanza
+    al programar: quien llama lo trata como cualquier falla (falla cerrado).
+    """
+    if ejecutor is None:
+        return await asyncio.to_thread(funcion, *args)
+    contexto = contextvars.copy_context()
+    return await asyncio.get_running_loop().run_in_executor(
+        ejecutor, functools.partial(contexto.run, funcion, *args)
+    )
+
 
 # ---------------------------------------------------------------------------
 # Filtro
@@ -112,22 +134,27 @@ def _resultado_filtro(pasa: bool, motivo: str, senales: list[str]) -> dict[str, 
 
 
 async def filtrar_contenido(
-    filtro: Filtro | None, solicitud: SolicitudFiltrar, *, timeout_s: float = TIMEOUT_FILTRO_S
+    filtro: Filtro | None,
+    solicitud: SolicitudFiltrar,
+    *,
+    timeout_s: float = TIMEOUT_FILTRO_S,
+    ejecutor: Executor | None = None,
 ) -> dict[str, Any]:
     """`{"pasa", "status", "motivo", "senales"}` para `/v1/filtrar`.
 
     Falla cerrado, siempre con 200 y `bloqueado`: sin filtro configurado
     (`filtro:no_configurado`), si el filtro lanza o devuelve algo que no es
     un `ResultadoFiltro` (`filtro:error`) o si tarda más de `timeout_s`
-    (`filtro:timeout`). Corre en un hilo, como en el proxy: un filtro lento no
-    frena al resto. El motivo es siempre un texto fijo de este módulo (ni el
-    del filtro): la respuesta nunca devuelve nada del contenido recibido.
+    (`filtro:timeout`). Corre en un hilo (el de `ejecutor`, si hay), como en
+    el proxy: un filtro lento no frena al resto. El motivo es siempre un texto
+    fijo de este módulo (ni el del filtro): la respuesta nunca devuelve nada
+    del contenido recibido.
     """
     if filtro is None:
         return _resultado_filtro(False, MOTIVO_FALLA, ["filtro:no_configurado"])
     try:
         salida = await asyncio.wait_for(
-            asyncio.to_thread(filtro, envolver_contenido(solicitud)), timeout_s
+            _en_hilo(ejecutor, filtro, envolver_contenido(solicitud)), timeout_s
         )
         resultado = (
             salida if isinstance(salida, ResultadoFiltro) else ResultadoFiltro.model_validate(salida)
@@ -197,9 +224,11 @@ async def con_fabricante(
     offer_details: list[dict[str, Any]],
     *,
     timeout_s: float = TIMEOUT_FABRICANTE_S,
+    ejecutor: Executor | None = None,
 ) -> tuple[dict[str, dict], dict[str, Any]]:
     """El catálogo más la ficha del fabricante de cada GTIN de las ofertas, y
-    el resumen de qué fuente respondió. Igual que `ProxyGuard._con_fabricante`.
+    el resumen de qué fuente respondió. Igual que `ProxyGuard._con_fabricante`
+    (las consultas, en un hilo del `ejecutor` si hay).
 
     Sin fuente, sin dato, con falla o si tarda de más, el Guard no tiene fuente
     independiente y escala lo obligatorio: nunca aprueba por eso.
@@ -213,7 +242,7 @@ async def con_fabricante(
     gtins = gtins_de_ofertas(offer_details, catalogo)
     try:
         resultados = await asyncio.wait_for(
-            asyncio.to_thread(consultar_gtins, fabricante, gtins), timeout_s
+            _en_hilo(ejecutor, consultar_gtins, fabricante, gtins), timeout_s
         )
     except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala
         logger.warning("La fuente del fabricante no respondió: %s", type(e).__name__)
@@ -263,6 +292,7 @@ async def evaluar_sin_estado(
     politica: Politica | None,
     fabricante: Any = None,
     ahora: datetime | None = None,
+    ejecutor: Executor | None = None,
 ) -> dict[str, Any]:
     """El veredicto del Guard para un checkout que manda el integrador.
 
@@ -277,6 +307,10 @@ async def evaluar_sin_estado(
       como en el proxy.
     - El comercio de la evaluación es el `merchant.id` **firmado**; si el
       comercio indicado tiene `merchant_ids` y no está, se bloquea sin evaluar.
+    - Un solo instante por evaluación: el `ts` de la vista es el `ahora` del
+      Guard (fecha del recibo y `exp`/`iat` del JWT). Sin `ahora`, el reloj
+      se lee una vez acá.
+    - `ejecutor`: dónde corren las consultas al fabricante (None = el del loop).
     """
     ts = ahora or datetime.now(UTC)
     visto, cart_id = _validar_checkout(solicitud.checkout)
@@ -313,7 +347,7 @@ async def evaluar_sin_estado(
                 comercio.id,
             )
             catalogo = {}
-    catalogo, _ = await con_fabricante(fabricante, catalogo, offer_details)
+    catalogo, _ = await con_fabricante(fabricante, catalogo, offer_details, ejecutor=ejecutor)
 
     # Un evaluar() que no ata lo firmado no decide (el proxy no arranca con él).
     if not evaluador.acepta_checkout:
@@ -326,7 +360,7 @@ async def evaluar_sin_estado(
             catalogo,
             politica=politica,
             checkout_hash=checkout.get("checkout_hash"),
-            ahora=ahora,
+            ahora=ts,  # el mismo instante que el `ts` de la vista
             checkout=visto,  # siempre: el Guard ata lo firmado al cart
         )
         veredicto = (
