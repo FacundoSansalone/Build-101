@@ -190,7 +190,27 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     contrato): el dashboard consulta `GET /guard/aprobaciones`.
   - **API local protegida:** `/guard/*` (proxy) y `/api/*` (dashboard) exigen
     Host local, Origin del dashboard y JSON en los POST; fuera de loopback no
-    arrancan salvo `PROXY_ALLOW_REMOTE=1`.
+    arrancan salvo `PROXY_ALLOW_REMOTE=1`. Además, los POST de `/guard/*`
+    exigen `X-Guard-Token`: el proxy genera un token por arranque en
+    `.temp-db/guard_api_token` (`GUARD_API_TOKEN_PATH`) y el dashboard lo lee
+    y lo agrega en su reenvío. Proxy y dashboard se levantan desde la misma
+    raíz del repo para compartirlo.
+- **Verificación adversarial (2026-10-17):** 12 hallazgos re-verificados (10
+  cerrados, 2 parciales que se cerraron después) y 7 nuevos corregidos:
+  - **Evaluador fail-closed:** si no se puede importar `guard.evaluar()` (o no
+    acepta `checkout=`), el proxy no arranca. El stub solo con
+    `PROXY_ALLOW_STUB=1`, y `/guard/state` lo muestra.
+  - La aprobación humana se ata al total firmado exacto
+    (`totals[type=total]` + moneda del JWT); la caché de decisiones, al data
+    part `ap2.checkout` completo.
+  - Al Shopping Agent le llega un `guard.veredicto` reducido
+    (`status`, `motivo`, `cart_id_elegido`, tipos y resultados de chequeos),
+    sin texto del comercio. El completo va al dashboard por eventos.
+  - El Guard valida la coherencia interna del JWT: suma de `line_items` =
+    total (si no, `bloquea`) y `exp`/`iat` contra `ahora` (vencido → `escalar`).
+- **Servicios locales por `127.0.0.1`** (no `localhost`): en Windows,
+  `localhost` prueba primero IPv6 y cada intento fallido suma ~2 s.
+  `PROXY_PUBLIC_URL` (la URL que ve el cliente A2A) sigue en `localhost`.
 - **Benchmark con el plan gratuito de Gemini** (15 pedidos/min):
   `world/bench_con_pausa.py` corre el mismo `benchmark.main()` espaciando las
   llamadas al LLM. No toca `world/ap2/`.
