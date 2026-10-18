@@ -682,6 +682,15 @@ dl.comparacion dd { margin: 0; font-family: var(--mono); font-size: 0.88rem; fon
 .tabla-cambios td.ofrecido { font-weight: 700; }
 .tabla-cambios .flecha { width: 1.5rem; padding-inline: 0; color: var(--muted); }
 
+/* Intake: lo que falta, la ficha parcial y la confirmación. */
+.faltan { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.msj-confirmar .msj-burbuja { box-shadow: inset 4px 0 0 var(--serious-fill), 0 0 0 2px var(--serious-fill), var(--shadow); }
+.tabla-ficha { background: var(--surface-2); border-radius: var(--radius-sm); }
+.tabla-ficha th { overflow-wrap: normal; white-space: nowrap; }
+.tabla-ficha th[scope="row"] { font-weight: 650; }
+.tabla-ficha td .chip + .chip { margin-inline-start: 4px; }
+.msj-ficha .msj-burbuja { box-shadow: inset 4px 0 0 var(--ok-fill, var(--accent)), 0 0 0 1px var(--ring); }
+
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1100px) {
   .veredicto-grilla, .recibo-grilla { grid-template-columns: minmax(0, 1fr); }

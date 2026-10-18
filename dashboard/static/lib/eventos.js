@@ -1,7 +1,7 @@
 // Eventos del proxy (contrato `Evento`) → compras agrupadas por contexto_id.
 // Sin DOM: se testea con node --test.
 
-import { CAMPOS, TEXTO_FINAL, formatearValor } from "./agente.js";
+import { CAMPOS, PARAMETROS, TEXTO_FINAL, formatearValor } from "./agente.js";
 
 const TS_INVALIDO = Number.POSITIVE_INFINITY;
 
@@ -366,7 +366,26 @@ const DECISION = {
   vencida: `Vencida: ${TEXTO_FINAL.vencida.replace(/^Sin respuesta: /, "")}`,
 };
 
+/** pedido_detectado: el pedido y la pregunta; en una repregunta, el turno y lo que falta. */
+function resumenPregunta(d) {
+  const n = Number.isInteger(d.turno) && d.turno > 0 ? d.turno : 0;
+  const partes = [];
+  if (n === 0 && d.pedido) partes.push(`«${d.pedido}»`);
+  if (n > 0) partes.push(d.confirmar ? `turno ${n}: confirmar la ficha` : `turno ${n}`);
+  if (d.pregunta) partes.push(d.pregunta);
+  const faltan = Array.isArray(d.faltan) ? d.faltan : [];
+  if (faltan.length) {
+    partes.push(`falta: ${faltan.map((p) => (PARAMETROS[p] ?? String(p)).toLowerCase()).join(", ")}`);
+  }
+  return partes.join(" · ");
+}
+
 function resumenContexto(d) {
+  const n = Number.isInteger(d.turno) && d.turno > 0 ? d.turno : 0;
+  if (d.confirmada) return "El usuario confirmó la ficha: con eso sigue la negociación";
+  if (n > 0 && d.omitido) return "El usuario omitió la repregunta: sigue con lo que ya dijo";
+  if (n > 0 && d.vencido) return "Sin respuesta a la repregunta: sigue con lo que ya dijo";
+  if (n > 0 && typeof d.respuesta === "string") return `Respuesta del turno ${n}`;
   if (d.omitido) return "El usuario omitió la pregunta: la negociación sigue con el pedido literal";
   if (d.vencido) return "Sin respuesta a tiempo: la negociación sigue con el pedido literal";
   if (!d.contexto) return "Nuestro agente no pudo armar el contexto: la negociación sigue con el pedido literal";
@@ -429,9 +448,7 @@ export function describirEvento(e) {
       break;
     case "guard_cambiado": resumen = d.guard_activo ? "Guard activado" : "Guard apagado"; break;
     case "error": resumen = d.mensaje ?? ""; break;
-    case "pedido_detectado":
-      resumen = [d.pedido ? `«${d.pedido}»` : "", d.pregunta ?? ""].filter(Boolean).join(" · ");
-      break;
+    case "pedido_detectado": resumen = resumenPregunta(d); break;
     case "contexto_registrado": resumen = resumenContexto(d); break;
     case "oportunidad": resumen = resumenOportunidad(d); break;
     case "oportunidad_decidida": resumen = DECISION[d.decision] ?? String(d.decision ?? ""); break;
