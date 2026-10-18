@@ -4,8 +4,8 @@ Lee los JSON que escribe `demo_world.benchmark` (`--out ../../results`) y
 hace upsert en `benchmark_corridas` y `benchmark_escenarios`. La corrida se
 identifica por el nombre del archivo: subirla dos veces no la duplica.
 
-Usa las mismas variables que el proxy (`SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`). No toca `world/`.
+Usa las mismas variables que el proxy (`SUPABASE_URL` y
+`SUPABASE_SERVICE_ROLE_KEY` o `SUPABASE_SECRET_KEY`). No toca `world/`.
 """
 
 from __future__ import annotations
@@ -80,7 +80,11 @@ def main(argv: list[str] | None = None) -> int:
 
     datos = credenciales()
     if datos is None:
-        print("Faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en el entorno.", file=sys.stderr)
+        print(
+            "Faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY (o SUPABASE_SECRET_KEY)"
+            " en el entorno.",
+            file=sys.stderr,
+        )
         return 2
     url, clave = datos
     fallidos = 0

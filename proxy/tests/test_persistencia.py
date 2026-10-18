@@ -50,6 +50,23 @@ def test_sin_credenciales_no_hay_persistencia():
     ) == (SUPABASE, CLAVE)
 
 
+def test_acepta_el_nombre_nuevo_de_la_clave_secreta():
+    # El dashboard de Supabase hoy la entrega como SUPABASE_SECRET_KEY.
+    assert credenciales(
+        {"SUPABASE_URL": SUPABASE, "SUPABASE_SECRET_KEY": CLAVE}
+    ) == (SUPABASE, CLAVE)
+    # Con las dos, manda SUPABASE_SERVICE_ROLE_KEY; vacía cuenta como ausente.
+    assert credenciales(
+        {"SUPABASE_URL": SUPABASE, "SUPABASE_SERVICE_ROLE_KEY": CLAVE,
+         "SUPABASE_SECRET_KEY": "otra"}
+    ) == (SUPABASE, CLAVE)
+    assert credenciales(
+        {"SUPABASE_URL": SUPABASE, "SUPABASE_SERVICE_ROLE_KEY": " ",
+         "SUPABASE_SECRET_KEY": CLAVE}
+    ) == (SUPABASE, CLAVE)
+    assert Persistencia.desde_entorno({"SUPABASE_SECRET_KEY": CLAVE}) is None
+
+
 async def test_guarda_el_veredicto_sin_mandatos_ni_jwt(armar_proxy, merchant: FakeMerchant):
     db = FakeSupabase()
     persistencia = db.persistencia()

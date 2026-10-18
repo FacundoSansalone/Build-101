@@ -45,7 +45,7 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `PROXY_ALLOW_STUB` | `0` | `1` para arrancar con el stub si no hay `guard.evaluar()` real (solo pruebas) |
 | `PROXY_MAX_RESPUESTA_BYTES` | `5242880` | Tope por respuesta del comercio (5 MB) |
 | `SUPABASE_URL` | — | Proyecto de Supabase (`https://<ref>.supabase.co`). Con la clave, activa el registro en Supabase |
-| `SUPABASE_SERVICE_ROLE_KEY` | — | Clave de servicio de Supabase. **Secreta**: va en el entorno o en un `.env` ignorado por git, nunca en el repo |
+| `SUPABASE_SERVICE_ROLE_KEY` | — | Clave de servicio de Supabase (`sb_secret_…` o la `service_role` legacy). También se acepta como `SUPABASE_SECRET_KEY`, el nombre que usa hoy el dashboard. **Secreta**: va en el entorno o en un `.env` ignorado por git, nunca en el repo. El proxy no lee `.env` solo: `set -a; source .env; set +a` antes de `python -m proxy` |
 
 Los servicios locales van por `127.0.0.1` y no por `localhost`: en Windows
 `localhost` prueba primero `::1`, donde el comercio y el catálogo no

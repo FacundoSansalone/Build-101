@@ -13,8 +13,8 @@ Es solo registro, no decide nada (CLAUDE.md → Decisiones):
   en memoria (`proxy.aprobaciones`): una aprobación no sirve después de un
   reinicio, porque las ofertas de su contexto se pierden.
 
-Sin `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` no hay persistencia y el
-proxy funciona como antes. Las tablas están en `proxy/sql/`.
+Sin `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` (o `SUPABASE_SECRET_KEY`) no
+hay persistencia y el proxy funciona como antes. Las tablas están en `proxy/sql/`.
 """
 
 from __future__ import annotations
@@ -40,10 +40,16 @@ TABLA_APROBACIONES = "aprobaciones"
 
 
 def credenciales(env: Mapping[str, str] | None = None) -> tuple[str, str] | None:
-    """(url, clave) desde el entorno, o None si falta alguna."""
+    """(url, clave) desde el entorno, o None si falta alguna.
+
+    La clave se lee de `SUPABASE_SERVICE_ROLE_KEY` o, si falta, de
+    `SUPABASE_SECRET_KEY` (el nombre con el que hoy la entrega el dashboard).
+    """
     env = os.environ if env is None else env
     url = (env.get("SUPABASE_URL") or "").strip().rstrip("/")
-    clave = (env.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    clave = (env.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip() or (
+        env.get("SUPABASE_SECRET_KEY") or ""
+    ).strip()
     if not url or not clave:
         return None
     return url, clave
