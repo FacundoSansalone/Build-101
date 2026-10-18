@@ -26,13 +26,14 @@ provider, which is then sent to the merchant agent for payment.
 """
 
 from common.retrying_llm_agent import RetryingLlmAgent
-from common.system_utils import AP2_MODEL, DEBUG_MODE_INSTRUCTIONS
+from common.system_utils import DEBUG_MODE_INSTRUCTIONS, SHOPPING_AGENT_CONFIG, SHOPPING_AGENT_MODEL
 
 from . import tools
 
 
 payment_method_collector = RetryingLlmAgent(
-    model=AP2_MODEL,  # HACKATHON (Pre-Sign Guard): AP2_MODEL
+    model=SHOPPING_AGENT_MODEL,  # HACKATHON (Pre-Sign Guard)
+    generate_content_config=SHOPPING_AGENT_CONFIG,  # HACKATHON
     name="payment_method_collector",
     max_retries=5,
     instruction="""

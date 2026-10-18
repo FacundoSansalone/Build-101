@@ -27,13 +27,14 @@ This is just one of many possible approaches.
 """
 
 from common.retrying_llm_agent import RetryingLlmAgent
-from common.system_utils import AP2_MODEL, DEBUG_MODE_INSTRUCTIONS
+from common.system_utils import DEBUG_MODE_INSTRUCTIONS, SHOPPING_AGENT_CONFIG, SHOPPING_AGENT_MODEL
 
 from . import tools
 
 
 shipping_address_collector = RetryingLlmAgent(
-    model=AP2_MODEL,  # HACKATHON (Pre-Sign Guard): AP2_MODEL
+    model=SHOPPING_AGENT_MODEL,  # HACKATHON (Pre-Sign Guard)
+    generate_content_config=SHOPPING_AGENT_CONFIG,  # HACKATHON
     name="shipping_address_collector",
     max_retries=5,
     instruction="""

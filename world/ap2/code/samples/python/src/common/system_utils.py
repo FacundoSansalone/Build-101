@@ -16,10 +16,47 @@
 
 import os
 
+from google.adk.models.google_llm import Gemini
+from google.adk.models.registry import LLMRegistry
+from google.genai import types
+
 # HACKATHON (Pre-Sign Guard): el modelo de los agentes se puede cambiar con
 # AP2_MODEL (por defecto, el del sample). El preview satura (503) y comparte
 # un solo cupo por minuto entre todos los agentes.
 AP2_MODEL = os.environ.get("AP2_MODEL") or "gemini-3.1-flash-lite-preview"
+
+# HACKATHON (Pre-Sign Guard): el agente de compras (root y sus 3 sub-agentes)
+# usa SHOPPING_AGENT_MODEL y, si es un Gemini, razona lo mínimo
+# (SHOPPING_AGENT_THINKING, vacío para el del modelo): un agente más burro que
+# el del sample. Los servidores (comercio, credenciales, pagos) siguen con
+# AP2_MODEL para elegir su herramienta. Gemma 4 sirve con
+# SHOPPING_AGENT_MODEL=gemma-4-26b-a4b-it, pero su cupo (16.000 tokens de
+# entrada por minuto) no alcanza para un flujo.
+SHOPPING_AGENT_MODEL = (
+    os.environ.get("SHOPPING_AGENT_MODEL") or "gemini-3.1-flash-lite"
+)
+_SHOPPING_AGENT_THINKING = os.environ.get("SHOPPING_AGENT_THINKING", "minimal")
+SHOPPING_AGENT_CONFIG = (
+    types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(
+            thinking_level=_SHOPPING_AGENT_THINKING
+        )
+    )
+    if _SHOPPING_AGENT_THINKING and SHOPPING_AGENT_MODEL.startswith("gemini-")
+    else None
+)
+
+
+class _Gemma4(Gemini):
+  """Gemma 4 por la API de Gemini. Tiene function calling nativo, pero el
+  registro de ADK solo conoce gemma-3 (que arma las llamadas en texto)."""
+
+  @classmethod
+  def supported_models(cls) -> list[str]:
+    return [r"gemma-4.*"]
+
+
+LLMRegistry.register(_Gemma4)
 
 DEBUG_MODE_INSTRUCTIONS = """
     This is really important! If the agent or user asks you to be verbose or if debug_mode is True, do the following:

@@ -23,7 +23,7 @@ efficiency in developing robust LLM agents.
 """
 
 from common.retrying_llm_agent import RetryingLlmAgent
-from common.system_utils import AP2_MODEL, DEBUG_MODE_INSTRUCTIONS
+from common.system_utils import DEBUG_MODE_INSTRUCTIONS, SHOPPING_AGENT_CONFIG, SHOPPING_AGENT_MODEL
 
 from . import tools
 from .subagents.payment_method_collector.agent import payment_method_collector
@@ -35,7 +35,8 @@ from .subagents.shopper.agent import shopper
 
 root_agent = RetryingLlmAgent(
     max_retries=5,
-    model=AP2_MODEL,  # HACKATHON (Pre-Sign Guard): AP2_MODEL
+    model=SHOPPING_AGENT_MODEL,  # HACKATHON (Pre-Sign Guard)
+    generate_content_config=SHOPPING_AGENT_CONFIG,  # HACKATHON
     name="root_agent",
     instruction="""
           You are a shopping agent responsible for helping users find and
@@ -48,8 +49,8 @@ root_agent = RetryingLlmAgent(
           Scenario 1: The user asks to buy or shop for something.
           Execute these steps STRICTLY in order. Do NOT skip steps 1, 2, or 3,
           and do NOT advance to step 6 before step 3 has completed.
-          1. Delegate to the `shopper` agent to find products and let the
-             user select one.
+          1. Delegate to the `shopper` agent to find products and select
+             one.
           2. Delegate to `shipping_address_collector` to get the shipping
              address. Display it to the user.
           3. Delegate to `payment_method_collector` to get the payment method.
