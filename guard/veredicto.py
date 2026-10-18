@@ -166,6 +166,7 @@ def evaluar(
             politica=politica,
             comercio_id=comercio_id,
             checkout_hash=checkout_hash,
+            ahora=ahora,
         )
         chequeos += del_checkout
 

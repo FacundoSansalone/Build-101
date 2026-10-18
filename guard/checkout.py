@@ -13,6 +13,12 @@ hash en su `CheckoutMandate`, y el `PaymentMandate` del sample toma el monto
   → mandato con el total firmado: sobre el tope `bloquea`, si no `escalar`),
   moneda (distinta → `escalar`; fuera de la moneda obligatoria → `bloquea`)
   y `merchant.id` (fuera de la política → `bloquea`);
+- exige que el JWT sea coherente consigo mismo: la suma de `price × quantity`
+  de los `line_items` (y el total de cada línea, si lo trae) tiene que ser el
+  total firmado, con `price` un número ≥ 0 y `quantity` un entero ≥ 1 (si no
+  → `bloquea`); `exp` vencido respecto de `ahora` → mandato `escalar`; `iat`
+  más de 5 minutos en el futuro → `escalar`; `exp`/`iat` que no son enteros
+  → `bloquea`. Sin `line_items`, `exp` o `iat` no se agrega ese chequeo;
 - un JWT ilegible (no tres segmentos, base64/JSON inválido, encabezado que no
   es ES256, sin `totals` o sin un único total válido) → `bloquea`.
 
@@ -26,21 +32,48 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from contracts import CheckoutVisto, Chequeo, Ficha, Oferta, Politica, Requisito
 from guard.b64 import b64url, b64url_decode
 from guard.chequeos import monto
-from guard.normalizar import EPSILON_MONTO, contiene, iguales, monto_valido
+from guard.normalizar import EPSILON_MONTO, contiene, iguales, monto_valido, numero
 from guard.textos import acotar, moneda_legible
 
 ORIGEN = "checkout_firmado"
 _LARGO_FIRMA_ES256 = 64  # r || s
+_DESFASAJE_IAT = 300     # segundos de reloj adelantado que se toleran en `iat`
+_MEDIO_CENTAVO = EPSILON_MONTO * 100
+
+
+class _Ausente:
+    """Campo que el payload firmado no trae (distinto de `null`, que no es un entero)."""
+
+    def __repr__(self) -> str:
+        return "AUSENTE"
+
+
+AUSENTE: Any = _Ausente()
 
 
 class CheckoutIlegible(ValueError):
     """El checkout_jwt no se puede leer. El mensaje es un texto fijo del Guard."""
+
+
+@dataclass(frozen=True)
+class LineasFirmadas:
+    """Σ price × quantity de los `line_items` firmados, o por qué no se puede sumar.
+
+    `problema` es un texto fijo del Guard; `observado`, el valor del comercio
+    que lo causó (nunca el `title`).
+    """
+
+    suma: float | None = None   # centavos / 100
+    problema: str | None = None
+    observado: Any = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +84,9 @@ class CheckoutFirmado:
     total: float          # totals[type=total].amount / 100
     moneda: Any
     comercio: Any         # merchant.id
+    lineas: LineasFirmadas | None = None   # None: el payload no trae line_items
+    iat: Any = AUSENTE
+    exp: Any = AUSENTE
 
 
 def hash_checkout(checkout_jwt: str) -> str:
@@ -81,13 +117,16 @@ def leer_checkout(checkout_jwt: str) -> CheckoutFirmado:
         total=_total(payload.get("totals")),
         moneda=payload.get("currency"),
         comercio=comercio.get("id") if isinstance(comercio, dict) else None,
+        lineas=_lineas(payload["line_items"]) if "line_items" in payload else None,
+        iat=payload.get("iat", AUSENTE),
+        exp=payload.get("exp", AUSENTE),
     )
 
 
 def _total(totales: Any) -> float:
     if not isinstance(totales, list):
         raise CheckoutIlegible("falta la lista totals")
-    candidatos = [t for t in totales if isinstance(t, dict) and t.get("type") == "total"]
+    candidatos = _totales_de_tipo_total(totales)
     if len(candidatos) != 1:
         raise CheckoutIlegible("totals no tiene un único total")
     centavos = candidatos[0].get("amount")
@@ -97,6 +136,65 @@ def _total(totales: Any) -> float:
     if valido is None:
         raise CheckoutIlegible("el total no es un monto válido")
     return valido / 100
+
+
+def _totales_de_tipo_total(totales: list) -> list[dict]:
+    return [t for t in totales if isinstance(t, dict) and t.get("type") == "total"]
+
+
+def _centavos(valor: Any) -> float | None:
+    """Número JSON finito (no bool, no string) como float; si no, None."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    return numero(valor)
+
+
+def _entero(valor: Any) -> bool:
+    return isinstance(valor, int) and not isinstance(valor, bool)
+
+
+def _lineas(lineas: Any) -> LineasFirmadas:
+    """Suma price × quantity de cada line_item. Lee `item.price`, `quantity` y
+    `totals`; nunca el `title`."""
+    if not isinstance(lineas, list):
+        return LineasFirmadas(problema="no son una lista", observado=type(lineas).__name__)
+    suma = 0.0
+    for linea in lineas:
+        item = linea.get("item") if isinstance(linea, dict) else None
+        if not isinstance(item, dict):
+            return LineasFirmadas(problema="traen un line_item sin item")
+        precio, cantidad = _centavos(item.get("price")), linea.get("quantity")
+        if precio is None or precio < 0:
+            return LineasFirmadas(
+                problema="traen un price que no es un número ≥ 0", observado=item.get("price")
+            )
+        if not _entero(cantidad) or cantidad < 1:
+            return LineasFirmadas(
+                problema="traen una quantity que no es un entero ≥ 1", observado=cantidad
+            )
+        try:
+            importe = precio * cantidad
+        except OverflowError:  # quantity entera que no entra en un float
+            importe = math.inf
+        if not math.isfinite(importe):
+            return LineasFirmadas(problema="traen un price × quantity que no es finito")
+        if "totals" in linea:
+            totales = linea["totals"]
+            candidatos = _totales_de_tipo_total(totales) if isinstance(totales, list) else []
+            total_linea = _centavos(candidatos[0].get("amount")) if len(candidatos) == 1 else None
+            if total_linea is None:
+                return LineasFirmadas(
+                    problema="traen un line_item cuyos totals no tienen un único total numérico"
+                )
+            if abs(total_linea - importe) > _MEDIO_CENTAVO:
+                return LineasFirmadas(
+                    problema="traen un line_item cuyo total no es su price × quantity",
+                    observado=total_linea / 100,
+                )
+        suma += importe
+    if not math.isfinite(suma):
+        return LineasFirmadas(problema="suman un monto que no es finito")
+    return LineasFirmadas(suma=suma / 100)
 
 
 # ---------------------------------------------------------------------------
@@ -113,8 +211,13 @@ def chequeos_checkout(
     politica: Politica,
     comercio_id: str | None,
     checkout_hash: str | None,
+    ahora: datetime | None = None,
 ) -> tuple[list[Chequeo], str]:
-    """Chequeos del checkout firmado y el hash recalculado (va al recibo)."""
+    """Chequeos del checkout firmado y el hash recalculado (va al recibo).
+
+    `ahora` (el de `evaluar()`; None → `datetime.now(UTC)`, naive → UTC) es
+    el instante contra el que se miden `exp` e `iat`.
+    """
     recalculado = hash_checkout(checkout.checkout_jwt)
     chequeos: list[Chequeo] = []
     try:
@@ -132,8 +235,11 @@ def chequeos_checkout(
     chequeos.append(_chequeo_cart_id(cart_id_elegido, checkout.cart_id, firmado))
     if firmado is not None:
         chequeos += _chequeos_monto(checkout, firmado, elegida, ficha)
+        if firmado.lineas is not None:
+            chequeos.append(_chequeo_lineas(firmado.lineas, firmado.total, firmado.moneda))
         chequeos += _chequeos_moneda(checkout, firmado, elegida, ficha)
         chequeos.append(_chequeo_comercio(firmado.comercio, politica, comercio_id))
+        chequeos += _chequeos_vigencia(firmado, _segundos(ahora))
     return chequeos, recalculado
 
 
@@ -308,6 +414,31 @@ def _chequeos_monto(
     return chequeos
 
 
+def _chequeo_lineas(lineas: LineasFirmadas, total: float, moneda: Any) -> Chequeo:
+    """Los line_items firmados tienen que sumar el total firmado (si no, `bloquea`)."""
+    if lineas.problema is not None or lineas.suma is None:
+        return _chequeo(
+            "integridad", "bloquea", "line_items",
+            f"Los line_items del checkout firmado {lineas.problema or 'son ilegibles'}: "
+            "no se puede confirmar que sumen el total firmado.",
+            esperado=total, observado=acotar(lineas.observado),
+        )
+    if abs(lineas.suma - total) > EPSILON_MONTO:
+        return _chequeo(
+            "integridad", "bloquea", "line_items",
+            f"Los line_items del checkout firmado suman {monto(lineas.suma, moneda)} "
+            f"(price × quantity) y el total firmado es {monto(total, moneda)}: "
+            "el checkout firmado se contradice a sí mismo.",
+            esperado=total, observado=lineas.suma,
+        )
+    return _chequeo(
+        "integridad", "ok", "line_items",
+        f"Los line_items del checkout firmado (price × quantity) suman el total "
+        f"firmado ({monto(total, moneda)}).",
+        esperado=total, observado=lineas.suma,
+    )
+
+
 def _chequeos_moneda(
     checkout: CheckoutVisto, firmado: CheckoutFirmado, elegida: Oferta | None, ficha: Ficha
 ) -> list[Chequeo]:
@@ -422,3 +553,73 @@ def _chequeo_comercio(comercio: Any, politica: Politica, comercio_id: str | None
         detalle=f"El comercio que firmó el checkout ({acotar(aprobado)}) está aprobado por la política.",
         esperado=aprobados, observado=acotar(comercio),
     )
+
+
+def _segundos(ahora: datetime | None) -> int:
+    """`ahora` en segundos UNIX (None → reloj UTC; sin zona horaria → UTC)."""
+    if ahora is None:
+        ahora = datetime.now(timezone.utc)
+    elif ahora.utcoffset() is None:
+        ahora = ahora.replace(tzinfo=timezone.utc)
+    return math.floor(ahora.timestamp())
+
+
+def _chequeos_vigencia(firmado: CheckoutFirmado, ahora: int) -> list[Chequeo]:
+    """`exp` e `iat` del JWT (segundos enteros) contra el instante de la evaluación."""
+    chequeos: list[Chequeo] = []
+    exp, iat = firmado.exp, firmado.iat
+    if exp is not AUSENTE:
+        if not _entero(exp):
+            chequeos.append(
+                _chequeo(
+                    "integridad", "bloquea", "exp",
+                    "El checkout firmado trae un exp que no es un entero (segundos): "
+                    "no se puede saber hasta cuándo vale.",
+                    esperado=ahora, observado=acotar(exp),
+                )
+            )
+        elif exp <= ahora:
+            chequeos.append(
+                _chequeo(
+                    "mandato", "escalar", "exp",
+                    "El checkout firmado venció (exp) antes de esta evaluación: el "
+                    "comercio tiene que emitir uno vigente.",
+                    esperado=ahora, observado=exp,
+                )
+            )
+        else:
+            chequeos.append(
+                _chequeo(
+                    "mandato", "ok", "exp",
+                    "El checkout firmado está vigente (exp posterior a esta evaluación).",
+                    esperado=ahora, observado=exp,
+                )
+            )
+    if iat is not AUSENTE:
+        if not _entero(iat):
+            chequeos.append(
+                _chequeo(
+                    "integridad", "bloquea", "iat",
+                    "El checkout firmado trae un iat que no es un entero (segundos): "
+                    "no se puede saber cuándo se emitió.",
+                    esperado=ahora, observado=acotar(iat),
+                )
+            )
+        elif iat > ahora + _DESFASAJE_IAT:
+            chequeos.append(
+                _chequeo(
+                    "integridad", "escalar", "iat",
+                    "El checkout firmado dice haberse emitido (iat) más de 5 minutos "
+                    "después de esta evaluación.",
+                    esperado=ahora, observado=iat,
+                )
+            )
+        else:
+            chequeos.append(
+                _chequeo(
+                    "integridad", "ok", "iat",
+                    "La emisión del checkout firmado (iat) no está en el futuro.",
+                    esperado=ahora, observado=iat,
+                )
+            )
+    return chequeos

@@ -21,7 +21,7 @@ el recibo referencia). **Ningún texto del comercio llega a `motivo` ni a
 | `verificador.py` | Cada campo (y el SKU) de cada oferta: `verificado` / `solo_declarado` / `contradicho` contra el catálogo; calidad, entrega y reputación `no_verificable`. Los chequeos usan el dato público cuando el comercio declaró el campo |
 | `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, evidencia y política |
 | `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección |
-| `checkout.py` | `ap2.checkout` firmado: decodifica el payload del JWT (sin verificar la firma), recalcula `checkout_hash` y lo ata al cart evaluado |
+| `checkout.py` | `ap2.checkout` firmado: decodifica el payload del JWT (sin verificar la firma), recalcula `checkout_hash`, lo ata al cart evaluado y exige que sea coherente consigo mismo (`line_items`, `exp`, `iat`) |
 | `recibo.py` | Arma el `Recibo` (sin I/O) y lo firma/verifica (JWS compacto ES256); clave PEM y JWK |
 | `textos.py` | `acotar()` (sin caracteres de control, 80 caracteres) y `moneda_legible()` para no interpolar texto del comercio |
 | `normalizar.py` | Comparaciones sin hashear (mayúsculas, `"42"` vs `42`, montos con medio centavo) y `monto_valido()` |
@@ -90,10 +90,26 @@ ES256 del comercio: no hay clave pública; AP2 la verifica después) y compara:
 | `amount` / `amount_cents` del data part (los usa el `PaymentMandate` del sample) vs total firmado | `escalar` + mandato con ese monto |
 | `currency` firmada vs la del cart; la del data part vs la firmada | `escalar`; fuera de la moneda obligatoria `bloquea` |
 | `merchant.id` firmado vs `politica.comercios_aprobados` | fuera `bloquea`; faltante `escalar`; aprobado pero distinto de `comercio_id` `escalar` |
+| `line_items` firmados: Σ `item.price × quantity` vs total firmado; el `totals` type `total` de cada línea (si lo trae) vs su `price × quantity`; `price` número ≥ 0 y `quantity` entero ≥ 1 | `integridad` `bloquea` (el JWT se contradice a sí mismo o es ilegible) |
+| `exp` vs `ahora` (`exp <= ahora` venció) | `mandato` `escalar` |
+| `iat` vs `ahora` (más de 5 minutos en el futuro) | `integridad` `escalar` |
+| `exp` o `iat` que no son enteros (texto, decimal, `true`, `null`…) | `integridad` `bloquea` |
 | JWT ilegible: no 3 segmentos, base64/JSON inválido, encabezado que no es ES256, firma que no mide 64 bytes, sin `totals` o sin un único total numérico > 0 | `bloquea` |
 
 El `recibo.checkout_hash` es el hash recalculado. Sin `checkout` no se agrega
-ningún chequeo (el benchmark no cambia).
+ningún chequeo (el benchmark no cambia). Sin `line_items`, sin `exp` o sin
+`iat` en el payload no se agrega ese chequeo (el sample siempre los pone).
+
+`ahora` es el parámetro de `evaluar()`: los tests lo fijan; con `None` (el
+proxy) es `datetime.now(UTC)`, y uno sin zona horaria se toma como UTC. Por
+eso un checkout coherente se arma como `create_checkout()` del sample:
+`iat = now` y `exp = now + 3600` respecto de ese `ahora`. Un JWT de prueba
+con fechas fijas del pasado da `escalar` por `exp` vencido.
+
+La suma de los `line_items` es estricta: no descuenta `tax`, `fulfillment`,
+`discount` ni `fee` (el comercio del sample no los usa). Un checkout con
+esos componentes, o con líneas anidadas (`parent_id`), se bloquea por
+incoherente; si algún día hacen falta, hay que modelarlos acá.
 
 ### Resultados
 
@@ -211,6 +227,13 @@ veredicto = veredicto.model_copy(update={"recibo": firmar_recibo(veredicto.recib
 - **Checkout**: sin `checkout_hash` declarado → `escalar`; el monto y la
   moneda del data part se comparan con lo firmado porque el `PaymentMandate`
   del sample los toma de ahí.
+- **Checkout incoherente consigo mismo** (hallazgo N3): `line_items` que no
+  suman el total firmado → `bloquea` (el objeto firmado se contradice: no hay
+  dato que falte, hay uno que miente); `exp` vencido → `escalar` (el checkout
+  puede haber sido legítimo; un humano decide o el comercio emite otro);
+  `exp`/`iat` que no son enteros → `bloquea`, igual que el resto de un JWT
+  ilegible. Un entero que no entra en un float (`10**400`) cuenta como
+  monto inválido (`normalizar.numero`) en vez de lanzar.
 - **Recibo**: `id = "rcb-" + sha256(entradas)` (ficha, ofertas sin texto
   libre, descartes, elegido, comercio, política, `checkout_hash`, `emitido`).
   `verificaciones` = evidencia de la elegida (incluye el SKU y las
