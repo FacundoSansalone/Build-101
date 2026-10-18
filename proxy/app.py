@@ -26,15 +26,15 @@ aplica el veredicto y bloquea lo que no pudo evaluar (fail-closed).
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import copy
 import functools
+import hashlib
 import hmac
 import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -119,6 +119,7 @@ from proxy.pedido_usuario import LARGO_MAXIMO as LARGO_MAXIMO_PEDIDO
 from proxy.pedido_usuario import PedidoDelUsuario, pedido_para_intake
 from proxy.persistencia import Persistencia
 from proxy.seguridad import HEADER_TOKEN, ControlLocal, escribir_token, generar_token
+from proxy.sin_estado import en_hilo
 from proxy.tipos_gateway import (
     HEADER_COMPRA,
     ID_COMPRA_RE,
@@ -173,6 +174,13 @@ _MAX_CONTEXTOS = 500
 # para que un evento no pierda la marca mientras todavía se puede mostrar.
 _MAX_MARCAS_PRIVADAS = 5000
 _MAX_ID = 200  # largo máximo de contexto_id / cart_id en la API de aprobaciones
+# Contextos sin dueño que recuerda una llamada anónima (`Llamada.contextos_sin_dueno`):
+# un stream trae uno; más allá de esto se vuelve a preguntar (la memoria no crece).
+_MAX_CONTEXTOS_POR_LLAMADA = 16
+# Veredictos del filtro sobre la Agent Card (`ProxyGuard._card_pasa`): el
+# agente la pide seguido y la misma card no se vuelve a filtrar por un rato.
+_MAX_CARDS_FILTRADAS = 64
+_VIGENCIA_CARD_S = 300.0
 
 # Plantillas fijas del texto para el agente: "KaiAI: <status>. <motivo>"
 # (el motivo lo arma guard/ sin texto del comercio). Ningún string del
@@ -454,6 +462,10 @@ class Llamada:
     comercio: Comercio | None = None
     integrador: Integrador | None = None
     oyente: str = "local"
+    # Tráfico anónimo: los `contextId` que el almacén ya dijo que no son de
+    # una compra de integrador en esta llamada (no se pregunta en cada evento
+    # SSE: con Supabase, cada pregunta es un ida y vuelta HTTP).
+    contextos_sin_dueno: set[str] = field(default_factory=set)
 
     @property
     def de_integrador(self) -> bool:
@@ -522,6 +534,9 @@ class ProxyGuard:
         # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
         self.agente = agente
         self.filtro = filtro
+        # Veredictos del filtro sobre la Agent Card, por sha256 de los bytes
+        # de la card: (vence en monotonic, pasa). Ver `_card_pasa`.
+        self._cards_filtradas: OrderedDict[str, tuple[float, bool]] = OrderedDict()
         # Lo que dice `describir()` del módulo del filtro (solo informa).
         self.filtro_modo = filtro_modo if filtro is not None else None
         # Los cierra el lifespan de `create_app`. Públicos: `/v1` sin estado
@@ -586,16 +601,6 @@ class ProxyGuard:
         """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
         ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
         return self.config.demo_hoy or date.today()
-
-    async def _en_hilo(
-        self, ejecutor: ThreadPoolExecutor, funcion: Callable[..., Any], *args: Any
-    ) -> Any:
-        """Como `asyncio.to_thread` (con el contexto), pero en un pool propio.
-        Si la espera se cancela antes de que tome un hilo, no corre."""
-        contexto = contextvars.copy_context()
-        return await asyncio.get_running_loop().run_in_executor(
-            ejecutor, functools.partial(contexto.run, funcion, *args)
-        )
 
     def cerrar_hilos(self) -> None:
         """Al apagar: sin esperar a los que siguen corriendo (un LLM colgado)
@@ -948,7 +953,7 @@ class ProxyGuard:
         # Con un integrador el Guard está siempre prendido (como en `rpc`).
         activo = True if integrador is not None else self.guard_activo
         if activo and self.filtro is not None and not await self._card_pasa(
-            card, comercio, integrador
+            card, contenido, comercio, integrador
         ):
             return JSONResponse({"error": "card_bloqueada"}, status_code=502)
         publica = self._url_publica_card(request, comercio)
@@ -957,26 +962,48 @@ class ProxyGuard:
         return JSONResponse(a2a.reescribir_card(card, publica))
 
     async def _card_pasa(
-        self, card: dict[str, Any], comercio: Comercio, integrador: Integrador | None
+        self,
+        card: dict[str, Any],
+        contenido: bytes,
+        comercio: Comercio,
+        integrador: Integrador | None,
     ) -> bool:
         """La Agent Card también es texto del comercio que lee el agente
         (nombre, descripciones, skills): pasa por el filtro antes de llegarle.
         Si el filtro la corta, falla o tarda de más, no se entrega (y queda un
-        evento `error` con un motivo fijo, nada de la card)."""
+        evento `error` con un motivo fijo, nada de la card).
+
+        El agente la pide seguido y el filtro puede hacer hasta tres preguntas
+        al modelo: el veredicto queda por sha256 de los bytes de la card
+        (`_VIGENCIA_CARD_S`, hasta `_MAX_CARDS_FILTRADAS`). Una card distinta
+        se filtra de nuevo. Se guarda lo que dijo el filtro (pasa o corta);
+        una falla no, así el próximo pedido la vuelve a revisar."""
         llamada = Llamada(
             pedido=a2a.Pedido(), guard_activo=True, comercio=comercio, integrador=integrador
         )
-        try:
-            if (await self._correr_filtro(card)).pasa:
-                return True
-            motivo = "La Agent Card del comercio no pasó el filtro de seguridad: no se entrega."
-        except Exception as e:  # noqa: BLE001 - fail-closed
-            logger.exception("El filtro de seguridad falló con la Agent Card")
-            motivo = (
-                f"El filtro de seguridad no pudo revisar la Agent Card ({type(e).__name__}): "
-                "no se entrega."
+        clave = hashlib.sha256(contenido).hexdigest()
+        guardado = self._cards_filtradas.get(clave)
+        pasa = guardado[1] if guardado is not None and time.monotonic() < guardado[0] else None
+        if pasa is None:
+            try:
+                pasa = (await self._correr_filtro(card)).pasa is True
+            except Exception as e:  # noqa: BLE001 - fail-closed
+                logger.exception("El filtro de seguridad falló con la Agent Card")
+                self._error(
+                    llamada,
+                    f"El filtro de seguridad no pudo revisar la Agent Card ({type(e).__name__}): "
+                    "no se entrega.",
+                )
+                return False
+            _recordar(
+                self._cards_filtradas, clave, (time.monotonic() + _VIGENCIA_CARD_S, pasa),
+                _MAX_CARDS_FILTRADAS,
             )
-        self._error(llamada, motivo)
+        if pasa:
+            return True
+        self._error(
+            llamada, "La Agent Card del comercio no pasó el filtro de seguridad: no se entrega."
+        )
         return False
 
     # -- JSON-RPC ------------------------------------------------------------
@@ -1017,7 +1044,7 @@ class ProxyGuard:
             # Tráfico anónimo (la demo): nunca en el contexto de una compra de
             # integrador. Lo adoptaría (su ficha, sus ofertas) y podría
             # bloquearla. No se reenvía ni se emite nada.
-            ajeno = await self._contexto_es_de_integrador(pedido.contexto_id)
+            ajeno = await self._contexto_es_de_integrador(pedido.contexto_id, llamada)
             if ajeno is None:
                 return _error_a2a(pedido.rpc_id, "estado_no_disponible")
             if ajeno:
@@ -1715,7 +1742,7 @@ class ProxyGuard:
         if not isinstance(result, dict) or result.get("contextId") is None:
             return True
         if not llamada.de_integrador:
-            return await self._contexto_es_de_integrador(result["contextId"]) is False
+            return await self._contexto_es_de_integrador(result["contextId"], llamada) is False
         compra, comercio = llamada.compra, llamada.comercio
         if compra is None or comercio is None:
             return False
@@ -1738,9 +1765,15 @@ class ProxyGuard:
         (`compra.restante()`) más un margen para el LLM, nunca más que la
         llamada. Si vence y la compra abrió otra espera mientras tanto (otro
         plazo), vuelve a calcular; si no avanzó, False y quien llama cierra
-        del lado seguro (antes esperaba el presupuesto entero, 570 s)."""
+        del lado seguro (antes esperaba el presupuesto entero, 570 s).
+
+        Sin plazo (`vence` None: la primera todavía arma la pregunta con el
+        LLM, o ya pasó la espera y sigue con el LLM de después) no hay nada
+        que acote salvo la llamada: el tramo es lo que le queda a la llamada."""
         while not evento.is_set():
-            tramo = min(self._restante(llamada), compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
+            tramo = self._restante(llamada)
+            if compra.vence is not None:
+                tramo = min(tramo, compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
             if tramo <= 0:
                 return False
             plazo = compra.vence
@@ -1755,7 +1788,7 @@ class ProxyGuard:
         """Una llamada al agente de intención, en un hilo (el pool del LLM) y
         con tope de tiempo."""
         return await asyncio.wait_for(
-            self._en_hilo(self.ejecutor_llm, funcion, *args), _TIMEOUT_LLM_S
+            en_hilo(self.ejecutor_llm, funcion, *args), _TIMEOUT_LLM_S
         )
 
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
@@ -2043,7 +2076,7 @@ class ProxyGuard:
         tiempo. Lanza si falla, si tarda de más o si no devuelve un
         `ResultadoFiltro`: quien llama falla cerrado."""
         salida = await asyncio.wait_for(
-            self._en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(objetivo)),
+            en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(objetivo)),
             _TIMEOUT_FILTRO_S,
         )
         if isinstance(salida, ResultadoFiltro):
@@ -2524,7 +2557,7 @@ class ProxyGuard:
         gtins = gtins_de_ofertas(offer_details, catalogo)
         try:
             resultados = await asyncio.wait_for(
-                self._en_hilo(self.ejecutor_llm, consultar_gtins, self.fabricante, gtins),
+                en_hilo(self.ejecutor_llm, consultar_gtins, self.fabricante, gtins),
                 _TIMEOUT_FABRICANTE_S,
             )
         except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala
@@ -2950,11 +2983,19 @@ class ProxyGuard:
             return True
         return self._compra_api(None, contexto_id) is not None
 
-    async def _contexto_es_de_integrador(self, contexto_id: Any) -> bool | None:
+    async def _contexto_es_de_integrador(
+        self, contexto_id: Any, llamada: Llamada | None = None
+    ) -> bool | None:
         """¿El contexto es de una compra de integrador? Primero la memoria y,
         si puede haber compras que no están en memoria (claves activas o un
         almacén durable, después de un reinicio), el almacén. None si el
-        almacén falla: quien llama corta (fail-closed)."""
+        almacén falla: quien llama corta (fail-closed).
+
+        Con `llamada`, un "no es" del almacén vale para el resto de esa
+        llamada (`Llamada.contextos_sin_dueno`): el pedido y cada evento del
+        stream traen el mismo `contextId`. La memoria se mira siempre (una
+        atadura de este proceso a mitad del stream se ve igual); un "sí" o
+        una falla no se guardan: cortan."""
         if not isinstance(contexto_id, str) or not contexto_id:
             return False
         if self._contexto_de_integrador(contexto_id):
@@ -2963,11 +3004,17 @@ class ProxyGuard:
             return False  # la demo sola: no hay compras de integrador
         if not es_id(ID_SEGURO_RE, contexto_id):
             return False  # uno así nunca se ata a una compra (`atar_contexto_api`)
+        if llamada is not None and contexto_id in llamada.contextos_sin_dueno:
+            return False
         try:
-            return await self.almacen.compra_de_contexto(contexto_id) is not None
+            dueno = await self.almacen.compra_de_contexto(contexto_id)
         except ErrorAlmacen as e:
             logger.error("No se pudo saber de quién es el contexto %s: %s", contexto_id, e)
             return None
+        if dueno is None and llamada is not None:
+            if len(llamada.contextos_sin_dueno) < _MAX_CONTEXTOS_POR_LLAMADA:
+                llamada.contextos_sin_dueno.add(contexto_id)
+        return dueno is not None
 
     async def post_aprobacion(self, request: Request) -> Response:
         body, error = a2a.parsear_json(await request.body())

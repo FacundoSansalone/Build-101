@@ -445,6 +445,12 @@ class Conversacion:
         self._tarea = None
         self._reiniciar()
 
+    @property
+    def generacion(self) -> int:
+        """Cambia con cada `nueva()`: quien espera algo de afuera la toma antes
+        y, si cambió al volver, lo suyo era de la compra anterior."""
+        return self._generacion
+
     def estado_json(self) -> dict[str, Any]:
         return {
             "sesion": {"id": self.sesion_id, "creada": _iso(self.creada)},
@@ -763,7 +769,13 @@ async def api_demo_mensaje(request: Request) -> Response:
     if not 0 < len(texto) <= MAX_TEXTO:
         return _error(400, "se_espera", formato={"texto": f"str (1..{MAX_TEXTO})"})
     conversacion = _conversacion(request)
-    ruta = rutear(await _compras_del_proxy(cfg), texto, desde=conversacion.creada)
+    # "Nueva compra" (o el interruptor del Guard) puede llegar durante un
+    # await de acá: el texto era de la compra anterior y no se usa en la nueva.
+    generacion = conversacion.generacion
+    compras = await _compras_del_proxy(cfg)
+    if conversacion.generacion != generacion:
+        return _error(409, "compra_reiniciada", destino="agente")
+    ruta = rutear(compras, texto, desde=conversacion.creada)
 
     if ruta.destino == "aclarar":
         return _error(422, "se_espera_si_o_no", destino="decision")
@@ -794,6 +806,10 @@ async def api_demo_mensaje(request: Request) -> Response:
         try:
             await _reenviar_json(cfg, "POST", RUTA_PEDIDO_USUARIO, cuerpo={"texto": texto})
         finally:
-            conversacion.ocupado = False
+            # Si mientras tanto empezó otra compra, `ocupado` ya es de esa.
+            if conversacion.generacion == generacion:
+                conversacion.ocupado = False
+        if conversacion.generacion != generacion:
+            return _error(409, "compra_reiniciada", destino="agente")
     conversacion.iniciar(texto)
     return JSONResponse({"destino": "agente"}, status_code=202)

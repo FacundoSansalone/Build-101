@@ -83,13 +83,15 @@ TIMEOUT_FABRICANTE_S = 15.0  # igual que el proxy: todas las consultas de una ev
 _T = TypeVar("_T")
 
 
-async def _en_hilo(ejecutor: Executor | None, funcion: Callable[..., _T], *args: Any) -> _T:
+async def en_hilo(ejecutor: Executor | None, funcion: Callable[..., _T], *args: Any) -> _T:
     """`funcion(*args)` en otro hilo, sin frenar el loop.
 
-    Con `ejecutor` (el que le pase la integración, para acotar cuántos hilos
-    usa el gateway), en ese; con None, `asyncio.to_thread` como siempre. El
-    contexto va copiado, igual que en `to_thread`. Un ejecutor cerrado lanza
-    al programar: quien llama lo trata como cualquier falla (falla cerrado).
+    Con `ejecutor` (los pools propios del proxy, `ejecutor_filtro` y
+    `ejecutor_llm`: los usan `ProxyGuard` y, por la integración, estos
+    servicios), en ese; con None, `asyncio.to_thread` como siempre. El
+    contexto va copiado, igual que en `to_thread`. Si la espera se cancela
+    antes de que tome un hilo, no corre. Un ejecutor cerrado lanza al
+    programar: quien llama lo trata como cualquier falla (falla cerrado).
     """
     if ejecutor is None:
         return await asyncio.to_thread(funcion, *args)
@@ -154,7 +156,7 @@ async def filtrar_contenido(
         return _resultado_filtro(False, MOTIVO_FALLA, ["filtro:no_configurado"])
     try:
         salida = await asyncio.wait_for(
-            _en_hilo(ejecutor, filtro, envolver_contenido(solicitud)), timeout_s
+            en_hilo(ejecutor, filtro, envolver_contenido(solicitud)), timeout_s
         )
         resultado = (
             salida if isinstance(salida, ResultadoFiltro) else ResultadoFiltro.model_validate(salida)
@@ -242,7 +244,7 @@ async def con_fabricante(
     gtins = gtins_de_ofertas(offer_details, catalogo)
     try:
         resultados = await asyncio.wait_for(
-            _en_hilo(ejecutor, consultar_gtins, fabricante, gtins), timeout_s
+            en_hilo(ejecutor, consultar_gtins, fabricante, gtins), timeout_s
         )
     except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala
         logger.warning("La fuente del fabricante no respondió: %s", type(e).__name__)

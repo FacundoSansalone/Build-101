@@ -99,7 +99,7 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
 
 | Llamada | Qué hace el proxy |
 |---|---|
-| `GET /a2a/merchant_agent/.well-known/agent-card.json` (o `agent.json`) | Pide la card al comercio y reescribe `url` y `additionalInterfaces[].url` con `PROXY_PUBLIC_URL`. Sin esto, el cliente del sample manda el JSON-RPC directo a `:8001`. Devuelve solo el JSON (`Content-Type: application/json`), **sin ningún header del comercio** (nunca `Set-Cookie`). Cualquier otra ruta bajo `/a2a/merchant_agent/` da 404 y no se pide al comercio. Con filtro (`GUARD_FILTRO`) y el Guard prendido (siempre, con un integrador), la card del comercio pasa por el filtro antes de llegar al agente: nombre, descripciones y skills son texto del comercio. Si el filtro la corta, falla o tarda de más, 502 `card_bloqueada` y un evento `error` con motivo fijo. Más de 64 niveles de anidamiento: 502 `card_ilegible`. |
+| `GET /a2a/merchant_agent/.well-known/agent-card.json` (o `agent.json`) | Pide la card al comercio y reescribe `url` y `additionalInterfaces[].url` con `PROXY_PUBLIC_URL`. Sin esto, el cliente del sample manda el JSON-RPC directo a `:8001`. Devuelve solo el JSON (`Content-Type: application/json`), **sin ningún header del comercio** (nunca `Set-Cookie`). Cualquier otra ruta bajo `/a2a/merchant_agent/` da 404 y no se pide al comercio. Con filtro (`GUARD_FILTRO`) y el Guard prendido (siempre, con un integrador), la card del comercio pasa por el filtro antes de llegar al agente: nombre, descripciones y skills son texto del comercio. Si el filtro la corta, falla o tarda de más, 502 `card_bloqueada` y un evento `error` con motivo fijo. Lo que dijo el filtro (pasa o corta) queda 5 min por sha256 de los bytes de la card (hasta 64 cards): la misma card no se vuelve a filtrar en cada GET; una distinta sí, y una falla no se guarda. Más de 64 niveles de anidamiento: 502 `card_ilegible`. |
 | `POST /a2a/merchant_agent` | Reenvía el JSON-RPC (bytes del pedido tal cual, con `X-A2A-Extensions`). Respuesta JSON (`message/send`, lo que usa el sample) o SSE (`message/stream`, `tasks/resubscribe`), detectada con `"text/event-stream" in content-type.lower()`. Del comercio al cliente solo pasa `X-A2A-Extensions`; el `Content-Type` se normaliza. Si el cliente se va a mitad de un SSE, la respuesta del comercio se cierra igual (tarea de fondo de la `StreamingResponse`). |
 | `find_products` (pedido con `catalog_search`) | Pasa sin cambios. **Solo de estas respuestas** salen las ofertas: carts, offer_details y escenario, guardados (copiados) por el `context_id` de la respuesta. Una búsqueda nueva del cliente en el mismo contexto las reemplaza; ninguna otra respuesta las toca. |
 | `create_checkout` (pedido con `cart_id`) | Exige **un solo** `ap2.checkout`, en los artefactos de una tarea, con `cart_id` = el del pedido y `contextId` = el del pedido. Evalúa con las ofertas del contexto del pedido: `evaluar(ficha, OfertasVistas(...), cart_id_del_pedido, catalogo, politica=None, checkout_hash=..., checkout=CheckoutVisto.model_validate(ap2.checkout))` (siempre con `checkout=`). |
@@ -548,6 +548,10 @@ es de un integrador:
   cada evento SSE, también un `tasks/get`), se corta; y un corte del filtro
   en ese tráfico no bloquea la compra ajena. Antes, la demo la adoptaba:
   evaluaba con su ficha, pisaba sus ofertas y la podía dejar `bloqueada`.
+  Al almacén se le pregunta una vez por `contextId` y por llamada: el "no es
+  de nadie" vale para el resto de los eventos del mismo stream (la memoria
+  se mira en cada uno). Sin claves y con el almacén en memoria no se le
+  pregunta nada.
 - Los errores antes de reenviar son HTTP + error JSON-RPC (`code: -32001`,
   mensaje fijo `KaiAI: …` y `data.codigo`). `comercio_desconocido`
   (404), `comercio_no_permitido` (403) y `pedido_ilegible` (400) salen con
@@ -828,6 +832,7 @@ receptor de webhooks se inyectan):
 |---|---|
 | `test_claves.py`, `test_comercios.py` | Formato y verificación de claves, middleware por oyente, CLI; registro de comercios y URLs |
 | `test_gateway_revision.py` | Regresiones de la revisión adversarial del gateway: desalojo de memoria, aprobaciones solo del dueño, GET de `/guard/*` sin token, escrituras en orden, listado tras un reinicio y límite concurrente |
+| `test_revision_esperas_y_caches.py` | Segunda revisión: otra búsqueda sin plazo espera la llamada, una consulta al almacén por contexto y llamada en el tráfico anónimo, marcas de una fila de otro reloj, caché del filtro sobre la Agent Card y los duplicados (`anidado_de_mas`, `en_hilo`) |
 | `test_webhooks.py` | Firma, reintentos, SSRF (IPs no globales, IP fijada, sin redirecciones), cola y registro de entregas |
 | `test_estado.py`, `test_estado_supabase.py`, `test_compras_api.py` | Almacén en memoria y PostgREST (con `MockTransport`), compras de API y su normalización tras un reinicio |
 | `test_api_v1.py`, `test_vistas.py` | Validación de `/v1`, errores, OpenAPI y que nada del vendedor salga en las vistas |

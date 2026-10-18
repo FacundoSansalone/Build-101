@@ -281,6 +281,9 @@ async def test_cuerpo_anidado_de_mas_da_400(cliente, nucleo):
            400, "json_invalido")
     _error(await cliente.post("/v1/evaluar", json={"x": {"y": _anidado(api_v1.MAX_PROFUNDIDAD_JSON)}}),
            400, "json_invalido")
+    # Un nivel de más ya corta (`a2a.anidado_de_mas`, el mismo chequeo del proxy).
+    _error(await cliente.post("/v1/filtrar", json={"contenido": _anidado(api_v1.MAX_PROFUNDIDAD_JSON)}),
+           400, "json_invalido")
     assert nucleo.llamadas == []
     # Justo en el límite pasa (el cuerpo es el primer nivel).
     r = await cliente.post("/v1/filtrar", json={"contenido": _anidado(api_v1.MAX_PROFUNDIDAD_JSON - 1)})
