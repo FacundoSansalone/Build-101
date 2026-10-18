@@ -56,10 +56,16 @@ class Umbrales:
     - `>= resuelto` y dicho por el usuario: resuelto.
     - entre `duda` y `resuelto`, o inferido: a confirmar.
     - `< duda` (o "no dicho"): faltante, se repregunta.
+
+    Calibrado con el set (OpenAI Decisions, gpt-6-luna, 2026-10-18): de 0,70
+    a 0,85 en `resuelto` da lo mismo (0,80, en el medio). `duda` 0,60 y no
+    0,50: con 0,50 pasaba una moneda al aire ("notebooks para el equipo":
+    una 0,51 contra no dicha 0,49) y se proponía 1 en vez de preguntar.
+    Preguntar de más es más barato que comprar mal.
     """
 
     resuelto: float = 0.80
-    duda: float = 0.50
+    duda: float = 0.60
 
 
 UMBRALES = Umbrales()
@@ -726,15 +732,17 @@ def preguntas(
                 "(unas zapatillas, una notebook, a laptop)",
          "no_dicha": "no dijo cuántas y no se puede asumir una sola"},
     ))
-    qs.append(Eleccion(
-        "precio",
-        _BASE + "¿Cuál es el tope de precio que dio el usuario (lo máximo que quiere "
-        "pagar)? Elegí el monto entre los números del texto; no elijas cantidades, "
-        "talles ni fechas. Si no dio un tope de precio concreto, elegí no_dicho.",
-        {**{c.clave: _desc(c, _numero_texto(c.valor)) for c in cands.montos},
-         "no_dicho": "no dio un tope de precio concreto"},
-    ))
     if cands.montos:
+        # Sin números en el texto no hay tope que elegir: no se pregunta (queda
+        # faltante). Además, OpenAI Decisions rechaza una elección de una opción.
+        qs.append(Eleccion(
+            "precio",
+            _BASE + "¿Cuál es el tope de precio que dio el usuario (lo máximo que quiere "
+            "pagar)? Elegí el monto entre los números del texto; no elijas cantidades, "
+            "talles ni fechas. Si no dio un tope de precio concreto, elegí no_dicho.",
+            {**{c.clave: _desc(c, _numero_texto(c.valor)) for c in cands.montos},
+             "no_dicho": "no dio un tope de precio concreto"},
+        ))
         qs.append(Eleccion(
             "precio_alcance",
             _BASE + "El tope de precio que dio el usuario, ¿es el total de la compra o "
@@ -775,7 +783,7 @@ def preguntas(
             f"firmeza_{i}", _BASE + f"Sobre {etiqueta}: ¿el usuario lo exige o lo prefiere?",
             dict(_FIRMEZA),
         ))
-    return qs
+    return [q for q in qs if not isinstance(q, Eleccion) or len(q.opciones) >= 2]
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +876,30 @@ def _elegida(resp: Any) -> tuple[str | None, float]:
     return None, 0.0
 
 
+def _por_valor(resp: Any, valor_de: Mapping[str, Any]) -> tuple[Any, float]:
+    """(valor, probabilidad) sumando las opciones que dan el mismo valor.
+
+    `valor_de`: opción → valor (las opciones "no dicho" no están). Por
+    ejemplo, "$" suelto: USD 0,55 + "solo el símbolo" (= USD) 0,26 → USD
+    0,81. Gana el valor más probable; si gana "no dicho" (o nada), (None, p).
+    """
+    if not isinstance(resp, RespuestaEleccion):
+        return None, 0.0
+    probs = dict(resp.probabilidades) or {resp.eleccion: resp.confianza}
+    masa: dict[Any, float] = {}
+    nada = 0.0
+    for opcion, p in probs.items():
+        if opcion in valor_de:
+            clave = valor_de[opcion]
+            masa[clave] = masa.get(clave, 0.0) + float(p)
+        else:
+            nada += float(p)
+    if not masa:
+        return None, nada
+    valor, p = max(masa.items(), key=lambda kv: kv[1])
+    return (valor, p) if p > nada else (None, nada)
+
+
 def _nivel(p: float, dicho: bool, u: Umbrales) -> EstadoParametro:
     if p < u.duda:
         return "faltante"
@@ -929,20 +961,16 @@ def interpretar(
     else:
         params["categoria"] = Parametro("categoria", "faltante", probabilidad=p)
 
-    # Cantidad
-    por_clave = {c.clave: c for c in cands.cantidades}
-    opcion, p = _elegida(respuestas.get("cantidad"))
-    cantidad: int | None = None
-    if opcion in por_clave:
-        c = por_clave[opcion]
-        estado = _nivel(p, c.dicho, u)
-        origen = "dicho" if c.dicho else "inferido"
-        cantidad = c.valor if estado != "faltante" else None
-    elif opcion == "una":
-        estado, origen = _nivel(p, False, u), "inferido"
-        cantidad = 1 if estado != "faltante" else None
-    else:
-        estado, origen = "faltante", None
+    # Cantidad ("una" y un "1" escrito son el mismo valor: se suman)
+    cantidad, p = _por_valor(
+        respuestas.get("cantidad"), {**{c.clave: c.valor for c in cands.cantidades}, "una": 1}
+    )
+    estado, origen = "faltante", None
+    if cantidad is not None:
+        dicho = any(c.valor == cantidad and c.dicho for c in cands.cantidades)
+        estado, origen = _nivel(p, dicho, u), "dicho" if dicho else "inferido"
+        if estado == "faltante":
+            cantidad = None
     params["cantidad"] = Parametro(
         "cantidad", estado, cantidad, origen if cantidad else None, p,
         str(cantidad) if cantidad else "",
@@ -960,13 +988,15 @@ def interpretar(
         alcance, p_alcance = _elegida(respuestas.get("precio_alcance"))
         texto = _numero_texto(monto)
         total: float | None = monto
-        if alcance == "por_unidad" and p_alcance >= u.duda:
-            texto = textos["por_unidad"].format(monto=texto)
-            total = monto * cantidad if cantidad else None
-            if total is not None:
-                texto += f" × {cantidad} = {_numero_texto(total)}"
-        if alcance in ("total", "por_unidad") and p_alcance < u.resuelto:
-            estado = _peor(estado, "a_confirmar")
+        # Con una sola unidad, total y por unidad son lo mismo: no importa.
+        if cantidad != 1:
+            if alcance == "por_unidad" and p_alcance >= u.duda:
+                texto = textos["por_unidad"].format(monto=texto)
+                total = monto * cantidad if cantidad else None
+                if total is not None:
+                    texto += f" × {cantidad} = {_numero_texto(total)}"
+            if alcance in ("total", "por_unidad") and p_alcance < u.resuelto:
+                estado = _peor(estado, "a_confirmar")
         params["precio"] = Parametro(
             "precio", estado, total, "dicho", p, texto,
             _req("precio", "maximo", total, "dicho")
@@ -976,11 +1006,13 @@ def interpretar(
     else:
         params["precio"] = Parametro("precio", "faltante", probabilidad=p)
 
-    # Moneda
-    opcion, p = _elegida(respuestas.get("moneda"))
-    if opcion in DESCRIPCION_MONEDAS or (opcion == "solo_simbolo" and cands.simbolo_ambiguo):
-        codigo = MONEDA_DEL_SIMBOLO if opcion == "solo_simbolo" else opcion
-        dicho = codigo in cands.monedas_dichas and opcion != "solo_simbolo"
+    # Moneda ("solo el símbolo" se propone como USD: se suma a USD)
+    valor_de = {c: c for c in DESCRIPCION_MONEDAS}
+    if cands.simbolo_ambiguo:
+        valor_de["solo_simbolo"] = MONEDA_DEL_SIMBOLO
+    codigo, p = _por_valor(respuestas.get("moneda"), valor_de)
+    if codigo is not None:
+        dicho = codigo in cands.monedas_dichas
         estado = _nivel(p, dicho, u)
         origen = "dicho" if dicho else "inferido"
         params["moneda"] = Parametro(

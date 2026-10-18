@@ -246,8 +246,22 @@ def test_sin_montos_ni_fechas_no_pregunta_alcance_ni_firmeza_del_plazo():
     cands = extraer(["Necesito una notebook"], HOY)
     qs = _por_nombre(preguntas(cands, CATEGORIAS))
     assert "precio_alcance" not in qs and "plazo_firmeza" not in qs
-    assert set(qs["precio"].opciones) == {"no_dicho"}
+    # Sin números no hay tope que elegir: no se pregunta (y queda faltante).
+    assert "precio" not in qs
     assert set(qs["plazo"].opciones) == {"sin_apuro", "no_dicho"}
+    r = interpretar({}, cands, CATEGORIAS, respondidos=0)
+    assert "precio" in r.faltan
+
+
+@pytest.mark.parametrize(
+    "texto",
+    ["Necesito una notebook", "I need something", "hasta $150", "Comprame algo"],
+)
+def test_ninguna_eleccion_tiene_menos_de_dos_opciones(texto):
+    """OpenAI Decisions rechaza (HTTP 400) una elección con una sola opción."""
+    for q in preguntas(extraer([texto], HOY), CATEGORIAS):
+        if isinstance(q, Eleccion):
+            assert len(q.opciones) >= 2, q.nombre
 
 
 def test_con_signo_pesos_suelto_ofrece_solo_simbolo():
@@ -377,6 +391,33 @@ def test_precio_por_unidad_se_multiplica_por_la_cantidad():
     precio = next(q for q in r.requisitos if q.campo == "precio")
     assert precio.valor == 160000.0
     assert _parametro(r, "precio").estado == "resuelto"
+
+
+def test_con_una_sola_unidad_no_importa_si_el_tope_es_total_o_por_unidad():
+    cands = extraer(["Zapatillas Nike talle 42, hasta 150 dólares"], HOY)
+    resp = {
+        "cantidad": eleccion("cantidad", "una", 0.95),
+        "precio": eleccion("precio", clave_de(cands.montos, 150.0), 0.97),
+        "precio_alcance": eleccion("precio_alcance", "total", 0.67, por_unidad=0.33),
+    }
+    precio = _parametro(interpretar(resp, cands, CATEGORIAS, respondidos=0), "precio")
+    assert (precio.estado, precio.valor) == ("resuelto", 150.0)
+
+
+def test_las_opciones_que_dan_el_mismo_valor_se_suman():
+    # "$" suelto: USD 0,55 + "solo el símbolo" (= USD) 0,26 → USD con 0,81.
+    cands = extraer(["new shoes, around $100"], HOY)
+    resp = {"moneda": RespuestaEleccion("moneda", "USD", {"USD": 0.55, "solo_simbolo": 0.26, "no_dicha": 0.19}, 0.3)}
+    moneda = _parametro(interpretar(resp, cands, CATEGORIAS, respondidos=0), "moneda")
+    assert moneda.valor == "USD" and moneda.probabilidad == pytest.approx(0.81)
+    assert (moneda.estado, moneda.origen) == ("a_confirmar", "inferido")
+    # Cantidad: "1" escrito y "una" son el mismo valor; lo escribió: dicho.
+    cands = extraer(["1 notebook"], HOY)
+    resp = {"cantidad": RespuestaEleccion(
+        "cantidad", "una", {clave_de(cands.cantidades, 1): 0.45, "una": 0.46, "no_dicha": 0.09}, 0.4
+    )}
+    cantidad = _parametro(interpretar(resp, cands, CATEGORIAS, respondidos=0), "cantidad")
+    assert (cantidad.valor, cantidad.estado, cantidad.origen) == (1, "resuelto", "dicho")
 
 
 def test_precio_por_unidad_sin_cantidad_no_arma_requisito():
