@@ -13,10 +13,13 @@ import pytest
 
 from proxy.estado import EstadoMemoria
 from proxy.tests.ayudantes import evaluador_espia
+from proxy.tests.fake_world import HEADERS_A2A, cuerpo, pedido_find_products
 from proxy.tests.gateway_ayudantes import (
+    CLAVE_ACME,
     FICHA,
     GATEWAY_PUBLIC_URL,
     armar_gateway,
+    cliente_local,
     cliente_publico,
 )
 
@@ -71,3 +74,22 @@ async def test_si_guardar_la_compra_falla_por_otra_cosa_tampoco_queda_en_memoria
     assert resp.status_code == 500
     assert resp.json()["error"] == {"codigo": "interno", "mensaje": "Error interno del gateway."}
     assert mundo.proxy.compras.de_integrador("acme") == []
+
+
+# -- la clave del integrador nunca llega al comercio -----------------------------------
+
+
+async def test_una_clave_mal_presentada_no_se_reenvia_al_comercio(config_gw):
+    """En el oyente local, `Authorization: Token psg_…` (o sin esquema) pasaba
+    como tráfico anónimo de la demo y el proxy lo reenviaba al comercio con la
+    clave del integrador adentro."""
+    mundo = armar_gateway(config_gw, evaluador_espia()[0])
+    async with cliente_local(mundo.app) as c:
+        for valor in (f"Token {CLAVE_ACME}", CLAVE_ACME):
+            resp = await c.post(
+                "/a2a/m/merchant_1", content=cuerpo(pedido_find_products("B")),
+                headers={**HEADERS_A2A, "Authorization": valor},
+            )
+            assert resp.status_code == 401, valor
+            assert resp.json()["error"]["codigo"] == "clave_invalida"
+    assert mundo.merchant.recibidos == []
