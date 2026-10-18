@@ -213,17 +213,6 @@ def _con_titulo_publico(oportunidad: Any, ofertas: list[Any]) -> Any:
     return oportunidad.model_copy(update={"titulo": titulo})
 
 
-def _nueva_espera(compra: Compra, pregunta: str) -> None:
-    """Otro turno del intake: la compra vuelve a esperar una respuesta.
-
-    `RegistroCompras.responder` resuelve un Future por compra; para cada
-    repregunta hace falta uno nuevo (la compra vive en `proxy/compras.py`).
-    """
-    compra._respuesta = asyncio.get_running_loop().create_future()
-    compra.pregunta = pregunta
-    compra.estado = "esperando_contexto"
-
-
 @dataclass
 class EstadoIntake:
     """El intake de una compra: qué turno, qué falta y cómo terminó."""
@@ -1161,7 +1150,7 @@ class ProxyGuard:
                 if not otra:
                     break
                 estado.turno += 1
-                _nueva_espera(compra, nuevo.pregunta)
+                compra.nueva_espera(nuevo.pregunta)
                 self._emitir_pregunta(llamada, compra, estado)
         finally:
             # También si se cancela la llamada: ninguna compra queda colgada.
