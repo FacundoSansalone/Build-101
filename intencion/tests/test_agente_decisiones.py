@@ -1,0 +1,252 @@
+"""AgenteDecisiones: el protocolo `Agente` con juicios tipados (decisiones/).
+
+Se prueba con un cliente de decisiones falso: qué preguntas arma, que el
+intake y el contexto de un mismo turno salen de una sola llamada, que la
+necesidad son las palabras del usuario y que la detección de oportunidades
+se delega (sin detector, no hay).
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import Any
+
+import pytest
+
+from contracts import Contexto, Entrega, Ficha, Requisito, Turno
+from decisiones import DecisionesError, Rechazo, RespuestaEleccion, RespuestaPredicado
+from intencion.agente_decisiones import (
+    AgenteDecisiones,
+    PreguntaIntake,
+    cronograma_candidato,
+    requisitos_verificables,
+)
+from intencion.intake import PORQUE
+
+HOY = date(2026, 10, 18)  # domingo
+CATEGORIAS = ["basketball_shoes", "laptops"]
+PEDIDO = "Comprame 20 computadoras para el lunes, hasta 20000 USD."
+RESPUESTA = "Entran 10 trabajadores el lunes y otros 10 el jueves."
+
+
+def eleccion(opcion: str, p: float) -> RespuestaEleccion:
+    return RespuestaEleccion("x", opcion, {opcion: p}, p)
+
+
+class DecisionesFalso:
+    nombre = "falso"
+    modelo = "falso-1"
+
+    def __init__(self, responder=None) -> None:
+        self.responder = responder or (lambda estado, qs: {})
+        self.pedidos: list[tuple[Any, list]] = []
+
+    def decidir(self, estado, preguntas):
+        self.pedidos.append((estado, preguntas))
+        if isinstance(self.responder, Exception):
+            raise self.responder
+        salida = self.responder(estado, preguntas)
+        return {p.nombre: salida.get(p.nombre, Rechazo(p.nombre)) for p in preguntas}
+
+
+def _opcion(qs, nombre: str, contiene: str) -> str:
+    q = next(q for q in qs if q.nombre == nombre)
+    return next(k for k, d in q.opciones.items() if contiene in (d or ""))
+
+
+def responder_demo(estado, qs) -> dict[str, Any]:
+    """Lo que contestaría el modelo en la demo de las computadoras."""
+    nombres = {q.nombre for q in qs}
+    r: dict[str, Any] = {
+        "categoria": eleccion("laptops", 0.95),
+        "cantidad": eleccion(_opcion(qs, "cantidad", "20 ("), 0.95),
+        "precio": eleccion(_opcion(qs, "precio", "20000"), 0.97),
+        "precio_alcance": eleccion("total", 0.9),
+        "moneda": eleccion("USD", 0.98),
+        "plazo": eleccion(_opcion(qs, "plazo", "2026-10-19"), 0.9),
+        "plazo_firmeza": eleccion("exige", 0.9),
+    }
+    for n in nombres:
+        if n.startswith("cron_"):
+            r[n] = RespuestaPredicado(n, 0.93)
+        if n == "flex_entregas_parciales":
+            r[n] = eleccion("inferida", 0.8)
+        if n == "flex_otra_marca":
+            r[n] = eleccion("no", 0.9)
+    return r
+
+
+# -- preguntar ------------------------------------------------------------------------
+
+
+def test_preguntar_arma_la_pregunta_por_plantilla_y_los_parametros_dichos():
+    cliente = DecisionesFalso(responder_demo)
+    agente = AgenteDecisiones(cliente)
+    pregunta = agente.preguntar(PEDIDO, HOY, CATEGORIAS)
+    assert isinstance(pregunta, PreguntaIntake)
+    assert pregunta.pregunta == PORQUE["es"]  # no falta nada: solo el porqué
+    campos = {r.campo: r.valor for r in pregunta.requisitos}
+    assert campos["precio"] == 20000.0 and campos["moneda"] == "USD"
+    assert campos["cantidad"] == 20 and campos["categoria"] == "laptops"
+    assert pregunta.intake is not None and pregunta.intake.completo
+    assert len(cliente.pedidos) == 1
+    # Sin respuestas todavía no hay preguntas de contexto.
+    assert not any(q.nombre.startswith(("cron_", "flex_")) for q in cliente.pedidos[0][1])
+
+
+def test_preguntar_sin_datos_pide_lo_que_falta():
+    agente = AgenteDecisiones(DecisionesFalso())  # todo Rechazo = no sé
+    pregunta = agente.preguntar("Necesito algo", HOY, CATEGORIAS)
+    assert pregunta.pregunta.startswith(PORQUE["es"])
+    assert "me falta saber" in pregunta.pregunta
+    assert pregunta.requisitos == []
+
+
+def test_preguntar_propaga_la_falla_del_cliente():
+    agente = AgenteDecisiones(DecisionesFalso(DecisionesError("caído")))
+    with pytest.raises(DecisionesError):
+        agente.preguntar(PEDIDO, HOY, CATEGORIAS)
+
+
+# -- contexto e intake del mismo turno: una sola llamada ---------------------------------
+
+
+def test_intake_y_contexto_del_mismo_turno_son_una_llamada():
+    cliente = DecisionesFalso(responder_demo)
+    agente = AgenteDecisiones(cliente)
+    agente.preguntar(PEDIDO, HOY, CATEGORIAS)
+    turnos = [Turno(pregunta=PORQUE["es"], respuesta=RESPUESTA)]
+    resultado = agente.evaluar_intake(PEDIDO, turnos, HOY, CATEGORIAS)
+    contexto = agente.armar_contexto(PEDIDO, PORQUE["es"], RESPUESTA, HOY)
+    assert len(cliente.pedidos) == 2  # preguntar + este turno
+    assert resultado.respondidos == 1 and resultado.siguiente == "confirmar"
+    assert contexto.respuesta == RESPUESTA
+    # Las categorías del primer turno se recuerdan para el pedido.
+    qs = cliente.pedidos[1][1]
+    categoria = next(q for q in qs if q.nombre == "categoria")
+    assert "laptops" in categoria.opciones
+
+
+def test_el_orden_no_importa_contexto_primero():
+    cliente = DecisionesFalso(responder_demo)
+    agente = AgenteDecisiones(cliente)
+    agente.preguntar(PEDIDO, HOY, CATEGORIAS)
+    agente.armar_contexto(PEDIDO, PORQUE["es"], RESPUESTA, HOY)
+    agente.evaluar_intake(PEDIDO, [Turno(pregunta=PORQUE["es"], respuesta=RESPUESTA)], HOY, CATEGORIAS)
+    assert len(cliente.pedidos) == 2
+
+
+def test_armar_contexto_con_la_necesidad_del_usuario_y_el_cronograma():
+    agente = AgenteDecisiones(DecisionesFalso(responder_demo))
+    contexto = agente.armar_contexto(PEDIDO, PORQUE["es"], RESPUESTA, HOY)
+    assert isinstance(contexto, Contexto)
+    assert contexto.necesidad == RESPUESTA  # sus palabras, no un texto del modelo
+    assert contexto.necesidad_entregas == [
+        Entrega(cantidad=10, fecha=date(2026, 10, 19)),
+        Entrega(cantidad=10, fecha=date(2026, 10, 22)),
+    ]
+    flex = {(f.descripcion, f.origen) for f in contexto.flexibilidades}
+    assert len(flex) == 1 and next(iter(flex))[1] == "inferida"
+    assert contexto.historial == []
+
+
+def test_armar_contexto_con_historial():
+    agente = AgenteDecisiones(DecisionesFalso(responder_demo))
+    historial = [Turno(pregunta="Para hacer la compra me falta saber X.", respuesta="Hasta 20000 USD")]
+    contexto = agente.armar_contexto(PEDIDO, PORQUE["es"], RESPUESTA, HOY, historial=historial)
+    assert contexto.historial == historial
+    estado = agente.cliente.pedidos[-1][0]
+    assert [t["respuesta"] for t in estado["conversacion"]] == [RESPUESTA, "Hasta 20000 USD"]
+
+
+def test_cronograma_con_baja_probabilidad_no_entra():
+    def responder(estado, qs):
+        r = responder_demo(estado, qs)
+        for n in list(r):
+            if n.startswith("cron_"):
+                r[n] = RespuestaPredicado(n, 0.2)
+        return r
+
+    contexto = AgenteDecisiones(DecisionesFalso(responder)).armar_contexto(
+        PEDIDO, PORQUE["es"], RESPUESTA, HOY
+    )
+    assert contexto.necesidad_entregas == []
+
+
+def test_armar_contexto_sin_respuesta_es_error():
+    with pytest.raises(ValueError):
+        AgenteDecisiones(DecisionesFalso()).armar_contexto(PEDIDO, "¿Para qué?", "  ", HOY)
+
+
+@pytest.mark.parametrize(
+    "texto, pares",
+    [
+        (RESPUESTA, [(10, "2026-10-19"), (10, "2026-10-22")]),
+        ("10 people start on Monday and 10 more on Thursday.", [(10, "2026-10-19"), (10, "2026-10-22")]),
+        ("Es para mí.", []),
+        ("Necesito 20 para el lunes", [(20, "2026-10-19")]),
+    ],
+)
+def test_cronograma_candidato(texto, pares):
+    assert [(c, f) for c, f, _ in cronograma_candidato([texto], HOY)] == pares
+
+
+# -- oportunidad: se delega ----------------------------------------------------------------
+
+
+class DetectorFalso:
+    def __init__(self) -> None:
+        self.vistos: list[tuple[Contexto, Ficha, list]] = []
+
+    def detectar_oportunidad(self, contexto, ficha, ofertas):
+        self.vistos.append((contexto, ficha, ofertas))
+        return "oportunidad"
+
+
+def _contexto() -> Contexto:
+    return Contexto(
+        pedido=PEDIDO, pregunta=PORQUE["es"], respuesta=RESPUESTA,
+        historial=[Turno(pregunta="¿Tope?", respuesta="Hasta 20000 USD")],
+    )
+
+
+def test_sin_detector_no_hay_oportunidad():
+    agente = AgenteDecisiones(DecisionesFalso())
+    assert agente.detectar_oportunidad(_contexto(), Ficha(pedido_original="x", requisitos=[]), []) is None
+
+
+def test_la_oportunidad_se_delega_con_todas_las_respuestas_y_la_ficha_verificable():
+    detector = DetectorFalso()
+    agente = AgenteDecisiones(DecisionesFalso(), detector=detector)
+    ficha = Ficha(
+        pedido_original="x",
+        requisitos=[
+            Requisito(campo="precio", operador="maximo", valor=100.0, obligatorio=True),
+            Requisito(campo="atributo", atributo="memoria_ram", operador="minimo", valor=16,
+                      unidad="GB", obligatorio=True),
+        ],
+        confirmada=True,
+    )
+    assert agente.detectar_oportunidad(_contexto(), ficha, ["o"]) == "oportunidad"
+    ((contexto, ficha_vista, ofertas),) = detector.vistos
+    assert contexto.respuesta == f"{RESPUESTA} / Hasta 20000 USD"
+    assert [r.campo for r in ficha_vista.requisitos] == ["precio"]
+    assert ofertas == ["o"]
+
+
+def test_requisitos_verificables_separa_lo_que_el_guard_no_chequea():
+    reqs = [
+        Requisito(campo="precio", operador="maximo", valor=100.0, obligatorio=True),
+        Requisito(campo="talle", operador="incluye", valor=42, obligatorio=True),
+        Requisito(campo="atributo", atributo="color", operador="igual", valor="negro", obligatorio=True),
+        Requisito(campo="talle", operador="minimo", valor=40, obligatorio=False),
+    ]
+    si, no = requisitos_verificables(reqs)
+    assert [r.campo for r in si] == ["precio", "talle"]
+    assert [(r.campo, r.operador) for r in no] == [("atributo", "igual"), ("talle", "minimo")]
+
+
+def test_nombre_y_modelo():
+    agente = AgenteDecisiones(DecisionesFalso())
+    assert agente.nombre == "decisiones"
+    assert agente.modelo == "falso/falso-1"
