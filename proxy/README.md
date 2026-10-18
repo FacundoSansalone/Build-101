@@ -607,7 +607,12 @@ prefijo NAT64 (`64:ff9b::/96`) se juzga por la IPv4 de adentro, y las
 IPv4-compatibles (`::/96`) y las IPv4-traducidas (`::ffff:0:0:0/96`) se
 rechazan.
 El cuerpo es la `VistaCompra` del momento (la misma del GET), firmada con
-HMAC-SHA256 en `X-Guard-Firma: t=<unix>,v1=<hex>`. Hasta 6 intentos; solo
+HMAC-SHA256 en `X-Guard-Firma: t=<unix>,v1=<hex>`. El integrador ordena por
+`compra.actualizada`: `creada` y `actualizada` son marcas monótonas del
+proceso (`max(ahora, última + 1 µs)`, también después de la marca de una fila
+de otro proceso), porque en Windows dos `datetime.now()` seguidos dan el
+mismo instante. Una normalización al leer (una espera que se cierra al
+hidratar la compra después de un reinicio) no la mueve. Hasta 6 intentos; solo
 `https` a IPs públicas, resolviendo el host en cada intento y conectando a la
 IP ya verificada (contra DNS rebinding); no sigue redirecciones. La cola es en
 memoria (hasta 1000 pendientes) y **no sobrevive a un reinicio**: el

@@ -653,16 +653,18 @@ class ProxyGuard:
         ]
         return compra.foto(contextos=contextos, aprobaciones=aprobaciones)
 
-    def guardar_compra(self, compra: Compra) -> None:
+    def guardar_compra(self, compra: Compra, *, tocar: bool = True) -> None:
         """Solo compras de API: marca el cambio y la guarda en segundo plano
         (si se pierde y hay un reinicio, falta el dato y se bloquea).
 
         El paso a un estado terminal (`bloqueada`, `vencida`) no se descarta
         por el tope de escrituras en vuelo: perderlo haría revivir la compra
-        después de un reinicio."""
+        después de un reinicio. `tocar=False` guarda sin mover `actualizada`
+        (una normalización al leer, no un cambio de la compra)."""
         if compra.origen != "api":
             return
-        compra.tocar()
+        if tocar:
+            compra.tocar()
         self.en_fondo.programar(
             self._escribir_compra(compra),
             "compra",
@@ -708,8 +710,9 @@ class ProxyGuard:
         restaurada = self.compras.restaurar(compra)
         if restaurada is compra and compra.estado != fila.get("estado"):
             # `desde_fila` cerró una espera (reinicio): la fila también, así
-            # el listado por estado y el conteo de activas la ven igual.
-            self.guardar_compra(compra)
+            # el listado por estado y el conteo de activas la ven igual. Sin
+            # tocar `actualizada`: leer la compra no es un cambio.
+            self.guardar_compra(compra, tocar=False)
         return restaurada
 
     async def atar_contexto_api(

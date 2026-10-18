@@ -7,14 +7,18 @@ import errno
 import logging
 import socket
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 import proxy.__main__ as main_mod
+from proxy import compras as compras_mod
+from proxy.compras import RegistroCompras
 from proxy.config import Config
+from proxy.estado import EstadoMemoria
 from proxy.tests.ayudantes import RPC
 from proxy.tests.fake_world import HEADERS_A2A, cuerpo, pedido_find_products
+from proxy.tests.test_compras_api import crear as crear_api
 
 # ---------------------------------------------------------------------------
 # DEMO_HOY: el "hoy" de la demo (las ofertas tienen fechas fijas)
@@ -177,3 +181,84 @@ def test_un_puerto_tomado_no_arranca_con_un_mensaje_claro():
             )
     finally:
         ocupado.close()
+
+
+# ---------------------------------------------------------------------------
+# `creada` y `actualizada` monótonas (el integrador ordena por `actualizada`)
+# ---------------------------------------------------------------------------
+
+_INSTANTE = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+_UN_MICRO = timedelta(microseconds=1)
+
+
+@pytest.fixture
+def reloj_quieto(monkeypatch):
+    """El reloj no avanza (en Windows dos `datetime.now()` seguidos suelen dar
+    el mismo instante) y las marcas arrancan de cero."""
+    monkeypatch.setattr(compras_mod, "_ahora", lambda: _INSTANTE)
+    monkeypatch.setattr(compras_mod, "_marcas", compras_mod.MarcasMonotonas())
+
+
+@pytest.mark.anyio
+async def test_tocar_en_el_mismo_instante_da_marcas_crecientes(reloj_quieto):
+    compra = crear_api(RegistroCompras())
+    assert compra.creada == compra.actualizada == _INSTANTE
+    compra.tocar()
+    primera = compra.actualizada
+    compra.tocar()
+    assert primera == _INSTANTE + _UN_MICRO
+    assert compra.actualizada == primera + _UN_MICRO
+
+
+@pytest.mark.anyio
+async def test_dos_compras_en_el_mismo_instante_no_empatan(reloj_quieto):
+    registro = RegistroCompras()
+    demo = registro.crear("zapatillas", "¿para qué?", None, None)
+    api = crear_api(registro)
+    assert demo.creada == _INSTANTE
+    assert api.creada == api.actualizada == _INSTANTE + _UN_MICRO
+
+
+@pytest.mark.anyio
+async def test_tocar_no_retrocede_ante_una_fila_de_otro_reloj(reloj_quieto):
+    """Una compra restaurada con `actualizada` adelantada (otro proceso, otro
+    reloj): el próximo cambio igual queda después."""
+    compra = crear_api(RegistroCompras())
+    compra.actualizada = _INSTANTE + timedelta(seconds=5)
+    compra.tocar()
+    assert compra.actualizada == _INSTANTE + timedelta(seconds=5) + _UN_MICRO
+
+
+@pytest.mark.anyio
+async def test_listar_compras_desempata_por_id():
+    almacen = EstadoMemoria()
+    for compra_id in ("cmp-0000000000000002", "cmp-0000000000000003", "cmp-0000000000000001"):
+        await almacen.guardar_compra(_fila_compra(compra_id, _INSTANTE))
+    listadas = [f["id"] for f in await almacen.listar_compras("acme")]
+    assert listadas == ["cmp-0000000000000003", "cmp-0000000000000002", "cmp-0000000000000001"]
+
+
+def _fila_compra(compra_id: str, creada: datetime) -> dict:
+    return {
+        "id": compra_id, "integrador_id": "acme", "comercio_id": "merchant_1",
+        "referencia": None, "estado": "negociando", "creada": creada.isoformat(),
+        "actualizada": creada.isoformat(), "datos": {"pedido": "x", "veredictos": []},
+    }
+
+
+@pytest.mark.anyio
+async def test_hidratar_una_compra_que_cierra_su_espera_no_mueve_actualizada(armar_proxy):
+    """Después de un reinicio, leer la compra cierra su espera del lado seguro
+    (`desde_fila`) y lo guarda, pero eso no es un cambio de la compra: un GET
+    no mueve `actualizada` (el integrador ordena por ese campo)."""
+    almacen = EstadoMemoria(durable=True)
+    compra = crear_api(RegistroCompras())
+    compra.estado = "esperando_decision"
+    compra.actualizada = _INSTANTE
+    await almacen.guardar_compra(compra.a_fila())
+    proxy = armar_proxy(almacen=almacen).state.proxy
+    restaurada = await proxy.hidratar_compra(compra.id)
+    await proxy.en_fondo.esperar()
+    fila = await almacen.cargar_compra(compra.id)
+    assert restaurada.estado == fila["estado"] == "vencida"
+    assert fila["actualizada"] == _INSTANTE.isoformat()

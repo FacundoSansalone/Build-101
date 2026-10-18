@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import threading
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -78,6 +79,36 @@ class EstadoInvalido(RuntimeError):
 
 def _ahora() -> datetime:
     return datetime.now(timezone.utc)
+
+
+_UN_MICRO = timedelta(microseconds=1)
+
+
+class MarcasMonotonas:
+    """Marcas de tiempo estrictamente crecientes en el proceso, para `creada`
+    y `actualizada`: el integrador ordena los webhooks por `actualizada` y en
+    Windows dos `datetime.now()` seguidos suelen dar el mismo instante. Cada
+    marca es `max(ahora, última + 1 µs)` (y, si se pasa, después de `minimo`)."""
+
+    def __init__(self) -> None:
+        self._ultima: datetime | None = None
+        self._candado = threading.Lock()
+
+    def siguiente(self, minimo: datetime | None = None) -> datetime:
+        with self._candado:
+            marca = _ahora()
+            for previa in (self._ultima, minimo):
+                if previa is not None and marca <= previa:
+                    marca = previa + _UN_MICRO
+            self._ultima = marca
+            return marca
+
+
+_marcas = MarcasMonotonas()
+
+
+def _marca(minimo: datetime | None = None) -> datetime:
+    return _marcas.siguiente(minimo)
 
 
 @dataclass
@@ -155,8 +186,10 @@ class Compra:
     # -- gateway: estado persistente y foto para /v1 --------------------------
 
     def tocar(self) -> None:
-        """Marca un cambio (la API y los webhooks ordenan por `actualizada`)."""
-        self.actualizada = _ahora()
+        """Marca un cambio (la API y los webhooks ordenan por `actualizada`):
+        siempre después de la marca anterior, también la de una fila que
+        escribió otro proceso con otro reloj."""
+        self.actualizada = _marca(self.actualizada)
 
     def registrar_veredicto(self, vista: dict[str, Any]) -> None:
         """Agrega un veredicto en vista reducida (`tipos_gateway.vista_veredicto`:
@@ -429,7 +462,7 @@ class RegistroCompras:
         loop = asyncio.get_running_loop()
         compra = Compra(
             id=f"cmp-{uuid.uuid4().hex[:16]}",
-            creada=_ahora(),
+            creada=_marca(),
             pedido=pedido,
             pregunta=pregunta,
             ficha_llm=ficha_llm,
@@ -506,7 +539,7 @@ class RegistroCompras:
         el primer pedido A2A que trae su `X-Compra-Id`. Requiere un loop.
         """
         loop = asyncio.get_running_loop()
-        ahora = _ahora()
+        ahora = _marca()
         compra = Compra(
             id=f"cmp-{uuid.uuid4().hex[:16]}",
             creada=ahora,
