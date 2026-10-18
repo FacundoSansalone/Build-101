@@ -386,8 +386,11 @@ async def test_local_authorization_ajeno_pasa_como_anonimo(clave_y_registro):
 
 async def test_local_bearer_psg_invalido_da_401(clave_y_registro):
     clave, registro = clave_y_registro
+    # El último carácter cambiado por otro (con "Q" fijo, 1 de cada 64 claves
+    # ya terminaba en Q y la "inválida" era la válida).
+    otra = clave[:-1] + ("R" if clave.endswith("Q") else "Q")
     async with _cliente(_app(registro), LOCAL) as c:
-        for valor in ("Bearer psg_basura", f"Bearer {clave[:-1]}Q"):
+        for valor in ("Bearer psg_basura", f"Bearer {otra}"):
             resp = await c.post("/a2a/merchant_agent", json={}, headers={"Authorization": valor})
             assert resp.status_code == 401, valor
             assert resp.json()["error"]["codigo"] == "clave_invalida"

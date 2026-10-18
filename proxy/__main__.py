@@ -20,7 +20,7 @@ from proxy.claves import RegistroIntegradores
 from proxy.comercios import RegistroComercios, comercio_por_defecto
 from proxy.config import Config, _bool, verificar_gateway, verificar_host_local
 from proxy.estado import estado_desde_entorno
-from proxy.evaluador import EvaluadorNoDisponible
+from proxy.evaluador import EvaluadorNoDisponible, cargar_evaluador, validar_evaluador
 from proxy.persistencia import Persistencia
 from proxy.tipos_gateway import ConfigInvalida
 from proxy.webhooks import DestinoNoPermitido, validar_url_estatica
@@ -288,6 +288,13 @@ def main() -> None:
             "El proxy del Guard no arranca: con el gateway activo (claves de API) no se "
             "permite el evaluador stub (PROXY_ALLOW_STUB=1)."
         )
+    # Fail-closed primero: sin Guard real no arranca, y el error que se ve es
+    # ese (el fabricante, el filtro y la intención también importan guard/).
+    try:
+        evaluador = cargar_evaluador(config.permitir_stub)
+        validar_evaluador(evaluador, config.permitir_stub)
+    except EvaluadorNoDisponible as e:
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
     # Supabase es opcional: sin SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY, nada.
     persistencia = Persistencia.desde_entorno()
     agente = cargar_agente()
@@ -295,8 +302,8 @@ def main() -> None:
     fabricante = cargar_fabricante()
     try:
         app = create_app(
-            config, persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
-            integradores=integradores, comercios=comercios, almacen=almacen,
+            config, evaluador=evaluador, persistencia=persistencia, agente=agente, filtro=filtro,
+            fabricante=fabricante, integradores=integradores, comercios=comercios, almacen=almacen,
         )
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
