@@ -54,7 +54,8 @@ def test_post_aprobacion_valida_y_reenvia_como_json_sin_origin(tmp_path):
     c = _cliente(tmp_path, handler)
     for malo in ({}, {"contexto_id": "c"}, {"contexto_id": "c", "cart_id": 1},
                  {"contexto_id": "", "cart_id": "x"}, {"contexto_id": "c", "cart_id": "x", "y": 1}, []):
-        assert c.post("/api/proxy/guard/aprobaciones", json=malo).status_code == 400, malo
+        r = c.post("/api/proxy/guard/aprobaciones", json=malo, headers={"Origin": BASE})
+        assert r.status_code == 400, malo
     assert recibidos == []
 
     r = c.post("/api/proxy/guard/aprobaciones", json={"contexto_id": "ctx-test", "cart_id": "cart_1"},
@@ -73,7 +74,8 @@ def test_post_aprobacion_propaga_el_409_del_proxy(tmp_path):
         return httpx.Response(409, json={"error": "sin_escalar"})
 
     r = _cliente(tmp_path, handler).post(
-        "/api/proxy/guard/aprobaciones", json={"contexto_id": "c", "cart_id": "x"}
+        "/api/proxy/guard/aprobaciones", json={"contexto_id": "c", "cart_id": "x"},
+        headers={"Origin": BASE},
     )
     assert r.status_code == 409 and r.json()["error"] == "sin_escalar"
 
@@ -87,7 +89,7 @@ def test_post_aprobacion_propaga_el_409_del_proxy(tmp_path):
 def test_post_exige_json(tmp_path, ruta):
     c = _cliente(tmp_path, _no_llamar)
     for tipo in ("text/plain", "application/x-www-form-urlencoded"):
-        r = c.post(ruta, content=b'{"guard_activo": false}', headers={"content-type": tipo})
+        r = c.post(ruta, content=b'{"guard_activo": false}', headers={"content-type": tipo, "Origin": BASE})
         assert r.status_code == 415, tipo
 
 

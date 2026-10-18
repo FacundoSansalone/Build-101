@@ -340,11 +340,11 @@ def test_post_estado_valida_y_reenvia(tmp_path):
         return httpx.Response(200, json={"guard_activo": False, "merchant_url": "x", "evaluador": "guard"})
 
     c = _cliente(tmp_path, handler)
-    assert c.post("/api/proxy/guard/state", json={"guard_activo": "si"}).status_code == 400
-    assert c.post("/api/proxy/guard/state", json={"guard_activo": True, "otro": 1}).status_code == 400
-    assert c.post("/api/proxy/guard/state", content=b"{", headers={"content-type": "application/json"}).status_code == 400
+    assert c.post("/api/proxy/guard/state", json={"guard_activo": "si"}, headers={"Origin": "http://localhost:8020"}).status_code == 400
+    assert c.post("/api/proxy/guard/state", json={"guard_activo": True, "otro": 1}, headers={"Origin": "http://localhost:8020"}).status_code == 400
+    assert c.post("/api/proxy/guard/state", content=b"{", headers={"content-type": "application/json", "Origin": "http://localhost:8020"}).status_code == 400
     assert recibidos == []
-    r = c.post("/api/proxy/guard/state", json={"guard_activo": False})
+    r = c.post("/api/proxy/guard/state", json={"guard_activo": False}, headers={"Origin": "http://localhost:8020"})
     assert r.status_code == 200
     assert recibidos == [("POST", {"guard_activo": False})]
 

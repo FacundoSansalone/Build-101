@@ -171,8 +171,12 @@ class SoloLocal:
 
     - `Host` de /api/* tiene que ser localhost/127.0.0.1 con el puerto del
       panel (403): frena el DNS rebinding.
-    - Los POST exigen `Content-Type: application/json` (415) y, si traen
-      `Origin`, que sea el del panel (403).
+    - Los POST exigen el `Origin` del panel (403 si falta o es otro; el
+      navegador siempre lo manda en un POST) y, si viene `Sec-Fetch-Site`,
+      que sea `same-origin`: el panel agrega el token del proxy, así que solo
+      reenvía pedidos de su propia página, no de curl ni de una herramienta
+      HTTP del agente (N4).
+    - Los POST exigen `Content-Type: application/json` (415).
 
     ASGI puro: no interfiere con el SSE reenviado.
     """
@@ -196,7 +200,12 @@ class SoloLocal:
         if scope["method"] != "POST" or scope["path"] not in RUTAS_POST:
             return None
         origen = headers.get("origin")
-        if origen is not None and origen not in self.cfg.origenes:
+        if origen is None:
+            return _error(403, "origen_requerido")
+        if origen not in self.cfg.origenes:
+            return _error(403, "origen_no_permitido")
+        sitio = headers.get("sec-fetch-site")
+        if sitio is not None and sitio != "same-origin":
             return _error(403, "origen_no_permitido")
         tipo = headers.get("content-type", "").split(";")[0].strip().lower()
         if tipo != "application/json":
