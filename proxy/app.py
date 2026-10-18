@@ -454,9 +454,18 @@ class ProxyGuard:
         )
 
     def ficha(self) -> Ficha:
-        """La ficha global de la demo (el pedido de zapatillas de scenarios.json)."""
+        """La ficha global de la demo (el pedido de zapatillas de scenarios.json).
+
+        Con `PROXY_FICHA_DEMO=0` (como un comercio real) no hay ficha de la
+        demo: una vacía y sin confirmar, sin parámetros autorizados, con la que
+        el Guard escala (nunca aprueba sin saber qué autorizó el usuario).
+        """
         if self._ficha is None:
-            self._ficha = ficha_del_intent(cargar_intent())
+            self._ficha = (
+                ficha_del_intent(cargar_intent())
+                if self.config.ficha_demo
+                else Ficha(pedido_original="", requisitos=[], confirmada=False)
+            )
         return self._ficha
 
     def estado(self) -> dict[str, Any]:
@@ -1010,6 +1019,8 @@ class ProxyGuard:
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
         """La ficha confirmada de la demo para ese escenario (si hay), con los
         atributos y la categoría de la taxonomía (`ficha_desde_intent`)."""
+        if not self.config.ficha_demo:
+            return None  # PROXY_FICHA_DEMO=0: como con un comercio real
         intent = intent_del_escenario(escenario)
         if intent is None:
             return None
@@ -1210,10 +1221,11 @@ class ProxyGuard:
         """Los parámetros autorizados que salen del intake.
 
         Lo que el usuario dijo con confianza alta va siempre; lo inferido o
-        dudoso, solo si confirmó la ficha. Lo que el Guard todavía no sabe
-        chequear (atributos genéricos, `minimo`) se informa aparte y no va a
-        la ficha: haría fallar `evaluar()`. Si la demo tiene una ficha
-        confirmada, esa sigue mandando (`Compra.resolver_ficha`).
+        dudoso, solo si confirmó la ficha. Lo que el Guard no supiera chequear
+        (`guard.chequeos.CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS`; hoy
+        todo, atributos y `minimo` incluidos) se informaría aparte. Si la demo
+        tiene una ficha confirmada, esa sigue mandando (`Compra.resolver_ficha`;
+        `PROXY_FICHA_DEMO=0` la apaga).
         """
         from intencion.agente_decisiones import requisitos_verificables
 

@@ -56,10 +56,6 @@ _OPCIONES_FLEX = {
     "no": "ni lo dijo ni se deduce",
 }
 
-# Operadores que entiende `guard.chequeos.cumple` (si el Guard publica los
-# suyos en OPERADORES_SOPORTADOS, se usan esos).
-_OPERADORES_GUARD = ("igual", "maximo", "incluye", "cubre")
-
 
 @dataclass(frozen=True)
 class PreguntaIntake(PreguntaAgente):
@@ -73,15 +69,15 @@ def requisitos_verificables(
 ) -> tuple[list[Requisito], list[Requisito]]:
     """(los que el Guard sabe chequear, los que no).
 
-    El Guard de hoy no conoce el campo `atributo` ni el operador `minimo`: un
-    requisito así haría fallar `evaluar()` (y el proxy bloquearía todo). Se
-    muestran en la ficha, pero no van a los parámetros autorizados hasta que
-    el Guard los soporte.
+    Lo que sabe chequear lo publica el Guard (`guard.chequeos.CAMPOS_SOPORTADOS`
+    y `OPERADORES_SOPORTADOS`); hoy son todos los del contrato, atributos y
+    `minimo` incluidos. Un requisito que el Guard no supiera chequear se
+    mostraría en la ficha pero no iría a los parámetros autorizados.
     """
     from guard import chequeos
 
-    campos = set(chequeos.ATRIBUTO_POR_CAMPO) | {"comercio"}
-    operadores = set(getattr(chequeos, "OPERADORES_SOPORTADOS", _OPERADORES_GUARD))
+    campos = chequeos.CAMPOS_SOPORTADOS
+    operadores = chequeos.OPERADORES_SOPORTADOS
     si: list[Requisito] = []
     no: list[Requisito] = []
     for r in requisitos:

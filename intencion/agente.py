@@ -41,8 +41,10 @@ from contracts import (
     Oferta,
     Oportunidad,
     Requisito,
+    ValorAtributo,
 )
-from guard.chequeos import cumple, formatear, nombre_campo, valor_observado
+from guard.atributos import formatear_atributo
+from guard.chequeos import cumple, formatear, nombre_campo, observado_de
 from guard.normalizar import cubre_entregas, entregas_validas
 from guard.textos import sin_control
 
@@ -554,6 +556,24 @@ def candidatas(ficha: Ficha, ofertas: list[Oferta]) -> list[Oferta]:
     ]
 
 
+_OPERADOR_TEXTO = {"minimo": "mínimo ", "maximo": "máximo ", "incluye": "incluye "}
+
+
+def _nombre_y_valor(requisito: Requisito) -> tuple[str, str]:
+    """("Precio", "20000"), ("memoria_ram", "mínimo 16 GB"). Un atributo se
+    nombra por su nombre (de la ficha, nunca del comercio), con su unidad."""
+    if requisito.campo != "atributo":
+        return nombre_campo(requisito.campo), formatear(requisito.valor)
+    valor = formatear_atributo(ValorAtributo(valor=requisito.valor, unidad=requisito.unidad))
+    return requisito.atributo or "atributo", f"{_OPERADOR_TEXTO.get(requisito.operador, '')}{valor}"
+
+
+def describir_requisito(requisito: Requisito) -> str:
+    """"Precio: 20000", "memoria_ram: mínimo 16 GB"."""
+    nombre, valor = _nombre_y_valor(requisito)
+    return f"{nombre}: {valor}"
+
+
 def _oferta_para_el_modelo(ficha: Ficha, oferta: Oferta) -> dict[str, Any]:
     """Solo campos tipados; los strings del comercio, acotados."""
 
@@ -572,8 +592,7 @@ def _oferta_para_el_modelo(ficha: Ficha, oferta: Oferta) -> dict[str, Any]:
             {"cantidad": e.cantidad, "fecha": e.fecha.isoformat()} for e in oferta.entregas
         ],
         "no_cumple_del_pedido": [
-            f"{nombre_campo(r.campo)}: se pidió {formatear(r.valor)}"
-            for r in no_cumplidos(ficha, oferta)
+            "{}: se pidió {}".format(*_nombre_y_valor(r)) for r in no_cumplidos(ficha, oferta)
         ],
     }
 
@@ -598,11 +617,33 @@ def _cubre_lo_verificable(contexto: Contexto, oferta: Oferta, faltan: list[Requi
     return True
 
 
-def _valor_ofrecido(campo: str, oferta: Oferta) -> Any:
-    valor = valor_observado(campo, oferta)
-    if campo == "entregas" and valor is not None:
+def valor_ofrecido(requisito: Requisito, oferta: Oferta) -> Any:
+    """Lo que ofrece la oferta para un requisito, en JSON (None = sin dato).
+
+    Usa `guard.chequeos.observado_de`, como el Guard: un atributo se lee por
+    su nombre (`{"valor", "unidad"}`) y las entregas como lista.
+    """
+    valor = observado_de(requisito, oferta)
+    if valor is None:
+        return None
+    if isinstance(valor, ValorAtributo):
+        return valor.model_dump()
+    if requisito.campo == "entregas":
         return [{"cantidad": e.cantidad, "fecha": e.fecha.isoformat()} for e in valor]
     return valor
+
+
+def _propuesto(requisito: Requisito, ofrecido: Any) -> Requisito:
+    """El requisito con el valor de la oferta (obligatorio): un atributo
+    mantiene su nombre y toma la unidad de lo ofrecido."""
+    if requisito.campo == "atributo" and isinstance(ofrecido, dict):
+        return Requisito(
+            campo="atributo", atributo=requisito.atributo, operador=requisito.operador,
+            valor=ofrecido.get("valor"), unidad=ofrecido.get("unidad"), obligatorio=True,
+        )
+    return Requisito(
+        campo=requisito.campo, operador=requisito.operador, valor=ofrecido, obligatorio=True
+    )
 
 
 def _proponible(
@@ -614,7 +655,7 @@ def _proponible(
     return (
         bool(faltan)
         and all(r.campo in cambiables for r in faltan)
-        and all(_valor_ofrecido(r.campo, oferta) is not None for r in faltan)
+        and all(valor_ofrecido(r, oferta) is not None for r in faltan)
         and _cubre_lo_verificable(contexto, oferta, faltan)
     )
 
@@ -723,9 +764,7 @@ def detectar_oportunidad(
         return None
     contenido = json.dumps(
         {
-            "pedido_explicito": [
-                f"{nombre_campo(r.campo)}: {formatear(r.valor)}" for r in _obligatorios(ficha)
-            ],
+            "pedido_explicito": [describir_requisito(r) for r in _obligatorios(ficha)],
             "lo_que_conto_el_usuario": contexto.respuesta,
             "necesidad": contexto.necesidad,
             "necesidad_entregas": [
@@ -746,18 +785,11 @@ def detectar_oportunidad(
     # La elegida ya pasó `_proponible`: solo cambia campos cambiables.
     faltan = no_cumplidos(ficha, elegida)
     cambios = [
-        Cambio(campo=r.campo, pedido=r.valor, ofrecido=_valor_ofrecido(r.campo, elegida))
+        Cambio(campo=r.campo, pedido=r.valor, ofrecido=valor_ofrecido(r, elegida))
         for r in faltan
     ]
     propuestos = [
-        r
-        if r not in faltan
-        else Requisito(
-            campo=r.campo,
-            operador=r.operador,
-            valor=_valor_ofrecido(r.campo, elegida),
-            obligatorio=True,
-        )
+        r if r not in faltan else _propuesto(r, valor_ofrecido(r, elegida))
         for r in ficha.requisitos
     ]
     if any(r.valor is None for r in propuestos if r.obligatorio):
