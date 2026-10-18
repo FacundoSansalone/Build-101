@@ -175,7 +175,12 @@ respuesta.
   idiomas que no sean inglés o castellano quedan para el modelo.
 - **El `history` con `role: user` no se revisa** (es el eco del pedido del
   comprador). Si algún consumidor empieza a leer el `history`, hay que
-  revisarlo también.
+  revisarlo también. El agente del cliente del sample manda sus mensajes con
+  `role: agent`: ese eco lo saca el proxy antes de llamar al filtro
+  (`proxy.a2a.sin_eco_del_pedido`, solo si es idéntico al pedido: mismo
+  `messageId`, rol y partes). En la prueba de punta a punta con Decisions,
+  sin eso el modelo marcaba "Find products that match the user's request."
+  como `instruccion_ia` en una respuesta honesta.
 - **Privacidad.** El texto libre del proveedor va a la API de decisiones
   (OpenAI o TypeSafe); el pedido del usuario no.
 - **Sin cliente de decisiones bloquea todo** lo que tenga texto libre. Es a

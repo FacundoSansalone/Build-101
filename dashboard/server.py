@@ -47,7 +47,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from contracts import Evento, Ficha
+from contracts import Evento
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -403,7 +403,10 @@ async def api_fixture(request: Request) -> Response:
 
 
 async def api_fixture_ficha(request: Request) -> Response:
-    """La ficha del escenario, armada con el contrato (`Ficha.desde_intent`)."""
+    """La ficha del escenario, como la arma el Guard (`ficha_desde_intent`:
+    el contrato más `intent.attributes` y `google_product_category`)."""
+    from guard.ficha import ficha_desde_intent
+
     escenario = request.path_params["escenario"]
     if not _ESCENARIO_SEGURO.match(escenario):
         return _error(400, "nombre_invalido")
@@ -411,7 +414,7 @@ async def api_fixture_ficha(request: Request) -> Response:
     if datos is None or not isinstance(datos.get("intent"), dict):
         return _error(404, "no_encontrado", escenario=escenario)
     try:
-        ficha = Ficha.desde_intent(datos["intent"])
+        ficha = ficha_desde_intent(datos["intent"])
     except (ValueError, ValidationError) as e:
         return _error(422, "intent_invalido", detalle=str(e))
     return JSONResponse(ficha.model_dump(mode="json"))

@@ -48,10 +48,16 @@ class Modelo:
     modelo = "falso-1"
 
     def __init__(self, falla_en: int | None = None) -> None:
-        self.llamadas = 0
+        self.llamadas = 0  # las del intake (una por turno)
+        self.taxonomia = 0  # las de taxonomia.clasificar (una por nivel)
         self.falla_en = falla_en
 
     def decidir(self, estado: dict[str, Any], qs: list) -> dict[str, Any]:
+        if "producto" in estado:  # la taxonomía: Apparel & Accessories > Shoes
+            self.taxonomia += 1
+            (q,) = qs
+            opcion = next((i for i in ("166", "187") if i in q.opciones), "ninguna")
+            return {q.nombre: _e(opcion, 0.95)}
         self.llamadas += 1
         if self.falla_en is not None and self.llamadas >= self.falla_en:
             raise DecisionesError("caído")
@@ -187,8 +193,11 @@ async def test_repregunta_hasta_tener_todo_y_confirma_la_ficha(armar_proxy, conf
         assert autorizada["precio"]["valor"] == 150.0
         assert autorizada["moneda"]["valor"] == "USD"
         assert autorizada["marca"]["valor"] == "Nike" and autorizada["talle"]["valor"] == 42
-        # El color (campo atributo) el Guard todavía no lo chequea: se informa aparte.
-        assert [r["atributo"] for r in final["sin_verificar_guard"]] == ["color"]
+        # El color (campo atributo) el Guard ya lo chequea: va a la ficha autorizada.
+        assert final["sin_verificar_guard"] == []
+        assert [r["atributo"] for r in final["ficha_autorizada"] if r["campo"] == "atributo"] == [
+            "color"
+        ]
         # El contexto acumula las respuestas.
         assert [t["respuesta"] for t in final["contexto"]["historial"]] == [
             "Hasta 150 dólares, y para el viernes."
@@ -197,9 +206,13 @@ async def test_repregunta_hasta_tener_todo_y_confirma_la_ficha(armar_proxy, conf
         ficha = _ficha_llm(app, tercera["compra_id"])
         assert ficha[("precio", None)].valor == 150.0
         assert ficha[("moneda", None)].valor == "USD"
-        assert ("atributo", "color") not in ficha
+        assert ficha[("atributo", "color")].valor == "negro"
         # Una llamada por turno: el pedido y las dos respuestas (la confirmación no llama).
         assert modelo.llamadas == 3
+        # Al cerrar, la taxonomía de Google (un nivel por llamada) va en la ficha.
+        assert final["categoria_taxonomia"] == "187"
+        assert app.state.proxy.compras.get(tercera["compra_id"]).ficha_llm.categoria_taxonomia == "187"
+        assert modelo.taxonomia >= 2
 
 
 async def test_omitir_una_repregunta_sigue_con_lo_dicho(armar_proxy, config_rapida):

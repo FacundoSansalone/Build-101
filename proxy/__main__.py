@@ -104,6 +104,24 @@ def cargar_filtro(env: dict[str, str] | None = None) -> Any:
     return filtro
 
 
+def cargar_fabricante(env: dict[str, str] | None = None) -> Any:
+    """Fuente del fabricante por GTIN (`fabricante.fuente_desde_entorno`).
+
+    `FABRICANTE_FUENTE=fixture|icecat|ninguna`, por defecto `fixture` (datos
+    de prueba rotulados como tales). Con `ninguna` no se consulta: lo
+    obligatorio que solo declara el comercio escala. Una configuración
+    inválida (otro valor, `icecat` sin `ICECAT_USUARIO`) no arranca: una
+    fuente pedida que falta no se saltea en silencio.
+    """
+    from fabricante import fuente_desde_entorno
+
+    env = dict(os.environ) if env is None else env
+    try:
+        return fuente_desde_entorno(env)
+    except ValueError as e:
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
+
+
 def exigir_filtro(agente: Any, filtro: Any, env: dict[str, str] | None = None) -> bool:
     """Con la capa de intención activa, el filtro de seguridad es obligatorio.
 
@@ -136,6 +154,13 @@ def exigir_filtro(agente: Any, filtro: Any, env: dict[str, str] | None = None) -
     return True
 
 
+def _nombre_fabricante(fuente: Any) -> str:
+    if fuente is None:
+        return "ninguna (lo obligatorio que solo declara el comercio escala)"
+    nombre = getattr(fuente, "nombre", "?")
+    return f"{nombre} (datos de prueba)" if nombre == "fixture" else str(nombre)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -147,8 +172,11 @@ def main() -> None:
     persistencia = Persistencia.desde_entorno()
     agente = cargar_agente()
     filtro = cargar_filtro()
+    fabricante = cargar_fabricante()
     try:
-        app = create_app(config, persistencia=persistencia, agente=agente, filtro=filtro)
+        app = create_app(
+            config, persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante
+        )
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
     # Con la intención activa, sin filtro no arranca (después del evaluador:
@@ -158,7 +186,7 @@ def main() -> None:
     logger.info(
         "Proxy del Guard en http://%s:%d%s → comercio %s | catálogo %s | "
         "Guard %s | evaluador: %s | eventos: %s | Supabase: %s | intención: %s | "
-        "filtro: %s",
+        "filtro: %s | fabricante: %s",
         config.host,
         config.port,
         config.rpc_path,
@@ -170,6 +198,7 @@ def main() -> None:
         "sí" if persistencia else "no",
         getattr(agente, "modelo", None) or "apagada",
         "sí" if filtro else ("NO (PROXY_PERMITIR_SIN_FILTRO=1)" if sin_filtro else "no"),
+        _nombre_fabricante(fabricante),
     )
     uvicorn.run(
         app,

@@ -79,6 +79,18 @@ def test_con_el_fabricante_el_ataque_se_bloquea(categoria, ahora):
     assert _chequeo(veredicto, "mandato", "precio").resultado == "ok"  # dentro del tope
 
 
+def test_el_dato_falso_sin_inyeccion_tambien_se_bloquea(ahora):
+    """notebook_dato_falso: sin texto hostil (el filtro no tiene nada que
+    ver); el Guard no lee texto libre y bloquea por el dato del fabricante."""
+    nombre = "notebook_dato_falso"
+    veredicto = _evaluar(nombre, _esperado(nombre, "attack_target_cart_id"), True, ahora)
+    assert veredicto.status == "bloqueado"
+    assert _chequeo(veredicto, "cumplimiento", "atributo:memoria_ram").resultado == "bloquea"
+    assert _chequeo(veredicto, "mandato", "precio").resultado == "ok"  # dentro del tope
+    sin_fabricante = _evaluar(nombre, _esperado(nombre, "attack_target_cart_id"), False, ahora)
+    assert sin_fabricante.status == "escalar"  # solo lo declara el comercio: nunca aprueba
+
+
 def test_sin_ninguna_fuente(ahora):
     # Lo obligatorio solo declarado escala; la RAM falsa tampoco se aprueba.
     honesto = _evaluar("notebook_honesto", _esperado("notebook_honesto", "best_cart_id"), False, ahora)

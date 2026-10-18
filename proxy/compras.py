@@ -10,7 +10,8 @@ Guard prendido y el agente de intención disponible. Guarda:
 - la **oportunidad** que se le consultó y la decisión.
 
 Las dos esperas (la respuesta del porqué y la decisión) son `Future`s que
-resuelve la API de control. Si llega otra búsqueda de la misma compra
+resuelve la API de control; cada repregunta del intake abre otra espera con
+`Compra.nueva_espera()`. Si llega otra búsqueda de la misma compra
 mientras tanto, espera el mismo resultado (`contexto_listo`, `resuelta`).
 El silencio no es autorización: si vence la decisión, la compra queda
 `vencida` y no se entrega nada.
@@ -129,6 +130,16 @@ class Compra:
         if self.vence is None:
             return 0.0
         return max(0.0, (self.vence - _ahora()).total_seconds())
+
+    def nueva_espera(self, pregunta: str) -> None:
+        """Otro turno (una repregunta del intake): la compra vuelve a esperar
+        una respuesta a `pregunta`. Una espera anterior que quedó sin
+        resolver (venció) se cancela: nadie la va a resolver."""
+        if not self._respuesta.done():
+            self._respuesta.cancel()
+        self._respuesta = asyncio.get_running_loop().create_future()
+        self.pregunta = pregunta
+        self.estado = "esperando_contexto"
 
     async def esperar_respuesta(self) -> tuple[str | None, bool]:
         """(respuesta, vencido). Respuesta None = el usuario omitió."""

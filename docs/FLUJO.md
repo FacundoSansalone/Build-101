@@ -17,6 +17,13 @@ El sistema acompaña al agente de compras del cliente con dos capas:
 **No son flujos distintos.** Es un solo flujo: si hay malicia, se corta en la
 capa de seguridad antes de avanzar; si no, sigue hasta la firma.
 
+**La garantía es la verificación antes de la firma** (paso 7): código
+determinístico que compara la compra con los parámetros que autorizó el
+usuario y con datos que el proveedor no controla. **El filtro (paso 2) es
+defensa en profundidad**: corta temprano lo que se ve venir y le ahorra al
+agente leer texto hostil, pero la seguridad no depende de que detecte. Los
+modelos entienden y proponen, el usuario autoriza, el código verifica.
+
 | Quién | Qué hace | Qué no hace |
 |---|---|---|
 | Usuario | Pide, explica para qué y autoriza los cambios | — |
@@ -61,6 +68,12 @@ Quedan registradas dos cosas distintas:
 
 Conocer la necesidad no autoriza a cambiar el pedido.
 
+Si al pedido le falta algo necesario para comprar (qué producto, cuántas
+unidades, el tope y su moneda, para cuándo), nuestro agente lo vuelve a
+preguntar, como mucho tres veces, y al final le muestra al usuario la ficha
+de la compra para que la confirme. Lo que dedujo (por ejemplo, una sola
+unidad) solo queda autorizado si el usuario confirma.
+
 **2. Seguridad, primero.** Cada mensaje del proveedor pasa por el filtro
 antes que cualquier otra etapa, también antes del análisis de intención. Si
 detecta un ataque, una inyección o contenido peligroso:
@@ -70,6 +83,9 @@ detecta un ataque, una inyección o contenido peligroso:
   filtro, tampoco a nuestro agente;
 - no se buscan alternativas ni se le pregunta al usuario si quiere
   flexibilizar algo: el corte es por seguridad.
+
+El filtro es la primera barrera, no la única: un ataque que no se ve en el
+texto (un dato falso, un precio inflado) lo frena la verificación del paso 7.
 
 **3. Negociación normal.** Si el mensaje pasa el filtro, el agente del
 cliente intenta cumplir los parámetros autorizados. Nuestro agente analiza
@@ -112,9 +128,13 @@ compra se verifica contra los parámetros autorizados vigentes (los originales
 o los que aceptó en el paso 6) y contra los datos públicos del proveedor. Si
 no coincide, se bloquea.
 
-Es la última barrera de la capa de seguridad. Frena lo que el filtro no ve
-(datos falsos, precio inflado) y cualquier compra de una oferta que nadie
-autorizó.
+Es la última barrera de la capa de seguridad y **la garantía**: no lee el
+texto libre del proveedor, así que no depende de detectar nada. Frena lo que
+el filtro no ve (datos falsos, precio inflado) y cualquier compra de una
+oferta que nadie autorizó. Ejemplo: un proveedor declara que una notebook
+tiene 16 GB de RAM, sin ninguna inyección; el filtro no tiene nada que
+detectar y la verificación la bloquea porque la ficha del fabricante dice
+8 GB.
 
 ## 3. Reglas
 
@@ -131,6 +151,10 @@ autorizó.
 7. El silencio no es autorización.
 8. La verificación antes de la firma es código determinístico y se hace
    contra los parámetros autorizados.
+9. La garantía es esa verificación; el filtro es defensa en profundidad. La
+   seguridad no depende de detectar el ataque.
+10. Los modelos entienden y proponen; el usuario autoriza; el código
+    verifica.
 
 ## 4. Casos borde
 
@@ -154,6 +178,12 @@ proveedor y si el sistema está activo.
 | **Honesto**: "10 el lunes y 10 el miércoles" | El agente del cliente rechaza por el pedido literal y se pierde una compra que servía | Pausa → consulta → el usuario acepta → el agente del cliente compra 10 + 10 |
 
 Todo pasa de verdad: agentes reales y AP2 real, sin respuestas simuladas.
+
+**Momento de respaldo: "el filtro no lo ve y el Guard igual frena".** Un
+proveedor que miente sin inyección (`notebook_dato_falso`: declara 16 GB de
+RAM y el fabricante dice 8; o el escenario C, con el precio inflado). El
+filtro deja pasar la respuesta porque no hay texto hostil, y la verificación
+antes de la firma bloquea (o escala) igual.
 
 **Lo que tiene que quedar claro:** la primera capa frena las interacciones
 peligrosas; la segunda detecta, dentro de negociaciones seguras,

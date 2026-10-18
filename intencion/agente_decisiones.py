@@ -13,6 +13,9 @@ Implementa el protocolo `intencion.agente.Agente` que usa el proxy, más
   código.
 - `detectar_oportunidad()`: se delega en el detector existente
   (`AgenteGemini`), si hay; sin detector no hay oportunidades.
+- `clasificar_taxonomia()`: la categoría de la taxonomía de Google para la
+  ficha (`taxonomia.clasificar`, nivel por nivel con el mismo cliente). Es
+  una propuesta: el Guard no depende de ella.
 
 El modelo nunca escribe nada que lea el usuario ni ningún valor de la ficha:
 elige entre opciones y el código decide con umbrales.
@@ -56,10 +59,6 @@ _OPCIONES_FLEX = {
     "no": "ni lo dijo ni se deduce",
 }
 
-# Operadores que entiende `guard.chequeos.cumple` (si el Guard publica los
-# suyos en OPERADORES_SOPORTADOS, se usan esos).
-_OPERADORES_GUARD = ("igual", "maximo", "incluye", "cubre")
-
 
 @dataclass(frozen=True)
 class PreguntaIntake(PreguntaAgente):
@@ -73,20 +72,38 @@ def requisitos_verificables(
 ) -> tuple[list[Requisito], list[Requisito]]:
     """(los que el Guard sabe chequear, los que no).
 
-    El Guard de hoy no conoce el campo `atributo` ni el operador `minimo`: un
-    requisito así haría fallar `evaluar()` (y el proxy bloquearía todo). Se
-    muestran en la ficha, pero no van a los parámetros autorizados hasta que
-    el Guard los soporte.
+    Lo que sabe chequear lo publica el Guard (`guard.chequeos.CAMPOS_SOPORTADOS`
+    y `OPERADORES_SOPORTADOS`); hoy son todos los del contrato, atributos y
+    `minimo` incluidos. Un requisito que el Guard no supiera chequear se
+    mostraría en la ficha pero no iría a los parámetros autorizados.
     """
     from guard import chequeos
 
-    campos = set(chequeos.ATRIBUTO_POR_CAMPO) | {"comercio"}
-    operadores = set(getattr(chequeos, "OPERADORES_SOPORTADOS", _OPERADORES_GUARD))
+    campos = chequeos.CAMPOS_SOPORTADOS
+    operadores = chequeos.OPERADORES_SOPORTADOS
     si: list[Requisito] = []
     no: list[Requisito] = []
     for r in requisitos:
         (si if r.campo in campos and r.operador in operadores else no).append(r)
     return si, no
+
+
+def categoria_taxonomia(
+    descripcion: str, cliente: ClienteDecisiones | None, taxonomia: Any = None
+) -> str | None:
+    """El ID de la taxonomía de Google para el pedido, o None.
+
+    `taxonomia.clasificar` baja nivel por nivel mientras la confianza alcance
+    y devuelve el último nivel seguro (también si la API falla). Sin cliente
+    de decisiones, o si no llega ni al primer nivel, queda vacía. Por
+    defecto usa el subconjunto del repo (ramas de la demo, sin red).
+    """
+    if cliente is None or not (descripcion or "").strip():
+        return None
+    from taxonomia import cargar_subconjunto, clasificar
+
+    arbol = taxonomia if taxonomia is not None else cargar_subconjunto()
+    return clasificar(descripcion.strip()[:intake.LARGO_TEXTO], arbol, cliente).id
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +205,11 @@ class AgenteDecisiones:
         cliente: ClienteDecisiones,
         detector: Any = None,
         umbrales: Umbrales | None = None,
+        taxonomia: Any = None,
     ) -> None:
         self.cliente = cliente
         self.detector = detector  # algo con detectar_oportunidad(contexto, ficha, ofertas)
+        self.taxonomia = taxonomia  # taxonomia.Taxonomia; None = el subconjunto del repo
         self.umbrales = umbrales or intake.UMBRALES
         self._lock = threading.Lock()
         self._cache: OrderedDict[tuple, tuple[ResultadoIntake, Contexto | None]] = OrderedDict()
@@ -244,6 +263,10 @@ class AgenteDecisiones:
         if len(verificables) != len(ficha.requisitos):
             ficha = ficha.model_copy(update={"requisitos": verificables})
         return self.detector.detectar_oportunidad(contexto, ficha, ofertas)
+
+    def clasificar_taxonomia(self, descripcion: str) -> str | None:
+        """`Ficha.categoria_taxonomia` para el pedido (None si no se pudo)."""
+        return categoria_taxonomia(descripcion, self.cliente, self.taxonomia)
 
     # -- intake ----------------------------------------------------------------------
 

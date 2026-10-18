@@ -6,8 +6,8 @@
 import {
   CAMPOS, ESPERAN_AL_USUARIO, FINALES, MAX_RESPUESTA, PARAMETROS, TEXTO_ESTADO, TEXTO_FINAL,
   compraElegida, cuerpoContexto, desenlaceContexto, describirParametro, describirRequisito,
-  esperaAlUsuario, formatearEntrega, formatearValor, mismosRequisitos, restante, tieneIntake,
-  turnoActual,
+  esperaAlUsuario, formatearEntrega, formatearValor, mismosRequisitos, nombreOferta, restante,
+  tieneIntake, turnoActual,
 } from "../lib/agente.js";
 import { chip, dinero, fechaHora, filaDato, h, icono, vacio } from "./comunes.js";
 
@@ -432,13 +432,15 @@ function tarjetaOportunidad(c, ctx, ahora, habilitado) {
   const cambios = Array.isArray(o.cambios) ? o.cambios : [];
   const propuestos = Array.isArray(o.requisitos_propuestos) ? o.requisitos_propuestos : [];
   const precio = typeof o.precio === "number" ? dinero(o.precio, o.moneda || "") : "—";
+  const nombre = nombreOferta(o);
   return mensaje("nuestro", { clase: ["msj-oportunidad", pendiente && "pendiente"] },
     h("h4", { class: "oportunidad-titulo" }, icono("up"), "Posible punto de encuentro"),
     h("p", { text: "La oferta no cumple el pedido, pero podría cubrir tu necesidad. Esto es lo que cambia:" }),
     cambios.length ? tablaCambios(cambios) : h("p", { class: "nota", text: "La consulta no trae el detalle de los cambios." }),
     h("dl", { class: "campos" },
-      filaDato("Oferta", h("strong", { text: o.titulo || "—" })),
-      o.sku ? filaDato("SKU", h("span", { class: "mono", text: o.sku })) : null,
+      filaDato("Oferta", h("strong", { text: nombre.texto }),
+        nombre.nota ? h("span", { class: "nota", text: ` (${nombre.nota})` }) : null),
+      o.sku && nombre.texto !== o.sku ? filaDato("SKU", h("span", { class: "mono", text: o.sku })) : null,
       filaDato("Precio", h("span", { class: "mono", text: precio })),
       o.cart_id ? filaDato("Cart", h("span", { class: "mono", text: o.cart_id })) : null),
     o.por_que ? [h("p", { class: "rotulo", text: "Por qué podría servirte" }), h("p", { class: "por-que", text: o.por_que })] : null,

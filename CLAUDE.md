@@ -39,6 +39,13 @@ Un sistema del lado del comprador que acompaña a su agente de compras en un
    la consulta al usuario. Si el usuario acepta, le pasa los parámetros nuevos
    al agente del cliente.
 
+**La garantía es el Guard antes de la firma; el filtro es defensa en
+profundidad.** El filtro corta temprano lo que se ve venir, pero la seguridad
+no depende de que detecte: el Guard verifica con código determinístico,
+contra lo que autorizó el usuario y contra fuentes que el vendedor no
+controla, sin leer su texto libre. Los modelos entienden y proponen, el
+usuario autoriza, el código verifica.
+
 AP2 ya frena lo que supera el tope firmado. Nuestro valor está en lo que AP2 no
 ve: manipulación dentro del mandato, datos falsos del comercio, precios que no
 coinciden con su catálogo público y compras viables que un agente literal deja
@@ -54,6 +61,9 @@ pasar.
 | `guard/` | Dev 2 | Verificación determinística antes de la firma: ficha del pedido, extractor estructurado, verificador, chequeos, veredicto, recibo. |
 | `proxy/` | Dev 3 | Proxy A2A entre el Shopping Agent y el Merchant Agent. Corre las etapas del flujo: contexto, filtro, intención, pausa y verificación. |
 | `dashboard/` | Dev 3 | Vista de la demo: flujo, veredicto, recibo, gráfico del benchmark. |
+| `decisiones/` | Compartido (filtro e intake) | Adaptador de juicios tipados con probabilidad: OpenAI Decisions (`gpt-6-luna`) o Jev. Etapa 2. |
+| `taxonomia/` | Compartido (intake) | Taxonomía de productos de Google (árbol con IDs) y clasificación nivel por nivel. Etapa 2. |
+| `fabricante/` | Compartido (Guard, proxy, benchmark) | Ficha del fabricante por GTIN: fixture rotulado (por defecto) o Icecat. Etapa 2. |
 | `contracts/` | Los tres | Modelos de datos compartidos. **No se cambian sin acordarlo entre los tres.** |
 | `fixtures/` | Generado | Escenarios exportados por `world/` para trabajar sin levantar agentes. |
 
@@ -170,6 +180,8 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   `--out ../../results`. `.gitignore` no cambia.
 - **Puerto del dashboard:** 8020.
 - **Ficha en vivo:** para la demo se usa la de `scenarios.json` → `intent`
+  (con `guard.ficha.ficha_desde_intent`: más `attributes` y
+  `google_product_category`; ver la integración de la etapa 2)
   (`Ficha.desde_intent`), que el dashboard muestra como confirmada. La ficha
   con LLM es opcional.
 - **Imports:** `contracts/`, `guard/`, `proxy/` y `dashboard/` corren con el
@@ -257,9 +269,9 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   - **Por defecto:** si el usuario no contesta el porqué, sigue el pedido
     literal sin análisis de oportunidades; si hay varias alternativas, se
     consulta la mejor, una por vez.
-  - **Pendiente de revisar:** `docs/CONTEXTO.md` ("no es un detector de
-    prompt injection") y `docs/PREGUNTAS_DEL_JURADO.md` todavía responden
-    con el posicionamiento anterior.
+  - **Revisado en la integración (abajo):** `docs/CONTEXTO.md` ("no es un
+    detector de prompt injection") y `docs/PREGUNTAS_DEL_JURADO.md` ya
+    responden con el posicionamiento de la etapa 2.
 - **Etapa 2, implementación de la intención (rama `etapa2/intencion`, a
   revisar entre los tres):**
   - **Contrato (aditivo):**
@@ -288,9 +300,67 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   - **`world/`:** cambio mínimo en `shopper/tools.py` para que el agente del
     cliente reciba los parámetros autorizados (anotado en `NOTICE.md`; es
     carpeta de Dev 1).
-  - **Datos:** `fixtures/etapa2/computadoras.json`, escrito a mano hasta que
-    `world/` tenga el escenario. Queda fuera de `fixtures/scenario_*`
+  - **Datos:** `fixtures/etapa2/computadoras.json`. Ya no se escribe a mano:
+    `computadoras` está en `world/` y el fixture lo exporta
+    `demo_world.export_fixtures`. Queda fuera de `fixtures/scenario_*`
     porque el dashboard lista esos como la demo de zapatillas.
+- **Etapa 2, integración (rama `etapa2/integracion`, a revisar entre los
+  tres).** Junta filtro, intake con decisiones, categorías y el proxy.
+  - **Posicionamiento:** la garantía es el Guard antes de la firma; el
+    filtro es defensa en profundidad. Los modelos entienden y proponen, el
+    usuario autoriza, el código verifica. `docs/CONTEXTO.md` y
+    `docs/PREGUNTAS_DEL_JURADO.md` ya lo dicen así ("el filtro detecta, pero
+    la garantía no depende de detectar").
+  - **Adaptador `decisiones/`:** juicios tipados con probabilidad (sí/no,
+    elegir, puntaje) por HTTP, OpenAI Decisions (`gpt-6-luna`) o Jev
+    (`jev-latest`); `DECISIONES_PROVEEDOR=openai|jev` (sin la variable, el
+    que tenga clave: `OPENAI_API_KEY` primero, `TYPESAFE_API_KEY`). El modelo
+    nunca genera texto: elige, y el código decide con umbrales. Cualquier
+    falla es `DecisionesError` y quien llama falla cerrado.
+  - **Filtro (`filtro/`):** `GUARD_FILTRO=filtro:filtrar`. Heurísticas y,
+    si pasan, tres preguntas al modelo (umbral 0,5); `FILTRO_SOLO_HEURISTICAS=1`
+    para la demo offline. Motivos fijos y señales cortas: nada del proveedor
+    sale del filtro. Falla cerrado (sin cliente, con error o tarde, bloquea).
+    Con la intención activa es obligatorio: sin filtro el proxy no arranca,
+    salvo `PROXY_PERMITIR_SIN_FILTRO=1` (tests y demo). Al filtro no le llega
+    el eco exacto de nuestro pedido en el `history` (el sample manda
+    `role: agent`; sin eso, el modelo daba un falso positivo en la prueba de
+    punta a punta).
+  - **Intake (`intencion/intake.py`):** `INTENCION_PROVEEDOR=decisiones|gemini`
+    (sin la variable, `decisiones` si hay cliente). Valida con
+    probabilidades: ≥ 0,80 resuelto, 0,60–0,80 a confirmar, < 0,60 o "no
+    dicho" se repregunta; como mucho 3 repreguntas y al final se confirma la
+    ficha (lo inferido solo se autoriza si el usuario confirma). Los
+    atributos y `minimo` entran a la ficha autorizada: el Guard publica lo
+    que sabe chequear (`guard.chequeos.CAMPOS_SOPORTADOS` y
+    `OPERADORES_SOPORTADOS`). Al cerrar, la ficha suma la categoría de la
+    taxonomía de Google (`taxonomia.clasificar` con el mismo cliente; sin
+    cliente queda vacía).
+  - **Oportunidades:** solo cambian campos que el usuario **dijo** flexibles
+    (más cantidad y entregas si la necesidad tiene un cronograma que la
+    oferta cubre); `por_que` es una plantilla; `Oportunidad.titulo` es el
+    título público de la oferta o vacío (lo fuerza el proxy; el dashboard
+    muestra el SKU), nunca el del vendedor.
+  - **Categorías variadas:** requisitos de atributo con nombres schema.org
+    (`Requisito.campo="atributo"`), taxonomía de Google en
+    `Ficha.categoria_taxonomia`, fuentes de verdad en orden (comprador >
+    fabricante > página pública > catálogo > solo declarado) y la ficha del
+    fabricante por GTIN con `FABRICANTE_FUENTE` (`fixture` por defecto,
+    rotulado como datos de prueba; `icecat` apagado). El proxy la consulta
+    antes de `evaluar()` (y para las oportunidades) y la registra en el
+    evento `veredicto` (`datos.fabricante`); sin dato o con falla, lo
+    obligatorio escala.
+  - **Proxy:** la ficha de la demo sale de `ficha_desde_intent` (con
+    atributos); sin compra, la del escenario de esa compra y no la global;
+    AP2 (`ap2_violaciones`) con el tope de la ficha de cada compra;
+    `PROXY_FICHA_DEMO=0` apaga las fichas de la demo (como un comercio real:
+    manda la que confirmó el usuario en el intake). La ficha de la demo
+    sigue mandando por defecto sobre la del intake.
+  - **`world/`:** `computadoras` ya está en `world/` (y fuera del
+    benchmark); escenarios de notebooks y auriculares, y
+    `notebook_dato_falso` (RAM falsa **sin inyección**: el filtro no lo ve y
+    el Guard igual frena). El proveedor malicioso de computadoras sigue solo
+    en `filtro/casos.py`.
 
 Tests de las carpetas nuevas, desde la raíz:
 

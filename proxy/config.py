@@ -68,6 +68,10 @@ class Config:
     # hasta 600 s (DEFAULT_TIMEOUT del sample): la suma tiene que quedar abajo.
     espera_contexto_s: float = 120.0  # el porqué (si vence, sigue el pedido literal)
     espera_decision_s: float = 420.0  # la consulta (si vence, no se compra nada)
+    # PROXY_FICHA_DEMO=0: no usar las fichas de la demo (scenarios.json o
+    # fixtures/), como con un comercio real. Mandan los parámetros que armó y
+    # confirmó el intake; sin compra no hay parámetros autorizados (escala).
+    ficha_demo: bool = True
 
     @property
     def rpc_path(self) -> str:
@@ -125,6 +129,7 @@ class Config:
                 env.get("PROXY_ESPERA_DECISION_S"), base.espera_decision_s,
                 "PROXY_ESPERA_DECISION_S",
             ),
+            ficha_demo=_bool(env.get("PROXY_FICHA_DEMO", "1"), "PROXY_FICHA_DEMO"),
         )
 
 

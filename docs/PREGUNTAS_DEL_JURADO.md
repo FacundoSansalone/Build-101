@@ -35,8 +35,10 @@ complementarios: PCAT cubre la capa estructural, nosotros la semántica.
 
 ### "¿Cómo sabés si B miente?"
 
-No lo sabemos. Detectamos cuando lo que dice no coincide con lo que publica
-(su propio catálogo público), y declaramos lo que no se puede verificar.
+No lo sabemos. Detectamos cuando lo que dice no coincide con una fuente que
+no controla: la ficha del fabricante por GTIN y, si lo publica, su propio
+catálogo público. Lo que no se puede verificar se declara y, si es un
+requisito obligatorio, no se aprueba solo: se escala al humano.
 
 ### "¿B se entera?"
 
@@ -56,6 +58,30 @@ mandato o la política).
 
 ### "¿No es otro detector de prompt injection?"
 
-No. No buscamos inyecciones: el agente que decide nunca ve el texto libre del
-vendedor, así que la inyección no tiene por dónde entrar. En el escenario C no
-hay inyección y el Guard igual detecta el sobreprecio.
+No es solo eso. Tenemos un filtro que detecta (heurísticas y juicios
+tipados con probabilidad) y corta la conversación antes de que el texto
+hostil llegue a cualquier agente: es defensa en profundidad. Pero **la
+garantía no depende de detectar**: el Guard verifica la compra antes de la
+firma contra lo que autorizó el usuario y contra fuentes que el vendedor no
+controla, sin leer su texto libre. En `notebook_dato_falso` no hay inyección
+(solo un dato falso), el filtro no tiene nada que ver y el Guard igual
+bloquea; en C, igual escala el sobreprecio.
+
+### "¿Y si el filtro se equivoca?"
+
+- **Si deja pasar un ataque**, el Guard igual verifica antes de la firma: la
+  seguridad no depende del filtro.
+- **Si corta a un proveedor honesto**, se pierde esa negociación, pero no se
+  compra nada que no se autorizó. Lo medimos: 0 de 12 honestos cortados y
+  14 de 14 ataques cortados, en 26 casos de una corrida que escribimos
+  nosotros (muestra chica y optimista). En la prueba real apareció un falso
+  positivo (el eco de nuestro propio pedido) y lo corregimos.
+- **Si el filtro falla o no responde**, bloquea: nunca aprueba en silencio.
+
+### "¿Qué hace el modelo y qué el código?"
+
+Los modelos entienden y proponen: el filtro juzga si un texto intenta
+manipular, el intake entiende el pedido (con probabilidades: si duda,
+repregunta) y el detector propone alternativas. El usuario autoriza: confirma
+la ficha y acepta o rechaza cada cambio. El código verifica: el Guard es
+determinístico, no usa LLM y nunca lee el texto del vendedor.

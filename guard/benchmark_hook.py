@@ -27,10 +27,10 @@ from typing import Any
 import httpx
 
 from contracts import OfertasVistas
-from fabricante import FuenteFabricante, ResultadoFabricante, datos_externos, fuente_desde_entorno
+from fabricante import FuenteFabricante, datos_externos, fuente_desde_entorno
+from fabricante.consultas import consultar_gtins, gtins_de_ofertas
 from guard.ficha import ficha_desde_intent
 from guard.fuentes import DatoExterno, con_fuentes
-from guard.normalizar import gtin_valido
 from guard.veredicto import evaluar
 
 logger = logging.getLogger(__name__)
@@ -118,29 +118,9 @@ def fichas_del_fabricante(
     offer_details: list[dict], productos: dict[str, dict], fuente: FuenteFabricante | None
 ) -> list[DatoExterno]:
     """Consulta al fabricante por cada GTIN: el que declara el comercio y el que
-    publica el catálogo para ese SKU. Lo que falla queda sin dato."""
-    if fuente is None:
-        return []
-    gtins: list[str] = []
-    for detalle in offer_details:
-        if not isinstance(detalle, dict):
-            continue
-        producto = productos.get(detalle.get("sku")) if isinstance(detalle.get("sku"), str) else None
-        for crudo in (detalle.get("gtin"), (producto or {}).get("gtin")):
-            gtin = gtin_valido(crudo)
-            if gtin and gtin not in gtins:
-                gtins.append(gtin)
-    resultados: list[ResultadoFabricante] = []
-    for gtin in gtins:
-        try:
-            resultado = fuente.consultar(gtin)
-        except Exception as error:  # noqa: BLE001 - una fuente rota es "sin dato"
-            logger.warning("La fuente del fabricante falló (GTIN %s): %s", gtin, type(error).__name__)
-            continue
-        if resultado.sin_dato:
-            logger.info("Sin ficha del fabricante para %s (%s)", gtin, resultado.motivo)
-        resultados.append(resultado)
-    return datos_externos(resultados)
+    publica el catálogo para ese SKU. Lo que falla queda sin dato
+    (`fabricante.consultas`, lo mismo que usa el proxy)."""
+    return datos_externos(consultar_gtins(fuente, gtins_de_ofertas(offer_details, productos)))
 
 
 def evaluate(intent: dict, offers_seen: dict, chosen_cart_id: str) -> dict:

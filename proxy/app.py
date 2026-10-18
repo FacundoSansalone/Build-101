@@ -83,6 +83,8 @@ from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import (
     cargar_catalogo,
     cargar_intent,
+    ficha_del_intent,
+    intent_ap2,
     intent_del_escenario,
     violaciones_ap2,
 )
@@ -169,8 +171,11 @@ _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
 # Una repregunta del intake solo si queda al menos esto de la llamada (si
 # no, sigue con lo que tiene: la consulta de una oportunidad también espera).
 _MINIMO_REPREGUNTA_S = 30.0
+# La taxonomía (unas 3 llamadas cortas) solo si queda al menos esto.
+_MINIMO_TAXONOMIA_S = 10.0
 _TIMEOUT_LLM_S = 45.0
 _TIMEOUT_FILTRO_S = 30.0
+_TIMEOUT_FABRICANTE_S = 15.0  # todas las consultas de una compra (Icecat: 3 s cada una)
 MAX_INTAKES = 200  # estados de intake en memoria (como las compras)
 
 AccionEtapa2 = Literal["pasar", "con_parametros", "vencida", "bloqueada", "contexto_ajeno"]
@@ -182,25 +187,30 @@ def _filtrar(headers: Any, excluidos: set[str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in excluidos}
 
 
-def _ficha_verificable(texto: str, requisitos: list[Requisito]) -> Ficha | None:
+def _ficha_verificable(
+    texto: str, requisitos: list[Requisito], categoria_taxonomia: str | None = None
+) -> Ficha | None:
     """La ficha del agente con lo que el Guard sabe chequear (None si nada)."""
     from intencion.agente_decisiones import requisitos_verificables
 
     verificables, _ = requisitos_verificables(list(requisitos))
     if not verificables:
         return None
-    return Ficha(pedido_original=texto, requisitos=verificables, confirmada=True)
+    return Ficha(
+        pedido_original=texto,
+        requisitos=verificables,
+        confirmada=True,
+        categoria_taxonomia=categoria_taxonomia,
+    )
 
 
-def _nueva_espera(compra: Compra, pregunta: str) -> None:
-    """Otro turno del intake: la compra vuelve a esperar una respuesta.
+def _con_titulo_publico(oportunidad: Any, ofertas: list[Any]) -> Any:
+    """La oportunidad con el título público de su oferta, o sin título."""
+    from intencion.agente import titulo_publico
 
-    `RegistroCompras.responder` resuelve un Future por compra; para cada
-    repregunta hace falta uno nuevo (la compra vive en `proxy/compras.py`).
-    """
-    compra._respuesta = asyncio.get_running_loop().create_future()
-    compra.pregunta = pregunta
-    compra.estado = "esperando_contexto"
+    elegida = next((o for o in ofertas if o.cart_id == oportunidad.cart_id), None)
+    titulo = titulo_publico(elegida) if elegida is not None else ""
+    return oportunidad.model_copy(update={"titulo": titulo})
 
 
 @dataclass
@@ -214,6 +224,7 @@ class EstadoIntake:
     confirmada: bool | None = None
     ficha_autorizada: list[Requisito] | None = None
     sin_verificar_guard: list[Requisito] | None = None
+    categoria_taxonomia: str | None = None  # taxonomía de Google (si hay cliente)
 
     def intake_json(self) -> dict[str, Any]:
         r = self.resultado
@@ -236,6 +247,7 @@ class EstadoIntake:
             "sin_verificar_guard": [
                 q.model_dump(mode="json") for q in self.sin_verificar_guard or []
             ],
+            "categoria_taxonomia": self.categoria_taxonomia,
         }
 
     def a_json(self) -> dict[str, Any]:
@@ -369,6 +381,7 @@ class ProxyGuard:
         persistencia: Persistencia | None = None,
         agente: Any = None,
         filtro: Filtro | None = None,
+        fabricante: Any = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -397,6 +410,10 @@ class ProxyGuard:
         # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
         self.agente = agente
         self.filtro = filtro
+        # Fuente del fabricante por GTIN (fabricante.FuenteFabricante): la arma
+        # `python -m proxy` (FABRICANTE_FUENTE, por defecto el fixture). Sin
+        # fuente, lo obligatorio que solo declara el comercio escala.
+        self.fabricante = fabricante
         self.compras = RegistroCompras()
         # Intake (agentes con `evaluar_intake`): estado por compra y las
         # compras cuya ficha confirmó el usuario (la API resuelve la espera).
@@ -446,8 +463,18 @@ class ProxyGuard:
         )
 
     def ficha(self) -> Ficha:
+        """La ficha global de la demo (el pedido de zapatillas de scenarios.json).
+
+        Con `PROXY_FICHA_DEMO=0` (como un comercio real) no hay ficha de la
+        demo: una vacía y sin confirmar, sin parámetros autorizados, con la que
+        el Guard escala (nunca aprueba sin saber qué autorizó el usuario).
+        """
         if self._ficha is None:
-            self._ficha = Ficha.desde_intent(cargar_intent())
+            self._ficha = (
+                ficha_del_intent(cargar_intent())
+                if self.config.ficha_demo
+                else Ficha(pedido_original="", requisitos=[], confirmada=False)
+            )
         return self._ficha
 
     def estado(self) -> dict[str, Any]:
@@ -461,13 +488,15 @@ class ProxyGuard:
 
     def ficha_de(self, contexto_id: str | None) -> Ficha:
         """Los parámetros autorizados de esa compra (etapa 2) o, si no hay
-        compra con parámetros, la ficha de la demo (scenarios.json)."""
+        compra con parámetros, la ficha de la demo: la del escenario de esa
+        compra (con sus atributos) y, si no se conoce, la global."""
+        escenario = self._escenario(contexto_id)
         compra = self.compras.de_contexto(contexto_id)
         if compra is not None:
-            ficha = compra.resolver_ficha(self._ficha_confirmada(self._escenario(contexto_id)))
+            ficha = compra.resolver_ficha(self._ficha_confirmada(escenario))
             if ficha is not None:
                 return ficha
-        return self.ficha()
+        return self._ficha_confirmada(escenario) or self.ficha()
 
     # -- Agent Card ----------------------------------------------------------
 
@@ -997,12 +1026,15 @@ class ProxyGuard:
         return await asyncio.wait_for(asyncio.to_thread(funcion, *args), _TIMEOUT_LLM_S)
 
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
-        """La ficha confirmada de la demo para ese escenario (si hay)."""
+        """La ficha confirmada de la demo para ese escenario (si hay), con los
+        atributos y la categoría de la taxonomía (`ficha_desde_intent`)."""
+        if not self.config.ficha_demo:
+            return None  # PROXY_FICHA_DEMO=0: como con un comercio real
         intent = intent_del_escenario(escenario)
         if intent is None:
             return None
         try:
-            return Ficha.desde_intent(intent)
+            return ficha_del_intent(intent)
         except (ValueError, ValidationError):
             logger.exception("La ficha del escenario %s no es válida", escenario)
             return None
@@ -1103,7 +1135,10 @@ class ProxyGuard:
                 if con_intake:
                     datos["intake"] = estado.resultado.a_json()
                     if not otra:
-                        self._cerrar_intake(compra, texto, estado, confirmada=confirmo)
+                        categoria = await self._clasificar(llamada, texto, turnos)
+                        self._cerrar_intake(
+                            compra, texto, estado, confirmada=confirmo, categoria_taxonomia=categoria
+                        )
                         datos.update(estado.cierre_json(), sin_tiempo=sin_tiempo)
                 self._emitir(
                     "contexto_registrado",
@@ -1115,7 +1150,7 @@ class ProxyGuard:
                 if not otra:
                     break
                 estado.turno += 1
-                _nueva_espera(compra, nuevo.pregunta)
+                compra.nueva_espera(nuevo.pregunta)
                 self._emitir_pregunta(llamada, compra, estado)
         finally:
             # También si se cancela la llamada: ninguna compra queda colgada.
@@ -1192,16 +1227,43 @@ class ProxyGuard:
             )
             return None
 
+    async def _clasificar(self, llamada: Llamada, texto: str, turnos: list[Turno]) -> str | None:
+        """La categoría de la taxonomía de Google para la ficha del intake.
+
+        Solo con un agente que sabe clasificar (`clasificar_taxonomia`, el de
+        decisiones) y si queda tiempo en la llamada. Es una propuesta que se
+        registra en la ficha: el Guard no depende de ella. Si falla, vacía.
+        """
+        funcion = getattr(self.agente, "clasificar_taxonomia", None)
+        if not callable(funcion) or self._restante(llamada) - _MARGEN_S < _MINIMO_TAXONOMIA_S:
+            return None
+        descripcion = " / ".join([texto, *(t.respuesta for t in turnos if t.respuesta)])
+        try:
+            categoria = await self._llm(funcion, descripcion)
+        except Exception as e:  # noqa: BLE001 - sin taxonomía, la ficha sigue igual
+            logger.exception("El agente de intención no pudo clasificar el pedido")
+            self._error(
+                llamada, f"El agente de intención no pudo clasificar el pedido ({type(e).__name__})"
+            )
+            return None
+        return categoria if isinstance(categoria, str) and categoria.isdigit() else None
+
     def _cerrar_intake(
-        self, compra: Compra, texto: str, estado: EstadoIntake, confirmada: bool
+        self,
+        compra: Compra,
+        texto: str,
+        estado: EstadoIntake,
+        confirmada: bool,
+        categoria_taxonomia: str | None = None,
     ) -> None:
         """Los parámetros autorizados que salen del intake.
 
         Lo que el usuario dijo con confianza alta va siempre; lo inferido o
-        dudoso, solo si confirmó la ficha. Lo que el Guard todavía no sabe
-        chequear (atributos genéricos, `minimo`) se informa aparte y no va a
-        la ficha: haría fallar `evaluar()`. Si la demo tiene una ficha
-        confirmada, esa sigue mandando (`Compra.resolver_ficha`).
+        dudoso, solo si confirmó la ficha. Lo que el Guard no supiera chequear
+        (`guard.chequeos.CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS`; hoy
+        todo, atributos y `minimo` incluidos) se informaría aparte. Si la demo
+        tiene una ficha confirmada, esa sigue mandando (`Compra.resolver_ficha`;
+        `PROXY_FICHA_DEMO=0` la apaga).
         """
         from intencion.agente_decisiones import requisitos_verificables
 
@@ -1210,8 +1272,9 @@ class ProxyGuard:
         verificables, fuera = requisitos_verificables(requisitos)
         estado.final, estado.confirmar, estado.confirmada = True, False, confirmada
         estado.ficha_autorizada, estado.sin_verificar_guard = verificables, fuera
+        estado.categoria_taxonomia = categoria_taxonomia
         if not compra.ficha_resuelta:
-            compra.ficha_llm = _ficha_verificable(texto, verificables)
+            compra.ficha_llm = _ficha_verificable(texto, verificables, categoria_taxonomia)
 
     def _compra_json(self, datos: dict[str, Any]) -> dict[str, Any]:
         """La compra del registro + el estado del intake (turno, faltan…)."""
@@ -1245,9 +1308,12 @@ class ProxyGuard:
         el filtro falla o tarda de más, tampoco pasa (fail-closed). Corre en
         un hilo: un filtro lento no frena al resto del proxy.
         """
+        # El eco exacto de nuestro propio pedido en el history no es texto del
+        # proveedor: no se le pasa al filtro (la respuesta reenviada no cambia).
+        revisar = a2a.sin_eco_del_pedido(objetivo, llamada.pedido.mensaje)
         try:
             salida = await asyncio.wait_for(
-                asyncio.to_thread(self.filtro, copy.deepcopy(objetivo)), _TIMEOUT_FILTRO_S
+                asyncio.to_thread(self.filtro, copy.deepcopy(revisar)), _TIMEOUT_FILTRO_S
             )
             veredicto = (
                 salida
@@ -1309,6 +1375,7 @@ class ProxyGuard:
             compra.estado = "sin_oportunidad"
             return "pasar", None
 
+        ofertas: list[Any] = []
         try:
             from guard.extractor import extraer
             from guard.verificador import verificar_todas
@@ -1316,12 +1383,17 @@ class ProxyGuard:
             catalogo, comercio_id, _ = await cargar_catalogo(
                 self.client, self.config.catalogo_url
             )
+            detalles = copy.deepcopy(respuesta.offer_details or [])
+            catalogo, _ = await self._con_fabricante(catalogo, detalles)
             vistas = OfertasVistas(
-                carts=copy.deepcopy(respuesta.carts),
-                offer_details=copy.deepcopy(respuesta.offer_details or []),
-                comercio_id=comercio_id,
+                carts=copy.deepcopy(respuesta.carts), offer_details=detalles, comercio_id=comercio_id
             )
-            ofertas = verificar_todas(extraer(vistas).ofertas, catalogo)
+            # Verificadas como las verifica el Guard: con el fabricante y los
+            # atributos que pide la ficha de la compra.
+            atributos = [
+                r.atributo for r in compra.ficha.requisitos if r.campo == "atributo" and r.atributo
+            ]
+            ofertas = verificar_todas(extraer(vistas).ofertas, catalogo, atributos)
             oportunidad = await self._llm(
                 self.agente.detectar_oportunidad, compra.contexto, compra.ficha, ofertas
             )
@@ -1336,6 +1408,10 @@ class ProxyGuard:
         if oportunidad is None:
             compra.estado = "sin_oportunidad"
             return "pasar", None
+        # El usuario ve el título público (catálogo o fabricante) o ninguno
+        # (el dashboard muestra el SKU), nunca el que declara el vendedor:
+        # lo asegura el proxy, cualquiera sea el agente.
+        oportunidad = _con_titulo_publico(oportunidad, ofertas)
 
         compra.oportunidad = oportunidad
         compra.estado = "esperando_decision"
@@ -1364,6 +1440,7 @@ class ProxyGuard:
                     pedido_original=compra.pedido,
                     requisitos=compra.requisitos_autorizados,
                     confirmada=True,
+                    categoria_taxonomia=compra.ficha.categoria_taxonomia if compra.ficha else None,
                 )
                 compra.estado = compra.decision = "aceptada"
             elif decision == "rechazar":
@@ -1639,7 +1716,10 @@ class ProxyGuard:
             "checkout_hash": checkout.get("checkout_hash"),
             "jwt_header": header,
             "jwt_payload": payload,
-            "ap2_violaciones": violaciones_ap2(copy.deepcopy(cart)),
+            # Con el tope de esta compra (su ficha), no el pedido global.
+            "ap2_violaciones": violaciones_ap2(
+                copy.deepcopy(cart), intent_ap2(self.ficha_de(contexto_id))
+            ),
         }
         if checkout.get("cart_id") != cart_id:
             datos["cart_id_checkout"] = checkout.get("cart_id")
@@ -1650,6 +1730,35 @@ class ProxyGuard:
             contexto_id=contexto_id,
             escenario=guardadas.escenario if guardadas else None,
         )
+
+    async def _con_fabricante(
+        self, catalogo: dict[str, dict], offer_details: list[dict[str, Any]]
+    ) -> tuple[dict[str, dict], dict[str, Any]]:
+        """El catálogo más la ficha del fabricante de cada GTIN de las ofertas
+        (`fabricante.consultas`), y el resumen para el evento `veredicto`.
+
+        El I/O vive acá, afuera de `evaluar()`: los datos entran en el mismo
+        `catalogo` como `DatoExterno` (`guard.fuentes.con_fuentes`). Sin
+        fuente, sin dato, con falla o si tarda de más, el Guard no tiene
+        fuente independiente y escala lo obligatorio: nunca aprueba por eso.
+        """
+        from fabricante import datos_externos
+        from fabricante.consultas import consultar_gtins, gtins_de_ofertas, resumen
+        from guard.fuentes import con_fuentes
+
+        if self.fabricante is None:
+            return catalogo, resumen(None, [])
+        gtins = gtins_de_ofertas(offer_details, catalogo)
+        try:
+            resultados = await asyncio.wait_for(
+                asyncio.to_thread(consultar_gtins, self.fabricante, gtins), _TIMEOUT_FABRICANTE_S
+            )
+        except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala
+            logger.warning("La fuente del fabricante no respondió: %s", type(e).__name__)
+            datos = resumen(self.fabricante, [])
+            datos["error"] = type(e).__name__
+            return catalogo, datos
+        return con_fuentes(catalogo, datos_externos(resultados)), resumen(self.fabricante, resultados)
 
     async def _evaluar(
         self,
@@ -1676,6 +1785,7 @@ class ProxyGuard:
             )
             logger.warning("Catálogo descartado: %s", catalogo_descartado)
             catalogo, fuente = {}, "ninguno"
+        catalogo, fabricante = await self._con_fabricante(catalogo, guardadas.offer_details)
         try:
             resultado = self.evaluador.evaluar(
                 self.ficha_de(contexto_id),  # parámetros autorizados de la compra
@@ -1724,6 +1834,9 @@ class ProxyGuard:
         datos_veredicto: dict[str, Any] = {
             "veredicto": veredicto.model_dump(mode="json"),
             "fuente": fuente,  # "http", "fixture" (demo) o "ninguno"
+            # Ficha del fabricante por GTIN: qué fuente (un fixture va rotulado)
+            # y qué GTIN tuvieron dato.
+            "fabricante": fabricante,
             "comercio_id": comercio_id,  # del checkout firmado
             "recibo_firmado": recibo_firmado,
             "evaluador": self.evaluador.nombre,  # "stub" = no es el Guard real
@@ -2083,13 +2196,14 @@ def create_app(
     persistencia: Persistencia | None = None,
     agente: Any = None,
     filtro: Filtro | None = None,
+    fabricante: Any = None,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
-    `persistencia` (Supabase), `agente` (intencion.Agente, con Gemini) y
-    `filtro` (contracts.Filtro, de Dev 1) los arma `python -m proxy` desde el
-    entorno; acá no se lee el entorno, así los tests nunca escriben en la base
-    real ni llaman a un LLM.
+    `persistencia` (Supabase), `agente` (intencion.Agente), `filtro`
+    (contracts.Filtro, de Dev 1) y `fabricante` (fabricante.FuenteFabricante)
+    los arma `python -m proxy` desde el entorno; acá no se lee el entorno, así
+    los tests nunca escriben en la base real ni llaman a un LLM.
     """
     config = config or Config.desde_entorno()
     # Fail-closed antes de abrir nada: sin Guard real (o stub sin permiso) no
@@ -2103,7 +2217,7 @@ def create_app(
     )
     proxy = ProxyGuard(
         config, client, evaluador, ping_segundos,
-        persistencia=persistencia, agente=agente, filtro=filtro,
+        persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
     )
     if config.api_token_path is not None:
         # Para el servidor del dashboard (lo lee y lo agrega en su reenvío).

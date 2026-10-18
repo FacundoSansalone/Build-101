@@ -60,6 +60,12 @@ ATRIBUTO_POR_CAMPO: dict[str, str] = {
     "entregas": "entregas",
 }
 
+# Lo que el Guard sabe chequear (`cumple`). Lo leen quienes arman la ficha
+# autorizada (el intake, `intencion.agente_decisiones.requisitos_verificables`):
+# un requisito fuera de esto no va a los parámetros autorizados.
+CAMPOS_SOPORTADOS = frozenset(ATRIBUTO_POR_CAMPO) | {"comercio", "atributo"}
+OPERADORES_SOPORTADOS = frozenset({"igual", "maximo", "minimo", "incluye", "cubre"})
+
 # Requisitos obligatorios que forman parte del mandato que firma el usuario.
 CAMPOS_MANDATO = frozenset({"precio", "moneda"})
 
