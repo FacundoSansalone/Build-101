@@ -229,14 +229,16 @@ def ip_permitida(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     sale hacia la IPv4 de adentro, y `is_global` lo acepta aunque esa IPv4
     sea privada o la de metadata. Las IPv4-compatibles (`::/96`, obsoletas)
     y las IPv4-traducidas (`::ffff:0:0:0/96`) no se usan para un webhook: se
-    rechazan. 6to4 y Teredo ya no son globales para `ipaddress`.
+    rechazan. 6to4 y Teredo ya no son globales para `ipaddress`. Las
+    site-local (`fec0::/10`, obsoletas pero todavía ruteadas adentro de
+    algunas redes) `is_global` las acepta: se rechazan.
     """
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
             return ip_permitida(ip.ipv4_mapped)
         if ip in _NAT64:
             return ip_permitida(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
-        if any(ip in red for red in _IPV4_EN_IPV6_RECHAZADAS):
+        if any(ip in red for red in _IPV4_EN_IPV6_RECHAZADAS) or ip.is_site_local:
             return False
     return ip.is_global and not ip.is_multicast
 

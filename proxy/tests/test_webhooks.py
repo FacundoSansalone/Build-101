@@ -251,6 +251,8 @@ def test_url_estatica_valida_y_modo_inseguro() -> None:
         ["::5db8:d822"],            # IPv4-compatible, aunque la de adentro sea pública
         ["::ffff:0:7f00:1"],        # IPv4-traducida
         ["2002:7f00:1::1"],         # 6to4 → 127.0.0.1
+        ["fec0::1"],                # site-local (obsoleta): `is_global` la acepta
+        ["feff::1"],                # el final de fec0::/10
     ],
 )
 async def test_resolver_destino_rechaza_ips_no_globales(ips: list[str]) -> None:
