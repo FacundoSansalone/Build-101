@@ -334,6 +334,7 @@ Reglas que no dependen de la demo:
 | `PROXY_ESPERA_DECISION_S` | `420` | Cuánto se espera la decisión sobre la oportunidad |
 | `PROXY_PERMITIR_SIN_FILTRO` | `0` | Con la intención activa, sin `GUARD_FILTRO` el proxy no arranca; `1` lo permite (solo tests y demo, se avisa en el log) |
 | `PROXY_FICHA_DEMO` | `1` | `0`: no usar las fichas de la demo (`scenarios.json`, `fixtures/`), como con un comercio real. Mandan los parámetros que armó y confirmó el intake; sin compra, el Guard escala |
+| `DEMO_HOY` | — | Fecha `YYYY-MM-DD` que el agente de intención toma como hoy. Las ofertas de la demo tienen fechas fijas (hoy = domingo `2026-10-18`, "el lunes" = `2026-10-19`): para correrla otro día, `DEMO_HOY=2026-10-18`. Se avisa en el log al arrancar; otro formato no arranca. No llega al Guard: los vencimientos del checkout firmado se miran con el reloj de verdad |
 | `FABRICANTE_FUENTE` | `fixture` | Ficha del fabricante por GTIN: `fixture` (`fixtures/fabricante/`, datos de prueba rotulados), `icecat` (en vivo) o `ninguna`. Un valor inválido (o `icecat` sin `ICECAT_USUARIO`) no arranca. Ver [`fabricante/README.md`](../fabricante/README.md) (`FABRICANTE_FIXTURES_DIR`, `ICECAT_*`) |
 | `FILTRO_SOLO_HEURISTICAS`, `DECISIONES_PROVEEDOR`, `DECISIONES_MODELO_*`, `FILTRO_TIMEOUT_S` | — | Del filtro y del cliente de decisiones: ver [`filtro/README.md`](../filtro/README.md) |
 

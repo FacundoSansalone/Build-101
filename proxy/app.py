@@ -538,8 +538,19 @@ class ProxyGuard:
                 "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
                 "Guard real; /guard/state y cada evento veredicto lo marcan."
             )
+        if config.demo_hoy is not None:
+            logger.warning(
+                "DEMO_HOY=%s: el agente de intención toma esa fecha como hoy "
+                "(el Guard sigue con el reloj de verdad).",
+                config.demo_hoy.isoformat(),
+            )
 
     # -- utilidades ----------------------------------------------------------
+
+    def hoy(self) -> date:
+        """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
+        ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
+        return self.config.demo_hoy or date.today()
 
     def _emitir(
         self,
@@ -1041,7 +1052,7 @@ class ProxyGuard:
         # entra acá (espera `contexto_listo`).
         compra.estado = "negociando"
         pedido = llamada.pedido
-        hoy = date.today()
+        hoy = self.hoy()
         contexto = None
         try:
             if self.agente is None or not compra.intencion_activa:
@@ -1662,7 +1673,7 @@ class ProxyGuard:
                     pass
             return
         texto = pedido.catalog_search or ""
-        hoy = date.today()
+        hoy = self.hoy()
         categorias: list[str] | None = None
         resultado: Any = None  # intencion.intake.ResultadoIntake del último turno
         try:

@@ -5,8 +5,10 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -80,6 +82,11 @@ class Config:
     # fixtures/), como con un comercio real. Mandan los parámetros que armó y
     # confirmó el intake; sin compra no hay parámetros autorizados (escala).
     ficha_demo: bool = True
+    # DEMO_HOY=YYYY-MM-DD: el "hoy" que ve el agente de intención. Las ofertas
+    # de la demo tienen fechas fijas ("el lunes" es el 2026-10-19): corrida
+    # otro día, se fija para que el caso dé lo mismo. No llega al Guard (los
+    # vencimientos del checkout firmado se miran con el reloj de verdad).
+    demo_hoy: date | None = None
     # -- gateway de producción (diseño del gateway, §1.1 y §1.9) -------------
     # Sin `GATEWAY_CLAVES_ARCHIVO` (o sin claves activas) no hay oyente
     # público y todo sigue como antes: estos campos no cambian nada.
@@ -165,6 +172,7 @@ class Config:
                 "PROXY_ESPERA_DECISION_S",
             ),
             ficha_demo=_bool(env.get("PROXY_FICHA_DEMO", "1"), "PROXY_FICHA_DEMO"),
+            demo_hoy=_fecha(env.get("DEMO_HOY"), "DEMO_HOY"),
             gateway_host=(env.get("GATEWAY_HOST") or base.gateway_host).strip(),
             gateway_port=gateway_port,
             # Sin URL pública, la local del puerto que se usa: con otro
@@ -205,6 +213,23 @@ def _segundos(valor: str | None, defecto: float, nombre: str) -> float:
     if not 0 < segundos < 600:
         raise ValueError(f"{nombre} tiene que estar entre 0 y 600 segundos, no {valor!r}")
     return segundos
+
+
+_FECHA_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _fecha(valor: str | None, nombre: str) -> date | None:
+    """Una fecha `YYYY-MM-DD` (vacía = None). Solo ese formato: `fromisoformat`
+    acepta además `20261018` o `2026-W42-7`, que no se escriben a propósito."""
+    if valor is None or not valor.strip():
+        return None
+    texto = valor.strip()
+    try:
+        if not _FECHA_RE.fullmatch(texto):
+            raise ValueError
+        return date.fromisoformat(texto)
+    except ValueError:
+        raise ValueError(f"{nombre} tiene que ser una fecha YYYY-MM-DD, no {valor!r}") from None
 
 
 def _entero_positivo(valor: str | None, defecto: int, nombre: str) -> int:
