@@ -110,6 +110,43 @@ def test_host_ajeno_da_403(tmp_path, ruta):
     assert _cliente(tmp_path, _no_llamar, base_url="http://127.0.0.1:8020").get("/api/config").status_code == 200
 
 
+def test_proxy_por_defecto_es_127_0_0_1(monkeypatch):
+    """En Windows `localhost` resuelve primero a ::1, donde el proxy no
+    escucha (bind 127.0.0.1): cada GET tardaba ~5 s y el panel mostraba
+    "proxy desconectado". El default va directo por IPv4."""
+    monkeypatch.delenv("PROXY_URL", raising=False)
+    assert Config().proxy_url == "http://127.0.0.1:8010"
+    assert config_desde_entorno().proxy_url == "http://127.0.0.1:8010"
+
+
+def test_proxy_por_defecto_pasa_los_controles_del_proxy_real(tmp_path):
+    """Host 127.0.0.1:8010 lo acepta el proxy (GET y POST con token)."""
+    from proxy import guard_stub
+    from proxy.app import create_app as crear_proxy
+    from proxy.config import Config as ConfigProxy
+    from proxy.evaluador import EvaluadorCargado
+
+    proxy_app = crear_proxy(
+        ConfigProxy(events_jsonl=None, guard_key_path=tmp_path / "k.pem", permitir_stub=True,
+                    api_token_path=tmp_path / ".temp-db" / "guard_api_token"),
+        transport=httpx.MockTransport(_no_llamar),
+        evaluador=EvaluadorCargado(evaluar=guard_stub.evaluar, nombre="stub"),
+    )
+    hosts: list[str] = []
+
+    class _Espia(httpx.ASGITransport):
+        async def handle_async_request(self, request):
+            hosts.append(request.headers["host"])
+            return await super().handle_async_request(request)
+
+    cfg = Config(repo_root=tmp_path, proxy_transport=_Espia(app=proxy_app))
+    c = TestClient(create_app(cfg), base_url=BASE)
+    assert c.get("/api/proxy/guard/state").status_code == 200
+    r = c.post("/api/proxy/guard/state", json={"guard_activo": False}, headers={"Origin": BASE})
+    assert r.status_code == 200 and r.json()["guard_activo"] is False
+    assert hosts == ["127.0.0.1:8010", "127.0.0.1:8010"]
+
+
 def test_config_toma_el_puerto_del_entorno(monkeypatch):
     monkeypatch.setenv("DASHBOARD_PORT", "8123")
     cfg = config_desde_entorno()
