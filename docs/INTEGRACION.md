@@ -132,6 +132,8 @@ Lo que tenés que saber de la ficha:
 - `obligatorio: false` es un preferido: suma en el ranking, pero no bloquea.
 - `categoria_taxonomia` (opcional) es el ID de la taxonomía de productos de
   Google, solo dígitos.
+- La ficha entera pesa como mucho 32 KB en JSON compacto (sobra para 50
+  requisitos); si no, 400 `validacion` en `ficha`.
 - Claves desconocidas en el cuerpo dan 400 `validacion`, con la lista de
   problemas en `detalle.campos`.
 

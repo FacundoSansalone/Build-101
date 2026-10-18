@@ -415,6 +415,31 @@ async def test_ficha_sin_tope(cliente, nucleo):
     assert nucleo.llamadas == []
 
 
+async def test_ficha_que_pesa_de_mas_da_400(cliente, nucleo):
+    """La compra vive en memoria y en el almacén (24 h) y una clave puede tener
+    1000: con fichas de casi 1 MB (lo que deja el cuerpo) eran ~1 GB de JSON
+    por integrador, varias veces más en objetos de Python. Una ficha de 50
+    requisitos completos pesa unos pocos KB."""
+    precio, moneda, _ = FICHA_OK["requisitos"]
+    pesada = {"requisitos": [
+        precio, moneda,
+        {"campo": "marca", "operador": "incluye", "valor": ["x"] * 20_000, "obligatorio": False},
+    ]}
+    error = _error(await cliente.post("/v1/compras", json={**COMPRA_OK, "ficha": pesada}),
+                   400, "validacion")
+    assert _campos(error) == {"ficha"}
+    assert nucleo.llamadas == []
+    # El máximo de requisitos, cada uno con un atributo, entra holgado.
+    llena = {"requisitos": [precio, moneda] + [
+        {"campo": "atributo", "atributo": f"atributo_{i:02d}_con_nombre_largo", "unidad": "GB",
+         "operador": "incluye", "valor": ["valor uno", "valor dos", "valor tres"],
+         "obligatorio": False}
+        for i in range(api_v1.MAX_REQUISITOS - 2)
+    ]}
+    r = await cliente.post("/v1/compras", json={**COMPRA_OK, "ficha": llena})
+    assert r.status_code == 201, r.text
+
+
 async def test_requisito_no_soportado(cliente, nucleo):
     precio, moneda, _ = FICHA_OK["requisitos"]
     for raro, campo in [

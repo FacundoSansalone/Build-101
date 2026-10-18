@@ -98,7 +98,8 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
         "required": ["requisitos"],
         "additionalProperties": False,
         "description": "Tiene que incluir `precio`/`maximo`/obligatorio (> 0) y "
-        "`moneda`/`igual`/obligatorio (ISO 4217); si no, 400 `ficha_sin_tope`.",
+        "`moneda`/`igual`/obligatorio (ISO 4217); si no, 400 `ficha_sin_tope`. "
+        "En `POST /v1/compras`, hasta 32 KB en JSON compacto.",
         "properties": {
             "requisitos": {"type": "array", "minItems": 1, "maxItems": 50, "items": _ref("Requisito")},
             "categoria_taxonomia": _nullable({"type": "string", "pattern": "^[0-9]{1,12}$"}),

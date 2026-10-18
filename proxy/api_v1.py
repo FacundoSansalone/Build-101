@@ -24,6 +24,7 @@ verificar entera no es una autorización.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -71,6 +72,10 @@ LIMITE_MAXIMO = 200
 # ~100 y `copy.deepcopy` revienta en ~300: una compra así validaba pero no se
 # podía guardar ni mostrar.
 MAX_PROFUNDIDAD_JSON = 32
+# La ficha de una compra, en JSON compacto. Vive en memoria y en el almacén
+# hasta 24 h y una clave puede tener 1000 compras activas: con el tope del
+# cuerpo (1 MB) eran ~1 GB por integrador. 50 requisitos completos son pocos KB.
+MAX_BYTES_FICHA = 32_768
 
 CATEGORIA_RE = re.compile(r"[0-9]{1,12}")
 MONEDA_RE = re.compile(r"[A-Z]{3}")
@@ -219,6 +224,12 @@ async def leer_json(request: Request, max_bytes: int) -> Any:
             f"El cuerpo tiene más de {MAX_PROFUNDIDAD_JSON} niveles de anidamiento.",
         )
     return datos
+
+
+def _bytes_json(datos: Any) -> int:
+    """Lo que pesa `datos` en JSON compacto (UTF-8). Viene de `leer_json`:
+    siempre se puede volver a escribir (estricto y con la profundidad acotada)."""
+    return len(json.dumps(datos, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
 def _anidado_de_mas(datos: Any, maximo: int) -> bool:
@@ -412,6 +423,8 @@ def validar_solicitud_compra(body: Any) -> SolicitudCompra:
     ficha: Ficha | None = None
     if "ficha" not in datos:
         problemas.agregar("ficha", "obligatorio")
+    elif _bytes_json(datos["ficha"]) > MAX_BYTES_FICHA:
+        problemas.agregar("ficha", f"supera {MAX_BYTES_FICHA} bytes")
     else:
         # Con el pedido inválido igual se mira la forma de la ficha, para
         # devolver todos los problemas juntos.
