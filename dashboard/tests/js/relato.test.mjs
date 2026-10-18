@@ -225,7 +225,7 @@ test("filasFicha: el producto en palabras y nada que no sea de la plantilla", ()
   const dicha = { ...fuera, valor: "dicha" };
   const otra = { ...fuera, valor: "gaming_chairs" };
   assert.deepEqual(filasFicha([fuera, dicha, otra]).map((f) => f.valor),
-    ["fuera del catálogo público", "el que pediste", "gaming chairs"]);
+    ["el que pediste (no figura en el catálogo público)", "el que pediste", "gaming chairs"]);
   assert.deepEqual(filasFicha(null), []);
   assert.deepEqual(filasFicha([null, "x", { parametro: "cantidad" }]).map((f) => f.nombre), ["Cantidad"]);
 });

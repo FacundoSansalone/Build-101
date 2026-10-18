@@ -268,7 +268,7 @@ function lineasVeredicto(item, d) {
 const CATEGORIAS = {
   basketball_shoes: "zapatillas de básquet", lifestyle_sneakers: "zapatillas urbanas",
   laptops: "notebooks", headphones: "auriculares",
-  fuera_de_catalogo: "fuera del catálogo público", dicha: "el que pediste",
+  fuera_de_catalogo: "el que pediste (no figura en el catálogo público)", dicha: "el que pediste",
 };
 
 // Cómo quedó cada parámetro: lo dijiste, lo dedujo (y hay que confirmarlo),
