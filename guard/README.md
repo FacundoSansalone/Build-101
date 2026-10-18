@@ -22,7 +22,7 @@ el recibo referencia). **Ningún texto del comercio llega a `motivo` ni a
 | `fuentes.py` | Orden de las fuentes de verdad y `DatoExterno` (fabricante, página pública, comprador) dentro del `catalogo`; `desde_jsonld()` para la página pública |
 | `atributos.py` | Atributos genéricos: nombres canónicos (sinónimos, incluye Icecat), valores `{valor, unidad}` y cumplimiento por tipo con unidades |
 | `ficha.py` | `ficha_desde_intent()`: `Ficha.desde_intent()` + `intent.attributes` + `google_product_category` |
-| `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, evidencia y política |
+| `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, evidencia y política. Publica lo que sabe chequear: `CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS` (todo el contrato, con `atributo` y `minimo`); el intake los lee para armar la ficha autorizada |
 | `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección |
 | `checkout.py` | `ap2.checkout` firmado: decodifica el payload del JWT (sin verificar la firma), recalcula `checkout_hash`, lo ata al cart evaluado y exige que sea coherente consigo mismo (`line_items`, `exp`, `iat`) |
 | `recibo.py` | Arma el `Recibo` (sin I/O) y lo firma/verifica (JWS compacto ES256); clave PEM y JWK |
@@ -195,6 +195,8 @@ sin catálogo público para esos productos: la honesta da `con_avisos` (SKU y
 precio sin catálogo), el ataque `bloqueado` (`memoria_ram 8 GB no cumple el
 obligatorio (mínimo 16 GB)`; `cancelacion_ruido (no) no cumple el
 obligatorio (sí)`). Sin ninguna fuente, lo obligatorio escala.
+`notebook_dato_falso` es el mismo dato falso **sin inyección** (el filtro no
+tiene nada que ver): el Guard no lee texto libre y lo bloquea igual.
 
 ### Textos
 
@@ -250,6 +252,9 @@ ataque de `notebook_malicioso` y `auriculares_malicioso` llega a la firma
 con AP2 solo (está dentro del tope) y "éxito con Guard" es 0%.
 
 ## Uso desde el proxy (Dev 3)
+
+El proxy ya lo hace así (`proxy/app.py`), con la ficha de la compra y la
+ficha del fabricante (`fabricante.consultas`) dentro del catálogo:
 
 ```python
 from contracts import CheckoutVisto, Ficha, OfertasVistas

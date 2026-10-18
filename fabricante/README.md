@@ -18,8 +18,15 @@ resultados = [fuente.consultar(g) for g in gtins]
 veredicto = evaluar(ficha, vistas, cart_id, con_fuentes(catalogo, datos_externos(resultados)))
 ```
 
-`guard.benchmark_hook.evaluate()` ya lo hace (GTIN declarados y los del
-catálogo para esos SKU).
+`fabricante.consultas` lo empaqueta para quien llama: `gtins_de_ofertas()`
+(el GTIN declarado y el del catálogo para ese SKU), `consultar_gtins()`
+(nunca lanza: una fuente rota es "sin dato", `motivo="error"`) y
+`resumen()` (qué fuente, si es un fixture y qué GTIN tuvieron dato). Lo usan
+`guard.benchmark_hook.evaluate()` y el proxy, que lo consulta antes de
+`evaluar()` (y para las ofertas que ve el detector de oportunidades) y
+registra el resumen en el evento `veredicto` (`datos.fabricante`).
+`python -m proxy` arma la fuente con `FABRICANTE_FUENTE`; una configuración
+inválida no arranca.
 
 | Fuente | Qué es |
 |---|---|

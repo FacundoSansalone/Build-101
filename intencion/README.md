@@ -47,7 +47,15 @@ las que el código ya aceptó. El código:
   **plantilla**: qué cambia, de qué a qué y la necesidad en palabras del
   usuario. No lleva texto del vendedor (de marca, categoría o uso solo dice
   que son distintos; los valores están en `cambios`) ni texto libre del
-  modelo, que ya no redacta nada.
+  modelo, que ya no redacta nada;
+- nombra la oferta con su **título público** (`titulo_publico()`: el de la
+  fuente que lo verificó, catálogo, página pública o fabricante) o con
+  ninguno, nunca con el que declara el vendedor; sin título, el dashboard
+  muestra el SKU. El proxy lo vuelve a forzar antes de emitir la consulta;
+- lee el valor de cada requisito como el Guard (`valor_ofrecido()` con
+  `guard.chequeos.observado_de`): un atributo (memoria, peso…) por su nombre
+  y con su unidad. Un atributo no es un campo flexible: una oferta que no
+  cumple uno obligatorio no se propone.
 
 ## Qué campos se pueden cambiar
 
@@ -89,7 +97,8 @@ PYTHONPATH=. world/ap2/.venv/bin/python -m intencion.evaluar_casos --veces 3 --p
 
 Los datos de prueba están en
 [`fixtures/etapa2/computadoras.json`](../fixtures/etapa2/computadoras.json),
-escrito a mano hasta que `world/` tenga el escenario de computadoras.
+que exporta `world/` (`demo_world.export_fixtures`) desde el escenario
+`computadoras`.
 
 ## Intake con decisiones: repreguntar hasta tener todo
 
@@ -131,9 +140,19 @@ redacta nada. La primera es el porqué más lo que falte; después, "me falta
 saber…" (hasta 3 repreguntas, y si sigue faltando lo dice); al final,
 confirmar la ficha, con lo inferido listado. Lo inferido solo se autoriza si
 el usuario confirma. Una cantidad de 1 no es requisito (un cart es una
-unidad); lo que el Guard todavía no chequea (campo `atributo`, operador
-`minimo`) se muestra pero no va a la ficha autorizada
-(`requisitos_verificables`).
+unidad). Los atributos (campo `atributo`) y el operador `minimo` **van a la
+ficha autorizada**: el Guard los verifica. `requisitos_verificables()` lee
+lo que el Guard publica que sabe chequear (`guard.chequeos.CAMPOS_SOPORTADOS`
+y `OPERADORES_SOPORTADOS`, hoy todo el contrato); lo que no estuviera ahí se
+mostraría pero no se autorizaría.
+
+**Taxonomía de Google:** `AgenteDecisiones.clasificar_taxonomia(descripcion)`
+(o `categoria_taxonomia(descripcion, cliente)`) clasifica el pedido nivel por
+nivel con `taxonomia.clasificar` y el mismo cliente (unas 3 llamadas, sobre
+el subconjunto del repo) y devuelve el último nivel seguro. El proxy lo
+llama al cerrar el intake y lo pone en `Ficha.categoria_taxonomia`. Sin
+cliente de decisiones queda vacía. Es una propuesta: el Guard no depende de
+ella.
 
 **Contexto y oportunidades:** el intake y el contexto de un turno salen de
 una sola llamada. La necesidad son las palabras del usuario; el cronograma
