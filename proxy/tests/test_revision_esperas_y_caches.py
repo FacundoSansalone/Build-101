@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -16,6 +17,8 @@ import pytest
 import proxy.app as app_mod
 from contracts import Ficha
 from proxy import a2a
+from proxy import compras as compras_mod
+from proxy.compras import RegistroCompras
 from proxy.estado import EstadoMemoria
 from proxy.tests.ayudantes import RPC, cliente_de, evaluador_espia
 from proxy.tests.fake_world import (
@@ -34,6 +37,7 @@ from proxy.tests.gateway_ayudantes import (
     cliente_publico,
     crear_compra,
 )
+from proxy.tests.test_compras_api import crear as crear_api
 from proxy.tests.test_etapa2 import DATOS, RESPUESTA_USUARIO, AgenteFalso
 from proxy.tipos_gateway import ErrorAlmacen
 
@@ -262,3 +266,51 @@ async def test_sin_claves_ni_almacen_durable_no_se_consulta_nada(armar_proxy):
             headers=HEADERS_A2A,
         )
     assert almacen.consultas == []
+
+
+# ---------------------------------------------------------------------------
+# 4. Una fila de otro reloj adelanta solo su compra, no las marcas del proceso
+# ---------------------------------------------------------------------------
+
+_INSTANTE = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+_UN_MICRO = timedelta(microseconds=1)
+
+
+@pytest.fixture
+def reloj_quieto(monkeypatch):
+    monkeypatch.setattr(compras_mod, "_ahora", lambda: _INSTANTE)
+    monkeypatch.setattr(compras_mod, "_marcas", compras_mod.MarcasMonotonas())
+
+
+async def test_una_fila_adelantada_no_adelanta_las_otras_compras(reloj_quieto):
+    """`tocar()` le pasaba la `actualizada` de una fila hidratada (otro proceso
+    con el reloj una hora adelante) como piso a las marcas del proceso: desde
+    ahí `creada` y `actualizada` de todas las compras quedaban en el futuro."""
+    registro = RegistroCompras()
+    ajena = crear_api(registro)
+    ajena.actualizada = _INSTANTE + timedelta(hours=1)  # como la deja `desde_fila`
+    ajena.tocar()
+    assert ajena.actualizada == _INSTANTE + timedelta(hours=1) + _UN_MICRO
+
+    nueva = crear_api(registro)
+    nueva.tocar()
+    assert nueva.creada < _INSTANTE + timedelta(seconds=1)
+    assert nueva.creada < nueva.actualizada < _INSTANTE + timedelta(seconds=1)
+
+
+async def test_la_compra_ajena_sigue_creciendo_y_el_proceso_tambien(reloj_quieto):
+    """La monotonía no se pierde: la compra de la fila sigue creciendo desde su
+    marca y las del proceso, desde las suyas (estrictamente, a reloj quieto)."""
+    registro = RegistroCompras()
+    ajena = crear_api(registro)
+    propia = crear_api(registro)
+    ajena.actualizada = _INSTANTE + timedelta(hours=1)
+    marcas_ajena, marcas_propia = [], []
+    for _ in range(3):
+        ajena.tocar()
+        marcas_ajena.append(ajena.actualizada)
+        propia.tocar()
+        marcas_propia.append(propia.actualizada)
+    assert marcas_ajena == sorted(set(marcas_ajena)) and marcas_ajena[0] > _INSTANTE + timedelta(hours=1)
+    assert marcas_propia == sorted(set(marcas_propia))
+    assert marcas_propia[0] > propia.creada and marcas_propia[-1] < _INSTANTE + timedelta(seconds=1)

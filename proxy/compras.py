@@ -88,7 +88,12 @@ class MarcasMonotonas:
     """Marcas de tiempo estrictamente crecientes en el proceso, para `creada`
     y `actualizada`: el integrador ordena los webhooks por `actualizada` y en
     Windows dos `datetime.now()` seguidos suelen dar el mismo instante. Cada
-    marca es `max(ahora, última + 1 µs)` (y, si se pasa, después de `minimo`)."""
+    marca es `max(ahora, última + 1 µs)` (y, si se pasa, después de `minimo`).
+
+    `minimo` es la marca previa de una compra, que puede venir de una fila
+    que escribió otro proceso con otro reloj: vale solo para la marca que se
+    devuelve y no mueve la del proceso (si no, una fila adelantada dejaba en
+    el futuro `creada` y `actualizada` de todas las compras nuevas)."""
 
     def __init__(self) -> None:
         self._ultima: datetime | None = None
@@ -97,11 +102,12 @@ class MarcasMonotonas:
     def siguiente(self, minimo: datetime | None = None) -> datetime:
         with self._candado:
             marca = _ahora()
-            for previa in (self._ultima, minimo):
-                if previa is not None and marca <= previa:
-                    marca = previa + _UN_MICRO
+            if self._ultima is not None and marca <= self._ultima:
+                marca = self._ultima + _UN_MICRO
             self._ultima = marca
-            return marca
+        if minimo is not None and marca <= minimo:
+            marca = minimo + _UN_MICRO  # solo para esa compra
+        return marca
 
 
 _marcas = MarcasMonotonas()
