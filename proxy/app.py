@@ -172,6 +172,7 @@ _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
 _MINIMO_REPREGUNTA_S = 30.0
 _TIMEOUT_LLM_S = 45.0
 _TIMEOUT_FILTRO_S = 30.0
+_TIMEOUT_FABRICANTE_S = 15.0  # todas las consultas de una compra (Icecat: 3 s cada una)
 MAX_INTAKES = 200  # estados de intake en memoria (como las compras)
 
 AccionEtapa2 = Literal["pasar", "con_parametros", "vencida", "bloqueada", "contexto_ajeno"]
@@ -370,6 +371,7 @@ class ProxyGuard:
         persistencia: Persistencia | None = None,
         agente: Any = None,
         filtro: Filtro | None = None,
+        fabricante: Any = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -398,6 +400,10 @@ class ProxyGuard:
         # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
         self.agente = agente
         self.filtro = filtro
+        # Fuente del fabricante por GTIN (fabricante.FuenteFabricante): la arma
+        # `python -m proxy` (FABRICANTE_FUENTE, por defecto el fixture). Sin
+        # fuente, lo obligatorio que solo declara el comercio escala.
+        self.fabricante = fabricante
         self.compras = RegistroCompras()
         # Intake (agentes con `evaluar_intake`): estado por compra y las
         # compras cuya ficha confirmó el usuario (la API resuelve la espera).
@@ -1321,12 +1327,15 @@ class ProxyGuard:
             catalogo, comercio_id, _ = await cargar_catalogo(
                 self.client, self.config.catalogo_url
             )
+            detalles = copy.deepcopy(respuesta.offer_details or [])
+            catalogo, _ = await self._con_fabricante(catalogo, detalles)
             vistas = OfertasVistas(
-                carts=copy.deepcopy(respuesta.carts),
-                offer_details=copy.deepcopy(respuesta.offer_details or []),
-                comercio_id=comercio_id,
+                carts=copy.deepcopy(respuesta.carts), offer_details=detalles, comercio_id=comercio_id
             )
-            ofertas = verificar_todas(extraer(vistas).ofertas, catalogo)
+            # Verificadas como las verifica el Guard: con el fabricante y los
+            # atributos que pide la ficha de la compra.
+            atributos = [r.atributo for r in compra.ficha.requisitos if r.campo == "atributo" and r.atributo]
+            ofertas = verificar_todas(extraer(vistas).ofertas, catalogo, atributos)
             oportunidad = await self._llm(
                 self.agente.detectar_oportunidad, compra.contexto, compra.ficha, ofertas
             )
@@ -1656,6 +1665,35 @@ class ProxyGuard:
             escenario=guardadas.escenario if guardadas else None,
         )
 
+    async def _con_fabricante(
+        self, catalogo: dict[str, dict], offer_details: list[dict[str, Any]]
+    ) -> tuple[dict[str, dict], dict[str, Any]]:
+        """El catálogo más la ficha del fabricante de cada GTIN de las ofertas
+        (`fabricante.consultas`), y el resumen para el evento `veredicto`.
+
+        El I/O vive acá, afuera de `evaluar()`: los datos entran en el mismo
+        `catalogo` como `DatoExterno` (`guard.fuentes.con_fuentes`). Sin
+        fuente, sin dato, con falla o si tarda de más, el Guard no tiene
+        fuente independiente y escala lo obligatorio: nunca aprueba por eso.
+        """
+        from fabricante import datos_externos
+        from fabricante.consultas import consultar_gtins, gtins_de_ofertas, resumen
+        from guard.fuentes import con_fuentes
+
+        if self.fabricante is None:
+            return catalogo, resumen(None, [])
+        gtins = gtins_de_ofertas(offer_details, catalogo)
+        try:
+            resultados = await asyncio.wait_for(
+                asyncio.to_thread(consultar_gtins, self.fabricante, gtins), _TIMEOUT_FABRICANTE_S
+            )
+        except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala
+            logger.warning("La fuente del fabricante no respondió: %s", type(e).__name__)
+            datos = resumen(self.fabricante, [])
+            datos["error"] = type(e).__name__
+            return catalogo, datos
+        return con_fuentes(catalogo, datos_externos(resultados)), resumen(self.fabricante, resultados)
+
     async def _evaluar(
         self,
         llamada: Llamada,
@@ -1681,6 +1719,7 @@ class ProxyGuard:
             )
             logger.warning("Catálogo descartado: %s", catalogo_descartado)
             catalogo, fuente = {}, "ninguno"
+        catalogo, fabricante = await self._con_fabricante(catalogo, guardadas.offer_details)
         try:
             resultado = self.evaluador.evaluar(
                 self.ficha_de(contexto_id),  # parámetros autorizados de la compra
@@ -1729,6 +1768,9 @@ class ProxyGuard:
         datos_veredicto: dict[str, Any] = {
             "veredicto": veredicto.model_dump(mode="json"),
             "fuente": fuente,  # "http", "fixture" (demo) o "ninguno"
+            # Ficha del fabricante por GTIN: qué fuente (un fixture va rotulado)
+            # y qué GTIN tuvieron dato.
+            "fabricante": fabricante,
             "comercio_id": comercio_id,  # del checkout firmado
             "recibo_firmado": recibo_firmado,
             "evaluador": self.evaluador.nombre,  # "stub" = no es el Guard real
@@ -2088,13 +2130,14 @@ def create_app(
     persistencia: Persistencia | None = None,
     agente: Any = None,
     filtro: Filtro | None = None,
+    fabricante: Any = None,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
-    `persistencia` (Supabase), `agente` (intencion.Agente, con Gemini) y
-    `filtro` (contracts.Filtro, de Dev 1) los arma `python -m proxy` desde el
-    entorno; acá no se lee el entorno, así los tests nunca escriben en la base
-    real ni llaman a un LLM.
+    `persistencia` (Supabase), `agente` (intencion.Agente), `filtro`
+    (contracts.Filtro, de Dev 1) y `fabricante` (fabricante.FuenteFabricante)
+    los arma `python -m proxy` desde el entorno; acá no se lee el entorno, así
+    los tests nunca escriben en la base real ni llaman a un LLM.
     """
     config = config or Config.desde_entorno()
     # Fail-closed antes de abrir nada: sin Guard real (o stub sin permiso) no
@@ -2108,7 +2151,7 @@ def create_app(
     )
     proxy = ProxyGuard(
         config, client, evaluador, ping_segundos,
-        persistencia=persistencia, agente=agente, filtro=filtro,
+        persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
     )
     if config.api_token_path is not None:
         # Para el servidor del dashboard (lo lee y lo agrega en su reenvío).

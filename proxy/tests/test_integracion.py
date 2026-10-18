@@ -146,12 +146,13 @@ async def test_el_guard_bloquea_la_ram_falsa_con_el_fabricante_fixture(armar_pro
         datos = await _veredicto(c)
     assert not checkouts(task)
     assert veredictos(task)[0]["status"] == "bloqueado"
-    ram = next(
-        q for q in datos["veredicto"]["chequeos"]
-        if q["tipo"] == "cumplimiento" and q.get("campo") == "atributo:memoria_ram"
-    )
-    assert ram["resultado"] == "bloquea" and ram["origen"] == "fabricante"
-    assert "fixture de prueba" in ram["detalle"]
+    ram = {
+        q["tipo"]: q for q in datos["veredicto"]["chequeos"] if q.get("campo") == "atributo:memoria_ram"
+    }
+    assert ram["cumplimiento"]["resultado"] == "bloquea"
+    assert ram["cumplimiento"]["origen"] == "fabricante"
+    # La evidencia dice que el dato es de un fixture (datos de prueba).
+    assert "fixture de prueba" in ram["evidencia"]["detalle"]
     # El evento dice qué fuente del fabricante se usó, rotulada como fixture.
     fabricante = datos["fabricante"]
     assert fabricante["fuente"] == "fixture" and fabricante["fixture"] is True
@@ -208,7 +209,8 @@ async def test_la_oportunidad_ve_las_ofertas_verificadas_con_el_fabricante(
     zento = next(o for o in ofertas if o.cart_id == "cart_4")
     evidencia = zento.evidencia["atributo:memoria_ram"]
     assert evidencia.estado == "contradicho" and evidencia.origen_usado == "fabricante"
-    assert zento.atributos["memoria_ram"].valor == 8  # el dato del fabricante, no el declarado
+    # El dato del fabricante, no el declarado (16 GB).
+    assert float(zento.atributos["memoria_ram"].valor) == 8.0
 
 
 def test_python_m_proxy_arma_la_fuente_del_fabricante():
