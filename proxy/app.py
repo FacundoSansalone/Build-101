@@ -1738,9 +1738,15 @@ class ProxyGuard:
         (`compra.restante()`) más un margen para el LLM, nunca más que la
         llamada. Si vence y la compra abrió otra espera mientras tanto (otro
         plazo), vuelve a calcular; si no avanzó, False y quien llama cierra
-        del lado seguro (antes esperaba el presupuesto entero, 570 s)."""
+        del lado seguro (antes esperaba el presupuesto entero, 570 s).
+
+        Sin plazo (`vence` None: la primera todavía arma la pregunta con el
+        LLM, o ya pasó la espera y sigue con el LLM de después) no hay nada
+        que acote salvo la llamada: el tramo es lo que le queda a la llamada."""
         while not evento.is_set():
-            tramo = min(self._restante(llamada), compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
+            tramo = self._restante(llamada)
+            if compra.vence is not None:
+                tramo = min(tramo, compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
             if tramo <= 0:
                 return False
             plazo = compra.vence
