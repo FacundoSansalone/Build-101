@@ -79,7 +79,9 @@ Vale para `/v1/*` y para el tráfico A2A (`/a2a/m/{comercio}`). Solo
 `/v1/public-key`, `/v1/openapi.json` y `/v1/docs` no la piden.
 
 - Sin clave: 401 `no_autenticado`. Con una clave que no existe o está dada de
-  baja: 401 `clave_invalida`.
+  baja: 401 `clave_invalida`. También es `clave_invalida` una clave mal
+  presentada (`Token psg_…`, la clave sola, sin el espacio después de
+  `Bearer`): nunca pasa como un pedido sin clave.
 - **Tus compras son tuyas.** Una compra de otro integrador da 404
   `compra_desconocida`, igual que una que no existe.
 - **La clave nunca llega al comercio.** El gateway saca `Authorization` y
@@ -238,8 +240,12 @@ Lo que puede pasar mientras esa llamada está abierta:
    ```sh
    curl -s -X POST "$GW/v1/compras/cmp-0123456789abcdef/decision" \
      -H "Authorization: Bearer $CLAVE" -H "Content-Type: application/json" \
-     -d '{"oportunidad_id": "op-…", "decision": "aceptar"}'
+     -d '{"oportunidad_id": "opo-…", "decision": "aceptar"}'
    ```
+
+   El `oportunidad_id` es el `pendiente.oportunidad.id` (empieza con `opo-`).
+   La respuesta ya trae la compra con la decisión aplicada (`aceptada` o
+   `rechazada`, y la ficha nueva si aceptó).
 
    Si acepta, la respuesta le llega a tu agente con un artefacto
    `guard.parametros_autorizados` y la ficha de la compra pasa a ser esa. Si
@@ -389,18 +395,24 @@ def verificar_webhook(secreto: str, cuerpo: bytes, cabecera: str) -> bool:
     crudos del POST, antes de parsear el JSON."""
     partes = dict(p.strip().split("=", 1) for p in cabecera.split(",") if "=" in p)
     t, recibida = partes.get("t", ""), partes.get("v1", "")
-    if not t.isdigit() or abs(time.time() - int(t)) > TOLERANCIA_S:
+    # isascii: "²".isdigit() es True, pero int("²") lanza.
+    if not (t.isascii() and t.isdigit()) or abs(time.time() - int(t)) > TOLERANCIA_S:
         return False
     esperada = hmac.new(
         secreto.encode(), f"{t}.".encode() + cuerpo, hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(esperada, recibida)
+    # En bytes: con un str que no es ASCII, compare_digest lanza en vez de dar False.
+    return hmac.compare_digest(esperada.encode(), recibida.encode("utf-8", "replace"))
 ```
 
 Además:
 
-- **Deduplicá por `X-Guard-Entrega`.** Un reintento trae el mismo id (y una
-  firma nueva: `t` es el momento de cada intento).
+- **Deduplicá por el `id` del cuerpo** (es el mismo valor que
+  `X-Guard-Entrega`, pero el header no está firmado: quien reenvía una
+  entrega dentro de la tolerancia puede cambiarlo; el cuerpo no). Un
+  reintento trae el mismo id (y una firma nueva: `t` es el momento de cada
+  intento). Por lo mismo, el tipo leelo de `tipo` en el cuerpo, no de
+  `X-Guard-Evento`.
 - **El orden no está garantizado.** Ordená por `compra.actualizada`.
 - **Contestá 2xx rápido** (cada intento tiene 10 s en total, cuerpo de la
   respuesta incluido) y procesá aparte.

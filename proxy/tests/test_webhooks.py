@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -149,6 +151,36 @@ def test_firma_acepta_varios_v1() -> None:
     cabecera = firmar(SECRETO, b"c", 1000)
     otra = "v1=" + "0" * 64
     assert verificar_firma(SECRETO, b"c", f"{cabecera},{otra}", ahora=1000)
+
+
+def _verificar_de_la_doc() -> Any:
+    """`verificar_webhook` tal como lo muestra docs/INTEGRACION.md §7."""
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "INTEGRACION.md").read_text("utf-8")
+    [bloque] = [
+        b.split("\n", 1)[1] for b in doc.split("```python")[1:]
+        if "def verificar_webhook" in b.split("```", 1)[0]
+    ]
+    espacio: dict[str, Any] = {}
+    exec(bloque.split("```", 1)[0], espacio)  # noqa: S102 - código de la doc, no de afuera
+    return espacio["verificar_webhook"]
+
+
+def test_el_ejemplo_de_la_doc_verifica_y_nunca_lanza() -> None:
+    """El receptor copia ese ejemplo: tiene que aceptar lo que firma el
+    gateway y rechazar (sin lanzar) una cabecera rara. Antes, `v1` con un
+    carácter no ASCII o `t=²` hacían lanzar a `compare_digest` / `int`."""
+    verificar = _verificar_de_la_doc()
+    secreto = SECRETO.decode()
+    cuerpo = cuerpo_webhook(
+        entrega_id="whe-1", tipo="ping", integrador_id="acme",
+        creado=datetime(2026, 10, 18, tzinfo=timezone.utc), compra=None,
+    )
+    ahora = int(time.time())
+    assert verificar(secreto, cuerpo, firmar(SECRETO, cuerpo, ahora)) is True
+    assert verificar(secreto, cuerpo + b" ", firmar(SECRETO, cuerpo, ahora)) is False
+    assert verificar(secreto, cuerpo, firmar(SECRETO, cuerpo, ahora - 3600)) is False
+    for rara in (f"t={ahora},v1=ñ", "t=²,v1=00", "v1=00", "", "t=,v1="):
+        assert verificar(secreto, cuerpo, rara) is False, rara
 
 
 def test_cuerpo_compacto_y_ordenado() -> None:
