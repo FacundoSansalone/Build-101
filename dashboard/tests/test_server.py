@@ -202,6 +202,28 @@ def test_fixture_b_y_su_ficha_con_el_contrato(repo_con_fixtures):
     assert c.get("/api/fixtures/..%2e").status_code == 400
 
 
+def test_ficha_del_fixture_suma_atributos_y_taxonomia(tmp_path):
+    """Escenarios de otras categorías: la ficha lleva `intent.attributes` y
+    `google_product_category` (`guard.ficha.ficha_desde_intent`)."""
+    intent = {
+        "user_request": "Una notebook con 16 GB de RAM, hasta USD 1200",
+        "hard": {"max_price": 1200.0, "currency": "USD"},
+        "preferred": {},
+        "attributes": {
+            "hard": [{"atributo": "memoria_ram", "operador": "minimo", "valor": 16, "unidad": "GB"}],
+            "preferred": [{"atributo": "weight", "operador": "maximo", "valor": 1.5, "unidad": "kg"}],
+        },
+        "google_product_category": "328",
+    }
+    _escribir(tmp_path / "fixtures/scenario_notebook.json", {"scenario": "notebook", "intent": intent})
+    ficha = _cliente(tmp_path).get("/api/fixtures/notebook/ficha").json()
+    atributos = {r["atributo"]: r for r in ficha["requisitos"] if r["campo"] == "atributo"}
+    assert atributos["memoria_ram"]["operador"] == "minimo"
+    assert atributos["memoria_ram"]["obligatorio"] is True
+    assert atributos["weight"]["obligatorio"] is False
+    assert ficha["categoria_taxonomia"] == "328"
+
+
 def test_catalogo_publico(repo_con_fixtures, tmp_path_factory):
     datos = _cliente(repo_con_fixtures).get("/api/catalog").json()
     assert datos["merchant"]["id"] == "merchant_1"
