@@ -12,7 +12,7 @@ import json
 from datetime import date, datetime
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Tipos comunes
@@ -29,6 +29,10 @@ Origen = Literal[
     "catalogo_publico",  # GET :8011/products/<sku>
     "checkout_firmado",  # ap2.checkout (JWT firmado por el comercio)
     "ficha",             # lo que confirmó el usuario
+    # Etapa 2, categorías variadas (fuentes que el vendedor no controla, o
+    # que publica para todos):
+    "fabricante",        # ficha del fabricante por GTIN (p. ej. Icecat)
+    "pagina_publica",    # JSON-LD schema.org de la página pública del vendedor
 ]
 
 EstadoEvidencia = Literal[
@@ -41,6 +45,10 @@ EstadoEvidencia = Literal[
 CampoRequisito = Literal[
     "precio", "moneda", "categoria", "uso", "talle", "marca", "comercio",
     "cantidad", "entregas",  # etapa 2 (docs/FLUJO.md)
+    # Categorías variadas: cualquier atributo del producto, con el nombre de
+    # schema.org (`gtin`, `model`, `color`…) o el de `additionalProperty`
+    # (p. ej. "memoria_ram"). El nombre va en `Requisito.atributo`.
+    "atributo",
 ]
 
 # Data part que agrega el proxy a la tarea A2A con el veredicto. Va en un
@@ -86,9 +94,23 @@ class Requisito(BaseModel):
     campo: CampoRequisito
     # incluye: talle ∈ talles. cubre: el cronograma de entregas de la oferta
     # cubre, acumulado, cada `Entrega` pedida (valor = list[Entrega]).
-    operador: Literal["igual", "maximo", "incluye", "cubre"]
+    # minimo: valor ≥ (p. ej. memoria ≥ 16 GB).
+    operador: Literal["igual", "maximo", "minimo", "incluye", "cubre"]
     valor: Any
     obligatorio: bool  # True = hard, False = preferido
+    # Categorías variadas (opcionales; los requisitos de siempre no los usan):
+    atributo: str | None = None  # nombre del atributo si campo == "atributo"
+    unidad: str | None = None    # unidad del valor ("GB", "in", "kg"…), si tiene
+    # De dónde salió el requisito: lo dijo el usuario, lo infirió el agente
+    # (y el usuario lo confirmó), lo aceptó en una oportunidad o lo exige la
+    # política. None = las fichas de antes (scenarios.json).
+    origen: Literal["dicho", "inferido", "aceptado", "politica"] | None = None
+
+    @model_validator(mode="after")
+    def _atributo_con_nombre(self) -> Requisito:
+        if self.campo == "atributo" and not (self.atributo and self.atributo.strip()):
+            raise ValueError('un requisito de campo "atributo" necesita el nombre en `atributo`')
+        return self
 
 
 class Ficha(BaseModel):
@@ -105,6 +127,9 @@ class Ficha(BaseModel):
         "lowest_price_among_compliant"
     )
     confirmada: bool = False  # True cuando el usuario la aceptó
+    # Categoría en la taxonomía de productos de Google (ID, como texto), si el
+    # intake la clasificó. None = las fichas de antes.
+    categoria_taxonomia: str | None = None
 
     @classmethod
     def desde_intent(cls, intent: dict, confirmada: bool = True) -> Ficha:
@@ -150,6 +175,13 @@ class Evidencia(BaseModel):
     origen_usado: Origen    # qué fuente usan los chequeos para este campo
 
 
+class ValorAtributo(BaseModel):
+    """Valor de un atributo genérico (schema.org `PropertyValue`: value + unitCode)."""
+
+    valor: Any
+    unidad: str | None = None
+
+
 class Oferta(BaseModel):
     """Un producto ofrecido, solo con campos tipados. Sin texto libre."""
 
@@ -167,6 +199,11 @@ class Oferta(BaseModel):
     # comprar). `cantidad` = unidades del cart; `entregas` = cronograma.
     cantidad: int | None = None
     entregas: list[Entrega] = Field(default_factory=list)
+    # Categorías variadas (opcionales): código de barras, categoría en la
+    # taxonomía de Google y atributos genéricos con nombre de schema.org.
+    gtin: str | None = None
+    categoria_taxonomia: str | None = None
+    atributos: dict[str, ValorAtributo] = Field(default_factory=dict)
     evidencia: dict[str, Evidencia] = Field(default_factory=dict)
     # El texto libre (item_label, description) NO llega a ningún chequeo.
     # Se guarda solo para el recibo y el dashboard.
@@ -303,11 +340,21 @@ class Flexibilidad(BaseModel):
     origen: Literal["dicha", "inferida"]  # la dijo el usuario o la dedujo el agente
 
 
+class Turno(BaseModel):
+    """Una repregunta del intake y lo que contestó el usuario."""
+
+    pregunta: str
+    respuesta: str | None = None  # None = omitió o venció
+
+
 class Contexto(BaseModel):
     """Lo que hay detrás del pedido. Conocerlo NO autoriza a cambiar nada:
     los parámetros vigentes siguen siendo los de la ficha de la compra."""
 
     pedido: str                     # lo que pidió el agente del cliente
+    # Repreguntas del intake hasta tener todo lo necesario (además de la
+    # primera `pregunta`/`respuesta`). Vacío = una sola pregunta, como antes.
+    historial: list[Turno] = Field(default_factory=list)
     pregunta: str                   # lo que le preguntó nuestro agente al usuario
     respuesta: str | None = None    # lo que contestó (None = omitió o venció)
     necesidad: str | None = None    # la necesidad en una frase

@@ -26,6 +26,8 @@ from contracts.models import (
     Requisito,
     ResultadoFiltro,
     Status,
+    Turno,
+    ValorAtributo,
     Veredicto,
 )
 
@@ -55,5 +57,7 @@ __all__ = [
     "Requisito",
     "ResultadoFiltro",
     "Status",
+    "Turno",
+    "ValorAtributo",
     "Veredicto",
 ]
