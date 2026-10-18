@@ -105,6 +105,7 @@ class Config:
     adk_url: str = DEFAULT_ADK_URL
     world_temp_dir: Path | None = None
     demo_auto: bool = True
+    demo_pausa_auto_s: float = 0.0  # entre respuestas automáticas (plan gratuito de Gemini)
     # Solo para tests: transporte de httpx hacia el proxy y hacia ADK.
     proxy_transport: httpx.AsyncBaseTransport | None = field(
         default=None, compare=False
@@ -158,6 +159,10 @@ def config_desde_entorno() -> Config:
     if not world_temp.is_absolute():
         world_temp = REPO_ROOT / world_temp
     auto = os.environ.get("DEMO_AUTO", "1").strip().lower() not in {"0", "false", "no"}
+    try:
+        pausa = max(0.0, min(float(os.environ.get("DEMO_PAUSA_AUTO_S", "0")), 60.0))
+    except ValueError:
+        pausa = 0.0
     return Config(
         proxy_url=os.environ.get("PROXY_URL", DEFAULT_PROXY_URL).rstrip("/"),
         port=int(os.environ.get("DASHBOARD_PORT", DEFAULT_PORT)),
@@ -165,6 +170,7 @@ def config_desde_entorno() -> Config:
         adk_url=os.environ.get("ADK_URL", DEFAULT_ADK_URL).rstrip("/"),
         world_temp_dir=world_temp,
         demo_auto=auto,
+        demo_pausa_auto_s=pausa,
     )
 
 

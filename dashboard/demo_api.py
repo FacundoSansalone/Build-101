@@ -358,12 +358,10 @@ def siguiente_auto(
         if enviados["billetera"] == 0:
             return PasoAuto("billetera", "Quiero usar mi billetera digital: Google Wallet.")
         return PasoAuto("billetera", "Sí, está bien.")
-    if (
-        autor in ("root_agent", "shipping_address_collector")
-        and not estado.get("checkout_data")
-        and direccion
-        and puede("continuar")
-    ):
+    # Después de elegir, el agente principal (o el de la dirección, ya con
+    # ella) a veces cuenta su plan y espera: que siga.
+    narra = autor == "root_agent" or (autor == "shipping_address_collector" and direccion)
+    if narra and not estado.get("checkout_data") and puede("continuar"):
         return seguir
     return None
 
@@ -541,6 +539,11 @@ class Conversacion:
                         self.registrar("pago", cart_id=cart_id if isinstance(cart_id, str) else None)
                     if paso is None:
                         return
+                    if self.cfg.demo_pausa_auto_s > 0:
+                        # Plan gratuito de Gemini: espaciar los turnos.
+                        await asyncio.sleep(self.cfg.demo_pausa_auto_s)
+                        if generacion != self._generacion:
+                            return
                     self.enviados[paso.paso] += 1
                     self.registrar("auto", paso=paso.paso, texto=paso.texto, detalle=paso.detalle)
                     actual = paso.texto

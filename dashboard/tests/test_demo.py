@@ -286,6 +286,15 @@ def test_otp_y_fin_con_el_recibo():
     assert demo.siguiente_auto({**estado, "payment_receipt": {"id": "r"}}, eventos, Counter()) is None
 
 
+def test_el_agente_principal_que_narra_despues_de_elegir_sigue():
+    """Visto en la punta a punta: después de elegir, root_agent contó su plan
+    y esperó antes de pedir la dirección."""
+    eventos = _sesion(ev("shopper", respuesta=("select_cart", {"result": "ok"})),
+                      ev("root_agent", texto="Soy el root_agent. Voy a usar estas herramientas: …"))
+    paso = demo.siguiente_auto({"chosen_cart_id": "cart_1"}, eventos, Counter())
+    assert paso.paso == "continuar"
+
+
 def test_sin_desafio_del_pago_no_se_manda_el_otp():
     """Visto en la punta a punta: el pago falló (el filtro cortó la respuesta)
     y el estado igual tenía la tarea del pago; sin el desafío no hay OTP."""
@@ -435,16 +444,41 @@ def test_en_modo_demo_la_narracion_del_cobro_no_se_muestra(tmp_path):
     """Después de elegir el producto, en modo demo solo se ve lo último que
     dice el agente cuando espera al usuario (la narración intermedia, no)."""
     adk = FakeADK([[
-        ev("root_agent", texto="Status: Dirección recibida.", delta={"chosen_cart_id": "cart_1"}),
-        ev("root_agent", texto="Status: delegando al cobro."),
-        ev("root_agent", texto="¿Querés elegir otro producto?"),
+        ev("shopper", texto="Status: Producto elegido.", delta={"chosen_cart_id": "cart_1"}),
+        ev("shopper", texto="Status: delegando."),
+        ev("shopper", texto="¿Querés elegir otro producto?"),
     ]])
     with TestClient(_app(tmp_path, adk=adk), base_url=BASE) as c:
         _post(c, "/api/demo/mensaje", {"texto": "la primera"})
         estado = _esperar(c)
     agente = [(m["texto"], m["oculto"]) for m in estado["mensajes"] if m["tipo"] == "agente"]
-    assert agente == [("Status: Dirección recibida.", True), ("Status: delegando al cobro.", True),
+    assert agente == [("Status: Producto elegido.", True), ("Status: delegando.", True),
                       ("¿Querés elegir otro producto?", False)]
+
+
+def test_la_pausa_entre_respuestas_automaticas_espacia_los_turnos(tmp_path, monkeypatch):
+    """Con el plan gratuito de Gemini (15 pedidos por minuto) conviene
+    espaciar las respuestas automáticas: DEMO_PAUSA_AUTO_S."""
+    pausas: list[float] = []
+    dormir = demo.asyncio.sleep
+
+    async def sleep_falso(segundos: float, *args, **kwargs):
+        pausas.append(segundos)
+        await dormir(0)
+
+    monkeypatch.setattr(demo.asyncio, "sleep", sleep_falso)
+    adk = FakeADK([[ev("shipping_address_collector", texto="wallet?", delta={"chosen_cart_id": "cart_1"})],
+                   [ev("shipping_address_collector", texto="ok?")],
+                   [ev("shopper", texto="fin")]])
+    cfg = Config(repo_root=tmp_path, proxy_url=PROXY, adk_url=ADK,
+                 proxy_transport=httpx.MockTransport(FakeProxy().handler),
+                 adk_transport=httpx.MockTransport(adk.handler),
+                 world_temp_dir=tmp_path / "world-temp", demo_pausa_auto_s=6.0)
+    with TestClient(create_app(cfg), base_url=BASE) as c:
+        _post(c, "/api/demo/mensaje", {"texto": "la primera"})
+        _esperar(c)
+    assert adk.mensajes[0] == "la primera" and len(adk.mensajes) == 3
+    assert pausas.count(6.0) == 2  # antes de cada respuesta automática
 
 
 def test_con_el_modo_demo_apagado_no_contesta_nada(tmp_path):
@@ -716,13 +750,17 @@ def test_config_de_la_demo_desde_el_entorno(monkeypatch):
     monkeypatch.setenv("ADK_URL", "http://127.0.0.1:9000/")
     monkeypatch.setenv("DEMO_AUTO", "0")
     monkeypatch.setenv("WORLD_TEMP_DB_DIR", "otra/carpeta")
+    monkeypatch.setenv("DEMO_PAUSA_AUTO_S", "6")
     cfg = config_desde_entorno()
     assert cfg.adk_url == "http://127.0.0.1:9000"
     assert cfg.demo_auto is False
+    assert cfg.demo_pausa_auto_s == 6.0
     assert cfg.world_temp_dir.is_absolute() and cfg.world_temp_dir.name == "carpeta"
     monkeypatch.delenv("ADK_URL")
     monkeypatch.delenv("DEMO_AUTO")
     monkeypatch.delenv("WORLD_TEMP_DB_DIR")
+    monkeypatch.setenv("DEMO_PAUSA_AUTO_S", "no-es-un-numero")
     cfg = config_desde_entorno()
     assert cfg.adk_url == "http://127.0.0.1:8000" and cfg.demo_auto is True
+    assert cfg.demo_pausa_auto_s == 0.0
     assert cfg.world_temp_dir.parts[-3:] == ("world", "ap2", ".temp-db")
