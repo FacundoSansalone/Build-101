@@ -247,9 +247,18 @@ def _error_de(evento: dict[str, Any]) -> str:
     return " ".join(p for p in partes if isinstance(p, str))
 
 
+# Cómo firma el Guard sus textos: "KaiAI: <status>. <motivo>" (proxy) y
+# "Pre-Sign Guard blocked …" (herramienta del sample, `world/NOTICE.md`).
+MARCAS_GUARD = ("KaiAI", "Pre-Sign Guard")
+
+
+def _nombra_guard(texto: str) -> bool:
+    return any(m in texto for m in MARCAS_GUARD)
+
+
 def _menciona_guard(valor: Any) -> bool:
     try:
-        return "Pre-Sign Guard" in json.dumps(valor, ensure_ascii=False)
+        return _nombra_guard(json.dumps(valor, ensure_ascii=False))
     except (TypeError, ValueError):
         return False
 
@@ -258,7 +267,7 @@ def bloqueo_del_guard(eventos: list[dict[str, Any]]) -> bool:
     """¿El Guard bloqueó o retuvo algo en esta sesión? (el error de la
     herramienta del sample lo dice: `world/NOTICE.md`)."""
     return any(
-        "Pre-Sign Guard" in _error_de(e) or any(_menciona_guard(r) for _, r in _respuestas(e))
+        _nombra_guard(_error_de(e)) or any(_menciona_guard(r) for _, r in _respuestas(e))
         for e in eventos
     )
 
@@ -503,7 +512,7 @@ class Conversacion:
             return
         error = _error_de(evento)
         if error:
-            guard = "Pre-Sign Guard" in error
+            guard = _nombra_guard(error)
             ultimo = self.mensajes[-1] if self.mensajes else {}
             if not (ultimo.get("tipo") == "error_agente" and ultimo.get("guard") == guard):
                 self.registrar("error_agente", guard=guard)  # sin el texto: puede traer datos del comercio

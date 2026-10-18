@@ -81,7 +81,7 @@ cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.benc
 ## Primer prompt sugerido para Claude Code
 
 ```text
-Soy Dev 1 del repo Pre-Sign Guard y soy dueño de world/. Leé CLAUDE.md,
+Soy Dev 1 del repo KaiAI y soy dueño de world/. Leé CLAUDE.md,
 world/README.md, world/NOTICE.md y docs/onboarding/dev1-world.md.
 
 world/ ya está hecho. Quiero cerrar lo pendiente. Antes de tocar nada:

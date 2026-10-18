@@ -100,13 +100,13 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
 | Veredicto | Al agente | Eventos |
 |---|---|---|
 | `aprobado`, `con_avisos` | Tarea intacta + artefacto aparte `{"guard.veredicto": <versión para el agente>}` | `veredicto`, `reenviado` |
-| `escalar` | **Retenido**: la misma tarea (mismos ids) en `failed`, sin el `ap2.checkout`, con `guard.veredicto` y el texto "Pre-Sign Guard: escalar. <motivo> El checkout requiere aprobación humana…" | `veredicto`, `bloqueado` con `requiere_aprobacion: true` |
+| `escalar` | **Retenido**: la misma tarea (mismos ids) en `failed`, sin el `ap2.checkout`, con `guard.veredicto` y el texto "KaiAI: escalar. <motivo> El checkout requiere aprobación humana…" | `veredicto`, `bloqueado` con `requiere_aprobacion: true` |
 | `escalar` + aprobación humana vigente (mismo contexto, cart y monto) | Tarea intacta (checkout byte a byte el del comercio) + `guard.veredicto` | `veredicto`, `reenviado` con `aprobacion_humana: true` |
-| `bloqueado` | Tarea `failed`, sin el checkout, con `guard.veredicto` y "Pre-Sign Guard: bloqueado. <motivo> No se presenta para firma." | `veredicto`, `bloqueado` |
+| `bloqueado` | Tarea `failed`, sin el checkout, con `guard.veredicto` y "KaiAI: bloqueado. <motivo> No se presenta para firma." | `veredicto`, `bloqueado` |
 | No se pudo evaluar | Tarea `failed` (la del comercio o una armada por el proxy) con un `guard.veredicto` `bloqueado` y un motivo fijo del proxy | `error`, `bloqueado` |
 
 El texto para el agente es siempre la plantilla fija
-`"Pre-Sign Guard: <status>. <motivo>"` (el motivo lo arma `guard/` sin texto
+`"KaiAI: <status>. <motivo>"` (el motivo lo arma `guard/` sin texto
 del comercio). Cualquier parte `guard.veredicto` que mande el comercio se
 **elimina** antes (en toda respuesta, también con el Guard apagado): ese data
 part solo lo pone el proxy, y el Shopping Agent lo lee para mostrar el motivo.
@@ -493,7 +493,7 @@ es de un integrador:
 - Antes de reenviar se sacan `Authorization` y `X-Compra-Id`: la clave nunca
   llega al comercio. Tope de cuerpo: `GATEWAY_MAX_CUERPO_A2A_BYTES` (413).
 - Los errores antes de reenviar son HTTP + error JSON-RPC (`code: -32001`,
-  mensaje fijo `Pre-Sign Guard: …` y `data.codigo`). `comercio_desconocido`
+  mensaje fijo `KaiAI: …` y `data.codigo`). `comercio_desconocido`
   (404), `comercio_no_permitido` (403) y `pedido_ilegible` (400) salen con
   `id: null` porque se resuelven antes de leer el cuerpo (o sin poder
   leerlo); el resto lleva el `id` del pedido. La

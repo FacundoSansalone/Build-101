@@ -500,7 +500,7 @@ def especificacion(url_publica: str) -> dict[str, Any]:
     return {
         "openapi": "3.1.0",
         "info": {
-            "title": "Pre-Sign Guard API",
+            "title": "KaiAI API",
             "version": "1.0.0",
             "description": (
                 "Gateway del lado del comprador: verifica cada compra de tu agente "

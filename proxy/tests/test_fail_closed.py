@@ -51,7 +51,7 @@ def _assert_bloqueo_sintetico(resp: httpx.Response, merchant: FakeMerchant, evs:
         assert merchant.ultimo_checkout["checkout_jwt"].encode() not in resp.content
     (v,) = veredictos(task)
     assert v["status"] == "bloqueado"
-    assert task["status"]["message"]["parts"][0]["text"].startswith("Pre-Sign Guard: bloqueado.")
+    assert task["status"]["message"]["parts"][0]["text"].startswith("KaiAI: bloqueado.")
     assert "error" in tipos(evs)
     assert tipos(evs)[-1] == "bloqueado"
     from a2a.types import SendMessageResponse

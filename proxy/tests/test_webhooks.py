@@ -356,7 +356,7 @@ async def test_pedido_sale_a_la_ip_fijada_con_host_y_sni() -> None:
     assert pedido.headers["host"] == "hooks.acme.example"
     assert pedido.extensions["sni_hostname"] == "hooks.acme.example"
     assert pedido.headers["content-type"] == "application/json"
-    assert pedido.headers["user-agent"] == "PreSignGuard-Webhooks/1"
+    assert pedido.headers["user-agent"] == "KaiAI-Webhooks/1"
     assert pedido.headers[HEADER_EVENTO_WEBHOOK] == "compra.oportunidad"
     assert pedido.headers[HEADER_ENTREGA_WEBHOOK] == entrega_id
     assert entrega_id is not None and entrega_id.startswith("whe-") and len(entrega_id) == 36

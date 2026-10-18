@@ -149,7 +149,7 @@ function columnaCon(compra, ctx, fixture) {
       bloqueCheckout(compra, d, ctx, { completo: false }),
       h("p", { class: "nota", text: "Lo referencia por su hash en el recibo." })),
     tarjeta({ paso: "3", titulo: "Verificación de AP2", subtitulo: "Restricciones del mandato" }, bloqueAp2(compra, d)),
-    tarjeta({ paso: "4", titulo: "Pre-Sign Guard", subtitulo: "Decide con datos verificados, no con el texto libre" },
+    tarjeta({ paso: "4", titulo: "KaiAI", subtitulo: "Decide con datos verificados, no con el texto libre" },
       v ? [
         bannerStatus(v),
         chipsFuente(compra),

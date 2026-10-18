@@ -1,14 +1,14 @@
-# Integrar Pre-Sign Guard en tu agente de compras
+# Integrar KaiAI en tu agente de compras
 
 > Para equipos que tienen un agente de compras (AP2 sobre A2A) y quieren que
-> cada compra pase por Pre-Sign Guard antes de que el usuario la firme. El
+> cada compra pase por KaiAI antes de que el usuario la firme. El
 > operador del gateway (quien lo levanta) tiene su guía en
 > [`proxy/README.md`](../proxy/README.md#gateway-de-producción) y
 > [`deploy/README.md`](../deploy/README.md).
 
 ## 1. Qué es
 
-Pre-Sign Guard es un **gateway** que se pone entre tu agente de compras y el
+KaiAI es un **gateway** que se pone entre tu agente de compras y el
 agente del comercio. Tu agente le habla al gateway como si fuera el comercio
 (mismo A2A, mismos mensajes de AP2) y el gateway reenvía todo. En el camino
 revisa cada respuesta del comercio con un filtro de seguridad y, cuando llega
@@ -267,7 +267,7 @@ dárselo y agrega a la tarea un artefacto con el veredicto:
 
 **Regla para tu agente: firmá solo si la tarea trae el `ap2.checkout` y el
 `guard.veredicto` dice `aprobado` o `con_avisos`.** El texto de la tarea es
-siempre `Pre-Sign Guard: <status>. <motivo>`, armado por el gateway, sin
+siempre `KaiAI: <status>. <motivo>`, armado por el gateway, sin
 texto del comercio.
 
 **`escalar` y la aprobación humana.** Llega el webhook
@@ -541,7 +541,7 @@ status HTTP y un error JSON-RPC con el código en `data.codigo`:
 
 ```json
 {"jsonrpc": "2.0", "id": "1",
- "error": {"code": -32001, "message": "Pre-Sign Guard: la compra está vencida.",
+ "error": {"code": -32001, "message": "KaiAI: la compra está vencida.",
            "data": {"codigo": "compra_vencida"}}}
 ```
 

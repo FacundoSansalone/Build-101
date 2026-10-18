@@ -22,7 +22,7 @@ export function arista(de, a) {
 const ETIQUETAS = {
   usuario: { etiqueta: "Vos" },
   agente: { etiqueta: "Tu agente", sub: "de compras" },
-  guard: { etiqueta: "Pre-Sign Guard", sub: "el intermediario" },
+  guard: { etiqueta: "KaiAI", sub: "el intermediario" },
   comercio: { etiqueta: "Comercio" },
   fuentes: { etiqueta: "Fabricante · catálogo" },
   ap2: { etiqueta: "AP2 · pago" },

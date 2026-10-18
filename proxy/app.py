@@ -1,4 +1,4 @@
-"""Proxy A2A del Pre-Sign Guard (Starlette + httpx).
+"""Proxy A2A de KaiAI (Starlette + httpx).
 
 Se mete entre el Shopping Agent y el Merchant Agent sin tocar AP2:
 
@@ -163,7 +163,7 @@ _MAX_CONTEXTOS = 500
 _MAX_MARCAS_PRIVADAS = 5000
 _MAX_ID = 200  # largo máximo de contexto_id / cart_id en la API de aprobaciones
 
-# Plantillas fijas del texto para el agente: "Pre-Sign Guard: <status>. <motivo>"
+# Plantillas fijas del texto para el agente: "KaiAI: <status>. <motivo>"
 # (el motivo lo arma guard/ sin texto del comercio). Ningún string del
 # comercio entra acá.
 _SUFIJO_RETENIDO = (
@@ -207,11 +207,11 @@ _MOTIVO_FILTRO_FALLO = (
     "no se reenvía."
 )
 _TEXTO_PAUSA = (
-    "Pre-Sign Guard: en pausa. Hay una alternativa esperando la decisión del "
+    "KaiAI: en pausa. Hay una alternativa esperando la decisión del "
     "usuario y no respondió: sin su autorización no se avanza ni se compra."
 )
 _TEXTO_PARAMETROS = (
-    "Pre-Sign Guard: el usuario autorizó nuevos parámetros para esta compra "
+    "KaiAI: el usuario autorizó nuevos parámetros para esta compra "
     "({requisitos}). La oferta {cart_id} los cumple: seguí la compra con esos "
     "parámetros."
 )
@@ -390,7 +390,7 @@ class Decision:
 
     @property
     def texto(self) -> str:
-        base = f"Pre-Sign Guard: {self.status}. {self.motivo}"
+        base = f"KaiAI: {self.status}. {self.motivo}"
         if self.accion == "retener":
             return f"{base} {_SUFIJO_RETENIDO_API if self.via_api else _SUFIJO_RETENIDO}"
         if self.accion == "bloquear":
@@ -3009,7 +3009,7 @@ def _error_a2a(rpc_id: Any, codigo: str) -> Response:
     """Un error del tráfico A2A de integrador antes de reenviar (§1.2): HTTP
     con status y un error JSON-RPC con mensaje fijo y `data.codigo`."""
     status, mensaje = _ERRORES_A2A[codigo]
-    cuerpo = a2a.error_jsonrpc(rpc_id, f"Pre-Sign Guard: {mensaje}", code=_CODIGO_ERROR_A2A)
+    cuerpo = a2a.error_jsonrpc(rpc_id, f"KaiAI: {mensaje}", code=_CODIGO_ERROR_A2A)
     cuerpo["error"]["data"] = {"codigo": codigo}
     return JSONResponse(cuerpo, status_code=status)
 

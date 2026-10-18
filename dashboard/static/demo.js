@@ -367,7 +367,7 @@ angosto.addEventListener("change", construirDiagrama);
 const relato = $("#relato");
 
 const QUIEN = {
-  usuario: "Vos", agente: "Tu agente de compras", guard: "Pre-Sign Guard",
+  usuario: "Vos", agente: "Tu agente de compras", guard: "KaiAI",
   comercio: "Comercio", ap2: "AP2 · pago", sistema: "Sistema",
 };
 
@@ -863,8 +863,8 @@ function renderCabecera(anterior) {
   const sub = $("#bienvenida-sub");
   const comercio = nombreEscenario(escenarioActivo());
   const textoSub = comercio
-    ? `Comercio: ${comercio}. Tu agente negocia; el Pre-Sign Guard revisa antes de que firmes.`
-    : "Tu agente negocia con el comercio; el Pre-Sign Guard revisa antes de que firmes.";
+    ? `Comercio: ${comercio}. Tu agente negocia; KaiAI revisa antes de que firmes.`
+    : "Tu agente negocia con el comercio; KaiAI revisa antes de que firmes.";
   if (sub.textContent !== textoSub) sub.textContent = textoSub;
 }
 

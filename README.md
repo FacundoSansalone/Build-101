@@ -1,4 +1,4 @@
-# Pre-Sign Guard
+# KaiAI
 
 > AP2 frena al agente cuando se pasa de los límites. Nosotros lo frenamos cuando
 > lo manipulan sin pasarse.

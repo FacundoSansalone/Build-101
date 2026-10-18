@@ -1,4 +1,4 @@
-// Dashboard de la demo del Pre-Sign Guard. JS vanilla, sin build ni CDN.
+// Dashboard de la demo de KaiAI. JS vanilla, sin build ni CDN.
 // Fuentes de eventos: "En vivo (proxy)" por SSE o "Replay (archivo)".
 
 import {

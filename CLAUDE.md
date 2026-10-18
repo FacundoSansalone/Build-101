@@ -1,4 +1,4 @@
-# Pre-Sign Guard — contexto para Claude Code
+# KaiAI — contexto para Claude Code
 
 > **Si sos un Claude Code nuevo en este repo, leé primero `docs/onboarding/`
 > según el dev que te use** (`dev1-world.md`, `dev2-guard.md` o
@@ -229,7 +229,7 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     desde `find_products`. Toda tarea lleva un `guard.veredicto` (el del
     comercio se borra); si el proxy no pudo evaluar, lleva uno `bloqueado`
     con motivo fijo del proxy. Texto al agente: plantilla fija
-    `Pre-Sign Guard: <status>. <motivo>`.
+    `KaiAI: <status>. <motivo>`.
   - **Aprobaciones:** atadas a contexto, cart y centavos + moneda firmados;
     nunca hacen pasar un `bloqueado`. No emiten `Evento` (no hay tipo en el
     contrato): el dashboard consulta `GET /guard/aprobaciones`.
@@ -398,6 +398,14 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   - **Fuera de alcance:** verificar la firma ES256 del comercio, comparar
     comercios en una compra (toca `contracts/`), `Politica` por integrador y
     cuotas por clave.
+- **Nombre: KaiAI (2026-10-18).** Reemplaza "Pre-Sign Guard" en lo visible:
+  dashboard, docs, la plantilla del proxy (`KaiAI: <status>. <motivo>`), el
+  título de la API `/v1` y el `User-Agent` de los webhooks (`KaiAI-Webhooks/1`).
+  No cambian las claves técnicas (`guard/`, `guard.veredicto`, `/guard/*`),
+  ni `contracts/` ni `world/`: los textos de la herramienta del sample
+  ("Pre-Sign Guard blocked …") y las marcas `HACKATHON (Pre-Sign Guard)`
+  siguen igual, y el dashboard reconoce las dos marcas
+  (`dashboard.demo_api.MARCAS_GUARD`).
 
 Tests de las carpetas nuevas, desde la raíz:
 

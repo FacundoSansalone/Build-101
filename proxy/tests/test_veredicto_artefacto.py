@@ -89,7 +89,7 @@ async def test_texto_para_el_agente_es_una_plantilla_fija(cliente, merchant: Fak
     task = resp.json()["result"]
     (v,) = veredictos(task)
     texto = texto_estado(task)
-    assert texto.startswith(f"Pre-Sign Guard: bloqueado. {v['motivo']}")
+    assert texto.startswith(f"KaiAI: bloqueado. {v['motivo']}")
     assert "TEXTO DEL COMERCIO" not in texto
     # El item_label del atacante no aparece en el texto.
     assert merchant.ultimo_checkout["item_label"] not in texto
@@ -102,7 +102,7 @@ async def test_bloqueo_sin_evaluar_tambien_lleva_veredicto(cliente):
     (v,) = veredictos(task)
     assert v["status"] == "bloqueado"
     assert v["motivo"]
-    assert texto_estado(task).startswith(f"Pre-Sign Guard: bloqueado. {v['motivo']}")
+    assert texto_estado(task).startswith(f"KaiAI: bloqueado. {v['motivo']}")
     evs = await eventos(cliente)
     assert evs[-1]["datos"]["status"] == "bloqueado"
     assert evs[-1]["datos"]["requiere_aprobacion"] is False

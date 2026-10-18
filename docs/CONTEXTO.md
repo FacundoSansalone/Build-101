@@ -1,4 +1,4 @@
-# Contexto: por qué existe Pre-Sign Guard
+# Contexto: por qué existe KaiAI
 
 > Para quien llega sin saber nada del proyecto. Cómo está construido:
 > [ARQUITECTURA.md](ARQUITECTURA.md). Cómo trabajamos: [PLAN.md](PLAN.md).
@@ -19,7 +19,7 @@ Un "firewall genérico entre agentes" ya existe en desarrollo (ver la
 
 ### El nicho, en una definición
 
-**Pre-Sign Guard** (nombre de trabajo) protege **la integridad de las decisiones
+**KaiAI** protege **la integridad de las decisiones
 de compra de agentes que pagan con AP2**. Garantiza que lo que el usuario firma
 refleje lo que quería y se base en datos verificados, en el tramo que va **desde
 el pedido del usuario hasta la firma**.

@@ -98,7 +98,7 @@ el Guard frenó la compra.
 ## Primer prompt sugerido para Claude Code
 
 ```text
-Soy Dev 3 del repo Pre-Sign Guard y soy dueño de proxy/ y dashboard/. Leé
+Soy Dev 3 del repo KaiAI y soy dueño de proxy/ y dashboard/. Leé
 CLAUDE.md, docs/ARQUITECTURA.md, docs/DEMO.md y
 docs/onboarding/dev3-proxy-dashboard.md.
 

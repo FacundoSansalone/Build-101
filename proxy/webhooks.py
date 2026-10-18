@@ -68,7 +68,7 @@ BACKOFF_S: tuple[float, ...] = (1, 4, 16, 60, 300)
 MAX_INTENTOS = 6
 TOLERANCIA_S = 300
 
-USER_AGENT = "PreSignGuard-Webhooks/1"
+USER_AGENT = "KaiAI-Webhooks/1"
 MAX_REGISTRO_POR_INTEGRADOR = 500
 MAX_LECTURA_RESPUESTA = 4096        # bytes de la respuesta que se leen, solo para el log
 MAX_GUARDADOS_EN_VUELO = 100        # copias al almacén; si se cuelga no crece sin tope

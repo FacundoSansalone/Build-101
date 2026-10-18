@@ -93,7 +93,7 @@ en B2); `C` → `escalar` (a confirmar).
 ## Primer prompt sugerido para Claude Code
 
 ```text
-Soy Dev 2 del repo Pre-Sign Guard y soy dueño de guard/. Leé CLAUDE.md,
+Soy Dev 2 del repo KaiAI y soy dueño de guard/. Leé CLAUDE.md,
 docs/ARQUITECTURA.md, docs/CONTRATOS_PROPUESTOS.md y
 docs/onboarding/dev2-guard.md. Mirá fixtures/scenario_B.json,
 fixtures/scenario_B2.json, fixtures/scenario_C.json y

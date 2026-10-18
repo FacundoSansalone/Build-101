@@ -78,7 +78,7 @@ cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.set_
 
 En lugar de la UI de ADK, la demo se hace en `http://localhost:8020/demo`:
 un input para hablarle al agente de compras, el diagrama de quién le habla a
-quién (con el Pre-Sign Guard en el medio) y el relato en lenguaje natural.
+quién (con KaiAI en el medio) y el relato en lenguaje natural.
 Detalle y API en [`dashboard/README.md`](../dashboard/README.md#demo-la-demo-en-una-pantalla).
 
 **Levantar** (desde la raíz; las claves en `.env`):

@@ -44,7 +44,7 @@ async def test_escalar_retiene_el_checkout(armar_proxy, merchant: FakeMerchant):
     assert checkouts(task) == []
     assert merchant.ultimo_checkout["checkout_jwt"].encode() not in resp.content
     texto = texto_estado(task)
-    assert texto.startswith("Pre-Sign Guard: escalar. precio contradicho por el catálogo")
+    assert texto.startswith("KaiAI: escalar. precio contradicho por el catálogo")
     assert "requiere aprobación humana" in texto.lower()
     (v,) = veredictos(task)
     assert v["status"] == "escalar"
