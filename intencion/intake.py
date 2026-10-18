@@ -122,9 +122,16 @@ _CORTADO = {
     "en": "I already asked {n} times and I still don't know {lista}: I'll go on "
     "without it, and nothing outside the sheet is authorized.",
 }
+# Que no figure en el catálogo público no es un error ni un ataque: el Guard
+# verifica lo que declare el comercio con otras fuentes (el fabricante, una
+# página pública) y lo obligatorio que no pueda verificar escala al usuario.
 _FUERA_DE_CATALOGO = {
-    "es": "Lo que pediste no está entre las categorías del catálogo del proveedor.",
-    "en": "What you asked for is not among the provider's catalog categories.",
+    "es": "Lo que pediste no figura en el catálogo público del comercio: antes de la "
+    "firma verificamos lo que declare con otras fuentes (como el fabricante), y si "
+    "algo de lo que pediste no se puede verificar, te lo consultamos.",
+    "en": "What you asked for isn't in the merchant's public catalog: before signing "
+    "we check what the merchant declares against other sources (like the "
+    "manufacturer), and if something you asked for can't be verified, we ask you.",
 }
 _PIEZAS = {
     "es": {
@@ -169,9 +176,9 @@ _ETIQUETAS = {
            "moneda": "currency", "plazo": "deadline"},
 }
 _TEXTOS = {
-    "es": {"sin_apuro": "sin apuro", "fuera": "fuera del catálogo", "dicha": "dicha",
+    "es": {"sin_apuro": "sin apuro", "fuera": "fuera del catálogo público", "dicha": "dicha",
            "por_unidad": "{monto} por unidad"},
-    "en": {"sin_apuro": "no rush", "fuera": "outside the catalog", "dicha": "given",
+    "en": {"sin_apuro": "no rush", "fuera": "outside the public catalog", "dicha": "given",
            "por_unidad": "{monto} per unit"},
 }
 _DIAS_CORTOS = {
