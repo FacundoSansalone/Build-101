@@ -935,28 +935,46 @@ def interpretar(
     categorias: Sequence[str] | Mapping[str, str] | None,
     respondidos: int,
     umbrales: Umbrales | None = None,
+    anterior: ResultadoIntake | None = None,
 ) -> ResultadoIntake:
-    """Las probabilidades → estado por parámetro, ficha parcial y siguiente pregunta."""
+    """Las probabilidades → estado por parámetro, ficha parcial y siguiente pregunta.
+
+    `anterior` (el resultado del turno anterior) es la memoria: si el modelo
+    sigue eligiendo el mismo valor que ya estaba resuelto, su probabilidad
+    no baja de la de antes (visto con decisiones real: "$200" con 0,98 y,
+    un turno después, 0,52). Un valor distinto, o "no dicho", vale lo nuevo.
+    """
     u = umbrales or UMBRALES
     idioma = cands.idioma
     textos = _TEXTOS[idioma]
     cats = normalizar_categorias(categorias)
     params: dict[str, Parametro] = {}
+    previos = {
+        q.nombre: q
+        for q in (anterior.parametros if anterior is not None else ())
+        if q.necesario and q.estado != "faltante"
+    }
+
+    def recordar(nombre: str, valor: Any, p: float) -> float:
+        viejo = previos.get(nombre)
+        return max(p, viejo.probabilidad) if viejo is not None and viejo.valor == valor else p
 
     # Categoría
     opcion, p = _elegida(respuestas.get("categoria"))
     fuera = False
     if opcion in cats:
+        p = recordar("categoria", opcion, p)
         estado = _nivel(p, True, u)
         params["categoria"] = Parametro(
             "categoria", estado, opcion, "dicho", p, opcion,
             _req("categoria", "igual", opcion, "dicho") if estado != "faltante" else None,
         )
     elif (opcion == "fuera_de_catalogo" and cats) or (opcion == "dicha" and not cats):
+        p = recordar("categoria", opcion, p)
         estado = _nivel(p, True, u)
         fuera = opcion == "fuera_de_catalogo" and estado != "faltante"
         params["categoria"] = Parametro(
-            "categoria", estado, None, "dicho", p, textos["fuera" if fuera else "dicha"]
+            "categoria", estado, opcion, "dicho", p, textos["fuera" if fuera else "dicha"]
         )
     else:
         params["categoria"] = Parametro("categoria", "faltante", probabilidad=p)
@@ -967,6 +985,7 @@ def interpretar(
     )
     estado, origen = "faltante", None
     if cantidad is not None:
+        p = recordar("cantidad", cantidad, p)
         dicho = any(c.valor == cantidad and c.dicho for c in cands.cantidades)
         estado, origen = _nivel(p, dicho, u), "dicho" if dicho else "inferido"
         if estado == "faltante":
@@ -984,19 +1003,20 @@ def interpretar(
     opcion, p = _elegida(respuestas.get("precio"))
     if opcion in por_clave:
         monto = float(por_clave[opcion].valor)
-        estado = _nivel(p, True, u)
         alcance, p_alcance = _elegida(respuestas.get("precio_alcance"))
         texto = _numero_texto(monto)
         total: float | None = monto
+        por_unidad = cantidad != 1 and alcance == "por_unidad" and p_alcance >= u.duda
+        if por_unidad:
+            texto = textos["por_unidad"].format(monto=texto)
+            total = monto * cantidad if cantidad else None
+            if total is not None:
+                texto += f" × {cantidad} = {_numero_texto(total)}"
+        p = recordar("precio", total, p)
+        estado = _nivel(p, True, u)
         # Con una sola unidad, total y por unidad son lo mismo: no importa.
-        if cantidad != 1:
-            if alcance == "por_unidad" and p_alcance >= u.duda:
-                texto = textos["por_unidad"].format(monto=texto)
-                total = monto * cantidad if cantidad else None
-                if total is not None:
-                    texto += f" × {cantidad} = {_numero_texto(total)}"
-            if alcance in ("total", "por_unidad") and p_alcance < u.resuelto:
-                estado = _peor(estado, "a_confirmar")
+        if cantidad != 1 and alcance in ("total", "por_unidad") and p_alcance < u.resuelto:
+            estado = _peor(estado, "a_confirmar")
         params["precio"] = Parametro(
             "precio", estado, total, "dicho", p, texto,
             _req("precio", "maximo", total, "dicho")
@@ -1012,6 +1032,7 @@ def interpretar(
         valor_de["solo_simbolo"] = MONEDA_DEL_SIMBOLO
     codigo, p = _por_valor(respuestas.get("moneda"), valor_de)
     if codigo is not None:
+        p = recordar("moneda", codigo, p)
         dicho = codigo in cands.monedas_dichas
         estado = _nivel(p, dicho, u)
         origen = "dicho" if dicho else "inferido"
@@ -1027,6 +1048,7 @@ def interpretar(
     opcion, p = _elegida(respuestas.get("plazo"))
     if opcion in por_clave:
         fecha = por_clave[opcion].valor
+        p = recordar("plazo", fecha, p)
         estado = _nivel(p, True, u)
         obligatorio, _ = _firmeza(respuestas.get("plazo_firmeza"), u)
         requisito = None
@@ -1036,6 +1058,7 @@ def interpretar(
         params["plazo"] = Parametro("plazo", estado, fecha, "dicho", p,
                                     fecha_corta(fecha, idioma), requisito)
     elif opcion == "sin_apuro":
+        p = recordar("plazo", None, p)
         estado = _nivel(p, True, u)
         params["plazo"] = Parametro("plazo", estado, None, "dicho" if estado != "faltante" else None,
                                     p, textos["sin_apuro"] if estado != "faltante" else "")
@@ -1183,9 +1206,11 @@ def evaluar(
     cliente: ClienteDecisiones,
     categorias: Sequence[str] | Mapping[str, str] | None = None,
     umbrales: Umbrales | None = None,
+    anterior: ResultadoIntake | None = None,
 ) -> ResultadoIntake:
     """Pedido + turnos → ResultadoIntake, con una sola llamada al cliente.
 
+    `anterior`: el resultado del turno anterior (memoria, ver `interpretar`).
     Si el cliente falla, lanza `DecisionesError`: quien llama decide (el
     proxy sigue con lo que tiene y no repregunta).
     """
@@ -1194,4 +1219,6 @@ def evaluar(
     hechas = respondidas(turnos)
     cands = candidatos_de(pedido, hechas, hoy)
     respuestas = cliente.decidir(estado_para_modelo(pedido, hechas, hoy), preguntas(cands, categorias))
-    return interpretar(respuestas, cands, categorias, respondidos=len(hechas), umbrales=umbrales)
+    return interpretar(
+        respuestas, cands, categorias, respondidos=len(hechas), umbrales=umbrales, anterior=anterior
+    )

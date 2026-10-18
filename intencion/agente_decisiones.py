@@ -267,13 +267,17 @@ class AgenteDecisiones:
         """Una llamada por turno: intake y, si hay respuestas, contexto."""
         if not pedido or not pedido.strip():
             raise ValueError("El pedido está vacío")
-        clave = (pedido, tuple((t.pregunta, t.respuesta) for t in turnos), hoy.isoformat())
+        conversacion = tuple((t.pregunta, t.respuesta) for t in turnos)
+        clave = (pedido, conversacion, hoy.isoformat())
         with self._lock:
             if clave in self._cache:
                 self._cache.move_to_end(clave)
                 return self._cache[clave]
             if categorias is None:
                 categorias = self._categorias.get(pedido)
+            # Memoria: el resultado del turno anterior de esta conversación.
+            previo = self._cache.get((pedido, conversacion[:-1], hoy.isoformat())) if turnos else None
+        anterior = previo[0] if previo else None
         hechas = intake.respondidas(turnos)
         cands = intake.candidatos_de(pedido, hechas, hoy)
         cronograma = cronograma_candidato([t.respuesta or "" for t in hechas], hoy) if hechas else []
@@ -282,7 +286,8 @@ class AgenteDecisiones:
             qs += preguntas_contexto(cronograma)
         respuestas = self.cliente.decidir(intake.estado_para_modelo(pedido, hechas, hoy), qs)
         resultado = intake.interpretar(
-            respuestas, cands, categorias, respondidos=len(hechas), umbrales=self.umbrales
+            respuestas, cands, categorias, respondidos=len(hechas), umbrales=self.umbrales,
+            anterior=anterior,
         )
         contexto = (
             interpretar_contexto(respuestas, pedido, hechas, cronograma, hoy, self.umbrales)

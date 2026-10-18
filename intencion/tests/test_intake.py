@@ -533,6 +533,33 @@ def test_requisitos_autorizables_dejan_afuera_lo_inferido_sin_confirmar():
     assert entregas.valor == [{"cantidad": 1, "fecha": "2026-10-19"}]
 
 
+def test_lo_resuelto_antes_no_se_pierde_si_el_modelo_duda_despues():
+    # Visto con decisiones real: "$200" con 0,98 en el turno 0 y 0,52 en el 1.
+    cands = extraer(["Zapatillas urbanas, $200, para mañana", "Para salir."], HOY)
+    m200 = clave_de(cands.montos, 200.0)
+    antes = interpretar({"precio": eleccion("precio", m200, 0.98)}, cands, CATEGORIAS, 0)
+    ahora = {"precio": eleccion("precio", m200, 0.52, no_dicho=0.48)}
+    r = interpretar(ahora, cands, CATEGORIAS, 1, anterior=antes)
+    precio = _parametro(r, "precio")
+    assert (precio.estado, precio.valor, precio.probabilidad) == ("resuelto", 200.0, 0.98)
+    assert "precio" not in r.faltan
+    # Sin el turno anterior, la misma duda es faltante.
+    assert "precio" in interpretar(ahora, cands, CATEGORIAS, 1).faltan
+
+
+def test_si_el_modelo_elige_otro_valor_vale_el_nuevo():
+    cands = extraer(["hasta 200 dólares", "no, mejor hasta 250"], HOY)
+    antes = interpretar(
+        {"precio": eleccion("precio", clave_de(cands.montos, 200.0), 0.95)}, cands, CATEGORIAS, 0
+    )
+    ahora = {"precio": eleccion("precio", clave_de(cands.montos, 250.0), 0.55, no_dicho=0.45)}
+    precio = _parametro(interpretar(ahora, cands, CATEGORIAS, 1, anterior=antes), "precio")
+    assert precio.estado == "faltante"  # dudoso y distinto: se vuelve a preguntar
+    ahora = {"precio": eleccion("precio", "no_dicho", 0.9)}
+    precio = _parametro(interpretar(ahora, cands, CATEGORIAS, 1, anterior=antes), "precio")
+    assert precio.estado == "faltante"  # "no dicho" claro: el modelo ya no lo ve
+
+
 # -- 4. qué pregunta sigue ----------------------------------------------------------
 
 

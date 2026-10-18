@@ -127,6 +127,27 @@ def test_intake_y_contexto_del_mismo_turno_son_una_llamada():
     assert "laptops" in categoria.opciones
 
 
+def test_el_turno_siguiente_recuerda_lo_resuelto():
+    """Si el modelo duda de un valor que ya estaba resuelto (y lo sigue
+    eligiendo), no se vuelve a preguntar."""
+
+    def responder(estado, qs):
+        r = responder_demo(estado, qs)
+        if estado["conversacion"]:
+            clave = _opcion(qs, "precio", "20000")
+            r["precio"] = RespuestaEleccion("precio", clave, {clave: 0.52, "no_dicho": 0.48}, 0.04)
+        return r
+
+    agente = AgenteDecisiones(DecisionesFalso(responder))
+    agente.preguntar(PEDIDO, HOY, CATEGORIAS)
+    r = agente.evaluar_intake(PEDIDO, [Turno(pregunta=PORQUE["es"], respuesta=RESPUESTA)], HOY, CATEGORIAS)
+    assert "precio" not in r.faltan
+    # Sin el turno anterior (otro agente, sin memoria), la duda es faltante.
+    otro = AgenteDecisiones(DecisionesFalso(responder))
+    r = otro.evaluar_intake(PEDIDO, [Turno(pregunta=PORQUE["es"], respuesta=RESPUESTA)], HOY, CATEGORIAS)
+    assert "precio" in r.faltan
+
+
 def test_el_orden_no_importa_contexto_primero():
     cliente = DecisionesFalso(responder_demo)
     agente = AgenteDecisiones(cliente)
