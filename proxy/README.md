@@ -375,7 +375,12 @@ Reglas que no dependen de la demo:
   revés, los headers de control propios (`X-Guard-Token`, `X-Compra-Id`)
   nunca llegan al comercio, tampoco en el tráfico anónimo.
 - JSON estricto (sin `NaN`/`Infinity`), lectura con tope de bytes y SSE leído
-  línea a línea con el mismo tope.
+  línea a línea con el mismo tope. Una respuesta (o un evento SSE) del
+  comercio con más de 64 niveles de anidamiento se trata como ilegible: más
+  hondo, copiarla daba `RecursionError` y su evento no se podía serializar
+  (pydantic corta cerca de los 100), y quedaba en memoria rompiendo el SSE
+  del dashboard. Un evento que igual no se puede serializar (el payload de
+  un JWT anidado de más) va con `datos: {"no_serializable": true}`.
 - Los textos que el proxy manda al agente son plantillas fijas; los detalles
   de errores (que pueden traer texto del comercio) solo van al evento `error`.
 

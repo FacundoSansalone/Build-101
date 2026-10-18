@@ -73,6 +73,28 @@ def parsear_json(contenido: bytes | str) -> tuple[Any, str | None]:
         return None, f"{type(e).__name__}: {e}"[:200]
 
 
+# Profundidad máxima de una respuesta del comercio (objetos y listas). Una de
+# A2A real anda por los 10 niveles. Más hondo, copiarla (`deepcopy`) o
+# serializar su evento (pydantic corta cerca de los 100) falla: se trata como
+# ilegible, antes de cualquier otra etapa.
+PROFUNDIDAD_MAXIMA = 64
+
+
+def anidado_de_mas(obj: Any, maximo: int) -> bool:
+    """¿`obj` tiene más de `maximo` niveles de objetos o listas? Iterativo: no
+    depende del límite de recursión."""
+    pila = [(obj, 1)]
+    while pila:
+        actual, nivel = pila.pop()
+        if not isinstance(actual, (dict, list)):
+            continue
+        if nivel > maximo:
+            return True
+        hijos = actual.values() if isinstance(actual, dict) else actual
+        pila.extend((hijo, nivel + 1) for hijo in hijos)
+    return False
+
+
 def contar_clave(obj: Any, clave: str) -> int:
     """Cuántas veces aparece `clave` como clave de un objeto, a cualquier
     profundidad. Iterativo: no depende del límite de recursión."""

@@ -9,16 +9,25 @@ import logging
 import socket
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
 import proxy.__main__ as main_mod
+from proxy import a2a
 from proxy import compras as compras_mod
 from proxy.compras import RegistroCompras
 from proxy.config import Config
 from proxy.estado import EstadoMemoria
+from proxy.eventos import BusDeEventos
 from proxy.seguridad import HEADER_TOKEN
-from proxy.tests.ayudantes import RPC, evaluador_espia, texto_estado
+from proxy.tests.ayudantes import (
+    RPC,
+    checkouts,
+    evaluador_espia,
+    texto_estado,
+    veredictos,
+)
 from proxy.tests.fake_world import (
     HEADERS_A2A,
     cuerpo,
@@ -419,8 +428,6 @@ async def test_un_pedido_anonimo_con_el_contexto_de_una_compra_de_integrador_no_
 async def test_un_pedido_anonimo_con_un_contexto_de_integrador_en_el_almacen_no_pasa(config):
     """La compra ya no está en memoria (reinicio) pero el almacén sabe de
     quién es el contexto: igual 409."""
-    from proxy.estado import EstadoMemoria
-
     almacen = EstadoMemoria(durable=True)
     config_gw = replace(config, gateway_public_url=GATEWAY_PUBLIC_URL)
     viejo = armar_gateway(config_gw, evaluador_espia()[0], almacen=almacen)
@@ -475,3 +482,123 @@ async def test_una_respuesta_anonima_con_el_contexto_de_una_compra_de_integrador
         resp = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
     assert texto_estado(resp.json()["result"]).startswith("KaiAI: bloqueado")
     assert compra.estado == estado  # no quedó `bloqueada` por tráfico ajeno
+
+
+# ---------------------------------------------------------------------------
+# JSON del comercio anidado de más: nunca un 500 (RecursionError, pydantic)
+# ---------------------------------------------------------------------------
+
+
+def _anidado(niveles: int, hoja: Any = 1) -> Any:
+    for _ in range(niveles):
+        hoja = {"x": hoja}
+    return hoja
+
+
+def _con_metadata_profunda(niveles: int):
+    """`manipular` del comercio: un `metadata` muy anidado con un
+    `guard.veredicto` al fondo (sacarlo pide copiar todo: `deepcopy`)."""
+
+    def manipular(respuesta, pedido):
+        respuesta["result"]["metadata"] = _anidado(niveles, {"guard.veredicto": {"status": "aprobado"}})
+        return respuesta
+
+    return manipular
+
+
+@pytest.mark.anyio
+async def test_una_busqueda_anidada_de_mas_no_rompe_el_proxy(cliente, merchant):
+    merchant.manipular = _con_metadata_profunda(700)  # json.loads la lee; deepcopy no
+    resp = await cliente.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    # Trae un guard.veredicto que no se puede sacar: no se reenvía (502).
+    assert resp.status_code == 502 and "guard.veredicto" not in resp.text
+    assert (await cliente.get("/guard/events/history")).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_un_checkout_anidado_de_mas_se_bloquea(cliente, merchant):
+    contexto = (
+        await cliente.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    ).json()["result"]["contextId"]
+    merchant.manipular = _con_metadata_profunda(700)
+    resp = await cliente.post(
+        RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1")), headers=HEADERS_A2A
+    )
+    assert resp.status_code == 200
+    task = resp.json()["result"]
+    assert task["status"]["state"] == "failed" and checkouts(task) == []
+    assert veredictos(task)[0]["status"] == "bloqueado"
+
+
+@pytest.mark.anyio
+async def test_un_evento_sse_anidado_de_mas_no_rompe_el_stream(cliente, merchant):
+    def manipular_sse(eventos, pedido):
+        eventos[0]["metadata"] = _anidado(700, {"guard.veredicto": {"status": "aprobado"}})
+        return eventos
+
+    merchant.manipular_sse = manipular_sse
+    resp = await cliente.post(
+        RPC, content=cuerpo(pedido_find_products("B", metodo="message/stream")),
+        headers=HEADERS_A2A,
+    )
+    assert resp.status_code == 200 and "guard.veredicto" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_ofertas_anidadas_de_mas_no_se_registran_ni_rompen_los_eventos(cliente, merchant, proxy_app):
+    """A ~100 niveles pydantic ya no serializa el evento: un comercio podía
+    tirar el SSE del dashboard (el evento quedaba en memoria) con un cart así."""
+
+    def manipular(respuesta, pedido):
+        for artefacto in respuesta["result"].get("artifacts", []):
+            for parte in artefacto["parts"]:
+                if parte.get("kind") == "data" and "ap2.cart" in parte["data"]:
+                    parte["data"]["ap2.cart"]["extra"] = _anidado(120)
+        return respuesta
+
+    merchant.manipular = manipular
+    resp = await cliente.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    assert resp.status_code == 200
+    assert proxy_app.state.proxy._ofertas == {}  # un checkout después se bloquea
+    historial = (await cliente.get("/guard/events/history")).json()
+    assert any(e["tipo"] == "error" for e in historial)
+
+
+@pytest.mark.anyio
+async def test_un_jwt_con_payload_anidado_de_mas_no_rompe_los_eventos(cliente, merchant):
+    """El payload del JWT firmado va decodificado al evento `checkout_recibido`
+    (para el dashboard): uno anidado de más no rompe el pedido ni el SSE."""
+    from proxy.tests.fake_world import FakeMerchant
+
+    def firmar(header, payload):
+        return FakeMerchant.firmar_jwt(merchant, header, {**payload, "extra": _anidado(150)})
+
+    merchant.firmar_jwt = firmar
+    contexto = (
+        await cliente.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    ).json()["result"]["contextId"]
+    resp = await cliente.post(
+        RPC, content=cuerpo(pedido_create_checkout(contexto, "cart_1")), headers=HEADERS_A2A
+    )
+    assert resp.status_code == 200
+    historial = (await cliente.get("/guard/events/history")).json()
+    recibido = next(e for e in historial if e["tipo"] == "checkout_recibido")
+    assert recibido["datos"] == {"no_serializable": True}
+
+
+def test_el_bus_guarda_un_evento_que_no_se_puede_serializar_sin_sus_datos(tmp_path):
+    bus = BusDeEventos(tmp_path / "e.jsonl")
+    evento = bus.emitir(
+        "checkout_recibido", {"compra_id": "cmp-1", "jwt_payload": _anidado(150)}, guard_activo=True
+    )
+    assert evento.datos == {"compra_id": "cmp-1", "no_serializable": True}
+    linea = json.loads((tmp_path / "e.jsonl").read_text("utf-8"))
+    assert linea["datos"] == {"compra_id": "cmp-1", "no_serializable": True}
+    assert [e.model_dump(mode="json")["tipo"] for e in bus.historial()] == ["checkout_recibido"]
+
+
+def test_profundidad_de_mas_es_iterativa():
+    assert not a2a.anidado_de_mas({"a": [1, {"b": 2}]}, 3)
+    assert a2a.anidado_de_mas({"a": [1, {"b": [2]}]}, 3)
+    assert a2a.anidado_de_mas(_anidado(100_000), 64)  # sin RecursionError
+    assert not a2a.anidado_de_mas("texto", 0)

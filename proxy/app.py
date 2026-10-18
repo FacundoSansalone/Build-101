@@ -1204,14 +1204,14 @@ class ProxyGuard:
         self, contenido: bytes, llamada: Llamada, status: int
     ) -> tuple[bytes, int]:
         pedido, activo = llamada.pedido, llamada.guard_activo
-        body, error = a2a.parsear_json(contenido)
+        body, error = _leer_del_comercio(contenido)
         salida = contenido
         if error is None and isinstance(body, dict):
-            # guard.veredicto solo lo pone el proxy.
-            body, cambiado = a2a.quitar_veredictos_ajenos(body)
             try:
+                # guard.veredicto solo lo pone el proxy.
+                body, cambiado = a2a.quitar_veredictos_ajenos(body)
                 salida = a2a.dumps(body) if cambiado else contenido
-            except ValueError as e:  # defensa (N6): algo que no se puede reescribir
+            except (ValueError, RecursionError) as e:  # defensa (N6): no se puede reescribir
                 error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or f"se esperaba un objeto JSON y llegó {type(body).__name__}"
@@ -1288,7 +1288,7 @@ class ProxyGuard:
             nuevo = a2a.tarea_con_artefacto(result, decision.artefacto())
         try:
             cuerpo = a2a.dumps({**body, "result": nuevo})
-        except ValueError as e:  # defensa (N6): nunca un 500 sin veredicto ni evento
+        except (ValueError, RecursionError) as e:  # defensa (N6): nunca un 500 sin veredicto
             return self._bloqueo_sintetico(
                 llamada, "la respuesta del comercio no se pudo reenviar",
                 f"{type(e).__name__}: {e}"[:200],
@@ -1343,7 +1343,7 @@ class ProxyGuard:
             falla = f"el stream del comercio supera el tope de {e.limite} bytes"
         except httpx.HTTPError as e:
             falla = f"el stream del comercio se cortó ({type(e).__name__})"
-        except ValueError as e:  # defensa (N6): un evento que no se puede reescribir
+        except (ValueError, RecursionError) as e:  # defensa (N6): no se puede reescribir
             falla = f"un evento del comercio no se pudo reenviar ({type(e).__name__})"
         finally:
             await resp.aclose()
@@ -1387,13 +1387,13 @@ class ProxyGuard:
         self, evento: a2a.EventoSSE, llamada: Llamada, est: EstadoStream
     ) -> list[bytes]:
         pedido, activo = llamada.pedido, llamada.guard_activo
-        body, error = a2a.parsear_json(evento.data)
+        body, error = _leer_del_comercio(evento.data)
         crudo = b""
         if error is None and isinstance(body, dict):
-            body, cambiado = a2a.quitar_veredictos_ajenos(body)
             try:
+                body, cambiado = a2a.quitar_veredictos_ajenos(body)
                 crudo = a2a.bloque_sse(body) if cambiado else evento.serializar()
-            except ValueError as e:  # defensa (N6)
+            except (ValueError, RecursionError) as e:  # defensa (N6)
                 error = f"{type(e).__name__}: {e}"[:200]
         if error is not None or not isinstance(body, dict):
             detalle = error or "el evento no es un objeto JSON"
@@ -3059,6 +3059,16 @@ def _integrador(request: Request) -> Integrador | None:
 
 def _oyente(request: Request) -> str:
     return "publico" if getattr(request.state, "oyente", "local") == "publico" else "local"
+
+
+def _leer_del_comercio(contenido: bytes | str) -> tuple[Any, str | None]:
+    """JSON estricto de una respuesta (o de un evento SSE) del comercio, que
+    además no esté anidado de más (`a2a.PROFUNDIDAD_MAXIMA`): una así no se
+    puede copiar ni registrar en un evento, y se trata como ilegible."""
+    body, error = a2a.parsear_json(contenido)
+    if error is None and a2a.anidado_de_mas(body, a2a.PROFUNDIDAD_MAXIMA):
+        return None, f"la respuesta tiene más de {a2a.PROFUNDIDAD_MAXIMA} niveles de anidamiento"
+    return body, error
 
 
 def _pedido_legible(raw: bytes) -> bool:

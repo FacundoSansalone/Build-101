@@ -50,17 +50,30 @@ class BusDeEventos:
         escenario: str | None = None,
         privado: bool = False,
     ) -> Evento:
-        evento = Evento(
-            id=uuid.uuid4().hex,
-            ts=datetime.now(timezone.utc),
-            contexto_id=contexto_id,
-            escenario=escenario,
-            guard_activo=guard_activo,
-            tipo=tipo,
-            datos=datos or {},
-        )
+        base = {
+            "id": uuid.uuid4().hex,
+            "ts": datetime.now(timezone.utc),
+            "contexto_id": contexto_id,
+            "escenario": escenario,
+            "guard_activo": guard_activo,
+            "tipo": tipo,
+        }
+        try:
+            evento = Evento(**base, datos=datos or {})
+            linea = evento.model_dump_json()
+        except (ValueError, RecursionError):
+            # Datos del comercio anidados de más (p. ej. el payload de un JWT):
+            # en memoria un evento así rompía cada SSE y el historial. Va sin
+            # los datos, con la compra si la hay (para el webhook).
+            logger.warning("El evento %s no se puede serializar: va sin sus datos", tipo)
+            sin_datos: dict[str, Any] = {"no_serializable": True}
+            compra_id = (datos or {}).get("compra_id")
+            if isinstance(compra_id, str):
+                sin_datos = {"compra_id": compra_id, **sin_datos}
+            evento = Evento(**base, datos=sin_datos)
+            linea = evento.model_dump_json()
         self._buffer.append(evento)
-        self._escribir_jsonl(evento, self._jsonl_privado if privado else self._jsonl)
+        self._escribir_jsonl(linea, self._jsonl_privado if privado else self._jsonl)
         for cola in list(self._suscriptores):
             try:
                 cola.put_nowait(evento)
@@ -94,7 +107,7 @@ class BusDeEventos:
     def desuscribir(self, cola: asyncio.Queue[Evento]) -> None:
         self._suscriptores.discard(cola)
 
-    def _escribir_jsonl(self, evento: Evento, path: Path | None) -> None:
+    def _escribir_jsonl(self, linea: str, path: Path | None) -> None:
         if path is None:
             return
         try:
@@ -103,6 +116,6 @@ class BusDeEventos:
             # legible por el dueño (en Windows el modo se ignora).
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "a", encoding="utf-8") as f:
-                f.write(evento.model_dump_json() + "\n")
+                f.write(linea + "\n")
         except OSError as e:
             logger.warning("No se pudo escribir %s: %s", path, e)
