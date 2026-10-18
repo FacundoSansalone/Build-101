@@ -89,6 +89,19 @@ def test_bloque_sse_escapa_separadores():
     assert json.loads(visto["data"]) == body
 
 
+def test_el_sse_del_dashboard_tambien_escapa(tmp_path):
+    """Los eventos del dashboard llevan texto del comercio (offer_details):
+    tampoco salen con fines de línea crudos."""
+    from contracts import Evento
+
+    evento = Evento(id="e1", ts="2026-10-17T00:00:00Z", guard_activo=True,
+                    tipo="ofertas_recibidas", datos={"x": "a  data: {} \x85"})
+    texto = a2a.EventoSSE(evento.model_dump_json(), event="evento").serializar()
+    (visto,) = _eventos_como_el_cliente(texto)
+    assert visto["event"] == "evento"
+    assert Evento.model_validate_json(visto["data"]) == evento
+
+
 # ---------------------------------------------------------------------------
 # Integración: el exploit por el id del SSE
 # ---------------------------------------------------------------------------

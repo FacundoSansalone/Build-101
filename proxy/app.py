@@ -1170,7 +1170,8 @@ class ProxyGuard:
         backlog, cola = suscripcion
 
         def bloque(evento: Evento) -> bytes:
-            return f"event: evento\ndata: {evento.model_dump_json()}\n\n".encode("utf-8")
+            # Los datos traen texto del comercio: mismo saneo que el SSE A2A (N7).
+            return a2a.EventoSSE(evento.model_dump_json(), event="evento").serializar()
 
         async def generar() -> AsyncIterator[bytes]:
             try:

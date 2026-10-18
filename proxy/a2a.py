@@ -629,6 +629,21 @@ async def lineas_acotadas(trozos: AsyncIterator[bytes], limite: int) -> AsyncIte
         yield pendiente
 
 
+# Todo lo que `str.splitlines()` toma como fin de línea. El proxy corta el
+# SSE solo en CR/LF, pero el cliente A2A (httpx) corta con splitlines(): si
+# uno de estos caracteres sale crudo, el cliente ve líneas (y eventos) que el
+# proxy nunca vio.
+_FINES_DE_LINEA = "\r\n\x0b\x0c\x1c\x1d\x1e\x85  "
+_SIN_FINES_DE_LINEA = str.maketrans("", "", _FINES_DE_LINEA)
+# En `data:` (JSON) se escapan: dentro de un string JSON valen lo mismo.
+_ESCAPES_DATA = str.maketrans({c: f"\\u{ord(c):04x}" for c in _FINES_DE_LINEA[2:]})
+
+
+def _sanear_campo(valor: str) -> str:
+    """`id`/`event` del comercio sin ningún fin de línea (N7)."""
+    return valor.translate(_SIN_FINES_DE_LINEA)
+
+
 @dataclass
 class EventoSSE:
     data: str
@@ -636,12 +651,18 @@ class EventoSSE:
     id: str | None = None
 
     def serializar(self) -> bytes:
+        """El evento en SSE. `id` y `event` se sanean y los fines de línea
+        que no son CR/LF se escapan en `data` (N7): el cliente ve exactamente
+        las líneas que vio el proxy."""
         lineas = []
-        if self.event:
-            lineas.append(f"event: {self.event}")
+        event = _sanear_campo(self.event) if self.event else ""
+        if event:
+            lineas.append(f"event: {event}")
         if self.id is not None:
-            lineas.append(f"id: {self.id}")
-        lineas.extend(f"data: {linea}" for linea in self.data.split("\n"))
+            lineas.append(f"id: {_sanear_campo(self.id)}")
+        lineas.extend(
+            f"data: {linea.translate(_ESCAPES_DATA)}" for linea in self.data.split("\n")
+        )
         return ("\n".join(lineas) + "\n\n").encode("utf-8")
 
 
