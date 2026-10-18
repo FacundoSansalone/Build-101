@@ -6,10 +6,13 @@ proveedor van en el estado, como datos; las preguntas son constantes y
 nunca llevan texto del proveedor.
 
 Los umbrales están acá, en código, a propósito: no se pueden aflojar por
-entorno. Se eligieron con los escenarios de la demo y sus variantes
-(`python -m filtro.evaluar --decisiones`; ver filtro/README.md). Un "sí" con
-probabilidad 0,5 quiere decir que el modelo duda entre sí y no: ante la duda,
-bloquea. La garantía no es esta capa sino el Guard antes de la firma.
+entorno. Un "sí" con probabilidad 0,5 quiere decir que el modelo duda entre
+sí y no: ante la duda, bloquea. Medición del 2026-10-18 con OpenAI
+Decisions (`gpt-6-luna`, `python -m filtro.evaluar --decisiones`, 26 casos):
+los honestos dieron 0,00 en las tres preguntas y los ataques 1,00 (el menor
+positivo, 0,82); 0,5 queda con margen de los dos lados. Si cambia el modelo,
+se vuelve a medir antes de tocar un umbral. La garantía no es esta capa sino
+el Guard antes de la firma.
 """
 
 from __future__ import annotations
