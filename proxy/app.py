@@ -26,7 +26,6 @@ aplica el veredicto y bloquea lo que no pudo evaluar (fail-closed).
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import copy
 import functools
 import hashlib
@@ -35,7 +34,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -120,6 +119,7 @@ from proxy.pedido_usuario import LARGO_MAXIMO as LARGO_MAXIMO_PEDIDO
 from proxy.pedido_usuario import PedidoDelUsuario, pedido_para_intake
 from proxy.persistencia import Persistencia
 from proxy.seguridad import HEADER_TOKEN, ControlLocal, escribir_token, generar_token
+from proxy.sin_estado import en_hilo
 from proxy.tipos_gateway import (
     HEADER_COMPRA,
     ID_COMPRA_RE,
@@ -601,16 +601,6 @@ class ProxyGuard:
         """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
         ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
         return self.config.demo_hoy or date.today()
-
-    async def _en_hilo(
-        self, ejecutor: ThreadPoolExecutor, funcion: Callable[..., Any], *args: Any
-    ) -> Any:
-        """Como `asyncio.to_thread` (con el contexto), pero en un pool propio.
-        Si la espera se cancela antes de que tome un hilo, no corre."""
-        contexto = contextvars.copy_context()
-        return await asyncio.get_running_loop().run_in_executor(
-            ejecutor, functools.partial(contexto.run, funcion, *args)
-        )
 
     def cerrar_hilos(self) -> None:
         """Al apagar: sin esperar a los que siguen corriendo (un LLM colgado)
@@ -1798,7 +1788,7 @@ class ProxyGuard:
         """Una llamada al agente de intención, en un hilo (el pool del LLM) y
         con tope de tiempo."""
         return await asyncio.wait_for(
-            self._en_hilo(self.ejecutor_llm, funcion, *args), _TIMEOUT_LLM_S
+            en_hilo(self.ejecutor_llm, funcion, *args), _TIMEOUT_LLM_S
         )
 
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
@@ -2086,7 +2076,7 @@ class ProxyGuard:
         tiempo. Lanza si falla, si tarda de más o si no devuelve un
         `ResultadoFiltro`: quien llama falla cerrado."""
         salida = await asyncio.wait_for(
-            self._en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(objetivo)),
+            en_hilo(self.ejecutor_filtro, self.filtro, copy.deepcopy(objetivo)),
             _TIMEOUT_FILTRO_S,
         )
         if isinstance(salida, ResultadoFiltro):
@@ -2567,7 +2557,7 @@ class ProxyGuard:
         gtins = gtins_de_ofertas(offer_details, catalogo)
         try:
             resultados = await asyncio.wait_for(
-                self._en_hilo(self.ejecutor_llm, consultar_gtins, self.fabricante, gtins),
+                en_hilo(self.ejecutor_llm, consultar_gtins, self.fabricante, gtins),
                 _TIMEOUT_FABRICANTE_S,
             )
         except Exception as e:  # noqa: BLE001 - sin fabricante, lo obligatorio escala

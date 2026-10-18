@@ -7,7 +7,9 @@ Cada test fija un hallazgo: primero falló con el código de antes."""
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -474,3 +476,56 @@ async def test_la_api_corta_con_el_chequeo_del_proxy(monkeypatch):
 
     assert await api_v1.leer_json(Pedido(), 1000) == {"contenido": [[[1]]]}
     assert vistos == [api_v1.MAX_PROFUNDIDAD_JSON]
+
+
+# ---------------------------------------------------------------------------
+# 7. Un solo `en_hilo` (sin_estado) para el proxy y los servicios sin estado
+# ---------------------------------------------------------------------------
+
+_VARIABLE = contextvars.ContextVar("variable_de_prueba", default="sin copiar")
+
+
+def test_el_proxy_no_tiene_su_propia_copia_de_en_hilo():
+    from proxy import sin_estado
+
+    assert not hasattr(app_mod.ProxyGuard, "_en_hilo")
+    assert app_mod.en_hilo is sin_estado.en_hilo
+
+
+async def test_en_hilo_copia_el_contexto_y_con_el_ejecutor_cerrado_lanza():
+    from proxy.sin_estado import en_hilo
+
+    ejecutor = ThreadPoolExecutor(max_workers=1)
+    token = _VARIABLE.set("copiado")
+    try:
+        assert await en_hilo(ejecutor, _VARIABLE.get) == "copiado"
+        assert await en_hilo(None, _VARIABLE.get) == "copiado"  # to_thread, igual
+    finally:
+        _VARIABLE.reset(token)
+    ejecutor.shutdown(wait=True)
+    with pytest.raises(RuntimeError):
+        await en_hilo(ejecutor, _VARIABLE.get)
+
+
+async def test_el_llm_del_proxy_corre_en_su_pool_con_el_contexto(armar_proxy, monkeypatch):
+    """Mismo comportamiento que el `_en_hilo` del proxy: en `ejecutor_llm`,
+    con el contexto copiado; con los hilos cerrados, lanza (quien llama falla
+    cerrado)."""
+    proxy = armar_proxy().state.proxy
+    usados: list[Any] = []
+    original = app_mod.en_hilo
+
+    async def espia(ejecutor, funcion, *args):
+        usados.append(ejecutor)
+        return await original(ejecutor, funcion, *args)
+
+    monkeypatch.setattr(app_mod, "en_hilo", espia)
+    token = _VARIABLE.set("del pedido")
+    try:
+        assert await proxy._llm(_VARIABLE.get) == "del pedido"
+    finally:
+        _VARIABLE.reset(token)
+    assert usados == [proxy.ejecutor_llm]
+    proxy.cerrar_hilos()
+    with pytest.raises(RuntimeError):
+        await proxy._llm(_VARIABLE.get)
