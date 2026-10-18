@@ -8,6 +8,7 @@ import uvicorn
 
 from proxy.app import create_app
 from proxy.config import Config, verificar_host_local
+from proxy.evaluador import EvaluadorNoDisponible
 
 
 def main() -> None:
@@ -17,7 +18,10 @@ def main() -> None:
     )
     config = Config.desde_entorno()
     verificar_host_local(config)  # loopback salvo PROXY_ALLOW_REMOTE=1
-    app = create_app(config)
+    try:
+        app = create_app(config)
+    except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
+        raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
     proxy = app.state.proxy
     logging.getLogger("proxy").info(
         "Proxy del Guard en http://%s:%d%s → comercio %s | catálogo %s | "

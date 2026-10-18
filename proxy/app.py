@@ -58,6 +58,7 @@ from proxy.evaluador import (
     clave_publica,
     firmar_recibo,
     preparar_clave,
+    validar_evaluador,
 )
 from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import cargar_catalogo, cargar_intent, violaciones_ap2
@@ -208,6 +209,9 @@ class ProxyGuard:
         evaluador: EvaluadorCargado,
         ping_segundos: float = 15.0,
     ) -> None:
+        # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
+        # PROXY_ALLOW_STUB=1) el proxy no se arma.
+        validar_evaluador(evaluador, config.permitir_stub)
         self.config = config
         self.client = client
         self.evaluador = evaluador
@@ -220,11 +224,10 @@ class ProxyGuard:
         self._ofertas: OrderedDict[str, OfertasGuardadas] = OrderedDict()
         self._decisiones: OrderedDict[str, Decision] = OrderedDict()
         self._ficha: Ficha | None = None
-        if not evaluador.acepta_checkout:
+        if evaluador.nombre == "stub":
             logger.warning(
-                "evaluar() (%s) no acepta checkout=: el Guard no va a atar el "
-                "checkout firmado al cart evaluado. Actualizá guard/.",
-                evaluador.nombre,
+                "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
+                "Guard real; /guard/state y cada evento veredicto lo marcan."
             )
 
     # -- utilidades ----------------------------------------------------------
@@ -848,12 +851,6 @@ class ProxyGuard:
         catalogo, comercio_id, fuente = await cargar_catalogo(
             self.client, self.config.catalogo_url
         )
-        kwargs: dict[str, Any] = {
-            "politica": None,
-            "checkout_hash": checkout.get("checkout_hash"),
-        }
-        if self.evaluador.acepta_checkout:
-            kwargs["checkout"] = visto
         try:
             resultado = self.evaluador.evaluar(
                 self.ficha(),
@@ -864,7 +861,9 @@ class ProxyGuard:
                 ),
                 cart_id,
                 catalogo,
-                **kwargs,
+                politica=None,
+                checkout_hash=checkout.get("checkout_hash"),
+                checkout=visto,  # siempre: el Guard ata lo firmado al cart
             )
             veredicto = (
                 resultado
@@ -903,6 +902,7 @@ class ProxyGuard:
                 "veredicto": veredicto.model_dump(mode="json"),
                 "fuente": fuente,
                 "recibo_firmado": recibo_firmado,
+                "evaluador": self.evaluador.nombre,  # "stub" = no es el Guard real
             },
             guard_activo=True,
             contexto_id=contexto_id,
@@ -1176,12 +1176,16 @@ def create_app(
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests."""
     config = config or Config.desde_entorno()
+    # Fail-closed antes de abrir nada: sin Guard real (o stub sin permiso) no
+    # hay app (EvaluadorNoDisponible).
+    evaluador = evaluador or cargar_evaluador(config.permitir_stub)
+    validar_evaluador(evaluador, config.permitir_stub)
     client = httpx.AsyncClient(
         transport=transport,
         timeout=httpx.Timeout(600.0, connect=5.0),  # create_checkout usa un LLM
         trust_env=False,
     )
-    proxy = ProxyGuard(config, client, evaluador or cargar_evaluador(), ping_segundos)
+    proxy = ProxyGuard(config, client, evaluador, ping_segundos)
     try:
         # La clave del recibo se crea al arrancar, no en la primera decisión.
         if preparar_clave(config.guard_key_path):

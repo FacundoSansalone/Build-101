@@ -3,13 +3,11 @@ cart que pidió el usuario."""
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 from contracts import CheckoutVisto, Ficha, OfertasVistas
 from proxy import guard_stub
-from proxy.evaluador import EvaluadorCargado
+from proxy.evaluador import EvaluadorCargado, EvaluadorNoDisponible
 from proxy.tests.ayudantes import (
     buscar,
     checkout,
@@ -47,24 +45,16 @@ async def test_evaluar_recibe_el_checkout_firmado(armar_proxy, merchant: FakeMer
     assert visto.checkout_jwt == merchant.ultimo_checkout["checkout_jwt"]
 
 
-async def test_evaluar_viejo_sin_checkout_no_lo_recibe_y_avisa(armar_proxy, caplog):
-    llamadas = []
+def test_evaluar_viejo_sin_checkout_no_arma_el_proxy(armar_proxy):
+    """N1: un evaluar() que no acepta checkout= evaluaría sin atar lo firmado:
+    el proxy no arranca (antes avisaba y seguía)."""
 
     def viejo(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
-              checkout_hash=None, ahora=None):
-        llamadas.append(cart_id_elegido)
-        return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo)
+              checkout_hash=None, ahora=None):  # pragma: no cover - no se llama
+        raise AssertionError
 
-    with caplog.at_level(logging.WARNING):
-        app = armar_proxy(evaluador=EvaluadorCargado(evaluar=viejo, nombre="guard"))
-    assert "checkout" in caplog.text and "WARNING" in caplog.text.upper()
-
-    async with cliente_de(app) as c:
-        contexto = await buscar(c, "B")
-        resp = await checkout(c, contexto, "cart_1")
-
-    assert llamadas == ["cart_1"]
-    assert resp.json()["result"]["status"]["state"] == "completed"
+    with pytest.raises(EvaluadorNoDisponible, match="checkout"):
+        armar_proxy(evaluador=EvaluadorCargado(evaluar=viejo, nombre="guard"))
 
 
 def test_deteccion_del_parametro_checkout():

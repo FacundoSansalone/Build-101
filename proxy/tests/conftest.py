@@ -43,6 +43,7 @@ def config(tmp_path) -> Config:
         guard_activo=True,
         events_jsonl=tmp_path / "guard_events.jsonl",
         guard_key_path=tmp_path / "guard_signing_key.pem",
+        permitir_stub=True,  # los tests usan el stub explícitamente (N1)
     )
 
 

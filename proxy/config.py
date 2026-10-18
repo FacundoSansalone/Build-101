@@ -49,6 +49,9 @@ class Config:
     max_respuesta_bytes: int = MAX_RESPUESTA_BYTES
     max_suscriptores_sse: int = MAX_SUSCRIPTORES_SSE
     permitir_remoto: bool = False  # PROXY_ALLOW_REMOTE=1
+    # PROXY_ALLOW_STUB=1: sin el guard.evaluar() real, usar el stub de prueba
+    # (si no, el proxy no arranca). Los veredictos quedan marcados "stub".
+    permitir_stub: bool = False
 
     @property
     def rpc_path(self) -> str:
@@ -90,6 +93,7 @@ class Config:
             permitir_remoto=_bool(
                 env.get("PROXY_ALLOW_REMOTE", "0"), "PROXY_ALLOW_REMOTE"
             ),
+            permitir_stub=_bool(env.get("PROXY_ALLOW_STUB", "0"), "PROXY_ALLOW_STUB"),
         )
 
 

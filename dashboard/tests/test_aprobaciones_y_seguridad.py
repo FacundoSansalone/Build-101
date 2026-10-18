@@ -135,7 +135,7 @@ def test_reenvio_del_panel_pasa_host_origin_y_content_type_del_proxy(tmp_path):
     from proxy import guard_stub
 
     proxy_app = crear_proxy(
-        ConfigProxy(events_jsonl=None, guard_key_path=tmp_path / "k.pem"),
+        ConfigProxy(events_jsonl=None, guard_key_path=tmp_path / "k.pem", permitir_stub=True),
         transport=httpx.MockTransport(_no_llamar),
         evaluador=EvaluadorCargado(evaluar=guard_stub.evaluar, nombre="stub"),
     )

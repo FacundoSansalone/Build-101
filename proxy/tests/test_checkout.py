@@ -202,7 +202,7 @@ async def test_escalar_retiene_el_checkout_y_agrega_veredicto(
     from contracts import Veredicto as V
 
     def escalar(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
-                checkout_hash=None, ahora=None):
+                checkout_hash=None, ahora=None, checkout=None):
         return V(status="escalar", cart_id_elegido=cart_id_elegido,
                  cart_id_recomendado="cart_1", ranking=["cart_1"], chequeos=[],
                  motivo="precio contradicho")
@@ -233,7 +233,7 @@ async def test_evaluar_recibe_las_entradas_del_contrato(
     llamadas: list[dict[str, Any]] = []
 
     def espia(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
-              checkout_hash=None, ahora=None):
+              checkout_hash=None, ahora=None, checkout=None):
         llamadas.append(dict(ficha=ficha, ofertas=ofertas_vistas, cart=cart_id_elegido,
                              catalogo=catalogo, politica=politica, hash=checkout_hash))
         return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo,
@@ -271,7 +271,7 @@ async def test_catalogo_caido_usa_el_fixture(armar_proxy, config, merchant):
     catalogos: list[dict] = []
 
     def espia(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
-              checkout_hash=None, ahora=None):
+              checkout_hash=None, ahora=None, checkout=None):
         catalogos.append((catalogo, ofertas_vistas.comercio_id))
         return guard_stub.evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo)
 
