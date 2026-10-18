@@ -37,7 +37,9 @@ async def find_products(
     debug_mode: Whether to run in debug mode.
 
   Returns:
-    A list of Cart objects (cart_id, item_label, amount, currency).
+    A list of Cart objects (cart_id, item_label, amount, currency). If the
+    user authorized new purchase parameters in the Pre-Sign Guard, a dict
+    with the carts and those parameters (HACKATHON, see world/NOTICE.md).
 
   Raises:
     RuntimeError: If the merchant agent fails to find products.
@@ -62,7 +64,31 @@ async def find_products(
   tool_context.state["available_carts"] = [
       c.model_dump(mode="json") for c in carts
   ]
+  # HACKATHON (Pre-Sign Guard, etapa 2): si el usuario aceptó una alternativa
+  # en el dashboard del Guard, el proxy agrega los parámetros nuevos en un
+  # artefacto aparte. Se le pasan al agente junto con los carts. Sin ese
+  # artefacto la herramienta devuelve lo mismo que el sample.
+  parametros = _parametros_autorizados(task.artifacts)
+  if parametros is not None:
+    tool_context.state["guard_parametros_autorizados"] = parametros
+    return {
+        "carts": carts,
+        "parameters_authorized_by_the_user": parametros.get("texto"),
+        "authorized_cart_id": parametros.get("cart_id"),
+    }
   return carts
+
+
+def _parametros_autorizados(artifacts) -> dict | None:
+  """El data part `guard.parametros_autorizados` del proxy del Guard, si vino."""
+  for artifact in artifacts or []:
+    for part in artifact.parts:
+      data = getattr(part.root, "data", None)
+      if isinstance(data, dict) and isinstance(
+          data.get("guard.parametros_autorizados"), dict
+      ):
+        return data["guard.parametros_autorizados"]
+  return None
 
 
 def select_cart(cart_id: str, tool_context: ToolContext) -> str:

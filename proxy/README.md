@@ -189,6 +189,91 @@ Además van a `GUARD_EVENTS_JSONL`, una línea por evento. `escenario` es el
 | `bloqueado` | `{"cart_id", "motivo", "status", "requiere_aprobacion": bool}` (`requiere_aprobacion: true` = retenido por `escalar`) |
 | `guard_cambiado` | `{"guard_activo": bool}` |
 | `error` | `{"mensaje"}` |
+| `pedido_detectado` | Etapa 2. `{"compra_id", "pedido", "pregunta", "requisitos": [Requisito], "vence"}` |
+| `contexto_registrado` | Etapa 2. `{"compra_id", "omitido": bool, "vencido": bool, "contexto": Contexto\|null}` |
+| `oportunidad` | Etapa 2. `{"compra_id", "oportunidad": Oportunidad, "vence"}` |
+| `oportunidad_decidida` | Etapa 2. `{"compra_id", "oportunidad_id", "decision": "aceptada"\|"rechazada"\|"vencida", "requisitos_autorizados": [Requisito]\|null}` |
+
+`bloqueado` de la etapa 2 lleva además `"etapa": "seguridad"` (corte del
+filtro, con `senales`) o `"etapa": "intencion"` (la consulta venció).
+
+## Etapa 2: contexto, filtro y oportunidad
+
+El flujo único de [docs/FLUJO.md](../docs/FLUJO.md). Solo con el Guard
+prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
+
+1. **Contexto.** Con un agente de intención cargado (`intencion/`), el
+   primer `find_products` de una compra se **retiene**: el agente arma la
+   pregunta del porqué y los parámetros explícitos del pedido, se emite
+   `pedido_detectado` y el proxy espera la respuesta del usuario
+   (`POST /guard/compras/contexto`), que la omita o que venza
+   `PROXY_ESPERA_CONTEXTO_S`. Recién ahí reenvía el pedido al proveedor.
+   Otra búsqueda del mismo contexto no vuelve a preguntar.
+2. **Filtro.** Con un filtro cargado (`GUARD_FILTRO`, de Dev 1), cada
+   respuesta del proveedor pasa por él antes que nada. Si bloquea o falla,
+   el agente del cliente recibe una tarea `failed` con un texto fijo y
+   **nada** del proveedor; no se llama al agente de intención.
+3. **Oportunidad.** Si ninguna oferta cumple los parámetros autorizados, el
+   agente busca una que cubra la necesidad. Si la encuentra, se emite
+   `oportunidad` y el proxy **retiene la respuesta** hasta la decisión
+   (`POST /guard/compras/decision`) o hasta que venza
+   `PROXY_ESPERA_DECISION_S`:
+   - **acepta:** la respuesta pasa intacta, más el artefacto
+     `guard.parametros_autorizados` (`cart_id`, `requisitos`, `texto`
+     fijo), y la compra queda con esos parámetros;
+   - **rechaza:** pasa intacta y siguen los parámetros originales;
+   - **vence:** tarea `failed` sin nada del proveedor ("en pausa"): el
+     silencio no es autorización.
+4. **Verificación.** En `create_checkout`, `evaluar()` usa los parámetros
+   autorizados **de esa compra** (si no hay compra, la ficha de la demo).
+   Una oferta que no los cumple se bloquea aunque el agente la elija.
+
+Reglas que no dependen de la demo:
+
+- **Ficha.** Si el escenario de la demo tiene una ficha confirmada
+  (`scenarios.json` o `fixtures/`), manda esa. La que arma el agente con el
+  pedido solo se usa si no hay ninguna (un comercio real). El LLM puede
+  extraer de más o de menos, y no puede achicar ni agrandar la ficha
+  confirmada.
+- **Tiempo.** Las dos esperas caen en la misma llamada del agente del
+  cliente, que espera hasta 600 s. El proxy usa un presupuesto de 570 s por
+  llamada (los plazos se recortan a lo que queda), y cada llamada al agente
+  de intención tiene un tope de 45 s.
+- **Filtro.** Corre en un hilo, con un tope de 30 s. Si vence o falla,
+  bloquea. Revisa también los errores del comercio, los `result` que no son
+  objeto y cada evento de un stream. Lo que no se puede leer, con filtro, no
+  se reenvía.
+- **Streams (SSE).** El filtro corta evento por evento. La respuesta no se
+  retiene (ya salió), así que no hay oportunidad: sigue el pedido original y
+  el Guard igual verifica el checkout.
+- **Búsquedas repetidas.** Otra búsqueda de la misma compra espera el mismo
+  porqué y la misma decisión. Después de vencida o bloqueada, tampoco recibe
+  nada; después de aceptada, vuelve a llevar los parámetros.
+- **Contexto.** Una respuesta del comercio que usa el `contextId` de otra
+  compra se corta.
+- **Fallas del agente.** Si el agente de intención falla, la compra sigue con
+  el pedido literal (y un evento `error`): la seguridad no depende de esa
+  capa.
+- **Data parts del proxy.** Un `guard.parametros_autorizados` que mande el
+  comercio se borra, igual que un `guard.veredicto`.
+
+| Variable | Default | Qué es |
+|---|---|---|
+| `GOOGLE_API_KEY` o `GEMINI_API_KEY` | — | Sin ninguna de las dos no hay agente de intención (la etapa 2 queda apagada). `world/run_world.sh` igual exige `GOOGLE_API_KEY` |
+| `INTENCION_ACTIVA` | `1` | `0` para apagar la capa de intención aunque haya clave. **Usalo para el benchmark y `smoke_checkout.py`**: no hay un humano que conteste y cada búsqueda esperaría `PROXY_ESPERA_CONTEXTO_S` |
+| `INTENCION_MODELO` | `gemini-3.1-flash-lite-preview` | Modelo del agente de intención |
+| `GUARD_FILTRO` | — | Filtro de seguridad, `paquete.modulo:funcion` (`contracts.Filtro`). Si se pide y no carga, el proxy no arranca |
+| `PROXY_ESPERA_CONTEXTO_S` | `120` | Cuánto se espera el porqué |
+| `PROXY_ESPERA_DECISION_S` | `420` | Cuánto se espera la decisión sobre la oportunidad |
+
+| Endpoint | Respuesta |
+|---|---|
+| `GET /guard/compras` | `{"compras": [Compra]}`, la más nueva primero. `Compra`: `compra_id`, `estado` (`esperando_contexto`, `negociando`, `esperando_decision`, `sin_oportunidad`, `bloqueada`, `aceptada`, `rechazada`, `vencida`), `creada`, `contexto_id`, `pedido`, `pregunta`, `requisitos`, `contexto`, `oportunidad`, `vence`, `decision`, `requisitos_autorizados` |
+| `POST /guard/compras/contexto` con `{"compra_id", "respuesta"}` o `{"compra_id", "omitir": true}` y `X-Guard-Token` | 200 con la compra; 404 `compra_desconocida`; 409 `{"error": "estado", "estado"}` si no está esperando el porqué; 400 si el cuerpo no es exactamente eso (respuesta de 1 a 1000 caracteres) |
+| `POST /guard/compras/decision` con `{"compra_id", "decision": "aceptar"\|"rechazar"}` y `X-Guard-Token` | Igual: 200, 404, 409 (si no hay una consulta pendiente) o 400 |
+
+`GET /guard/state` suma `"intencion"` (nombre del agente o `null`) y
+`"filtro"` (bool).
 
 ## Seguridad
 
@@ -239,7 +324,7 @@ archivo: subir la misma corrida dos veces no la duplica.
 
 | Archivo | Qué es |
 |---|---|
-| `app.py` | `create_app(config, transport=None, evaluador=None, persistencia=None)`: rutas, reenvío, decisión sobre el checkout (JSON y SSE), caché de decisiones, API de control |
+| `app.py` | `create_app(config, transport=None, evaluador=None, persistencia=None, agente=None, filtro=None)`: rutas, reenvío, etapas de la etapa 2 (contexto, filtro, oportunidad), decisión sobre el checkout (JSON y SSE), caché de decisiones, API de control |
 | `a2a.py` | Helpers puros sobre el JSON de A2A (pedido, ofertas, checkouts, `guard.veredicto` ajeno y versión para el agente, tareas bloqueadas, total firmado exacto, huella del checkout, lectura acotada y SSE saneado) |
 | `aprobaciones.py` | Registro de aprobaciones humanas (un solo uso, atadas a contexto, cart y monto) |
 | `seguridad.py` | Middleware de la API de control (`Host`, `Origin`, `Content-Type`, `X-Guard-Token`) y el token por arranque |
@@ -249,6 +334,7 @@ archivo: subir la misma corrida dos veces no la duplica.
 | `fuentes.py` | Intent, catálogo público (con su fuente) y `ap2_check` con respaldo en `fixtures/` |
 | `config.py` | Variables de entorno y chequeo de loopback |
 | `persistencia.py` | Registro opcional en Supabase (veredictos y aprobaciones), en segundo plano y sin cortar el flujo si falla |
+| `compras.py` | Etapa 2: registro de compras en memoria (pedido, parámetros autorizados, contexto, oportunidad, decisión) y las dos esperas |
 | `subir_benchmark.py` | `python -m proxy.subir_benchmark results/*.json`: sube corridas del benchmark a Supabase |
 | `sql/001_persistencia.sql` | Tablas de Supabase |
 | `scripts/smoke_checkout.py` | Prueba real de punta a punta con el cliente A2A del sample |

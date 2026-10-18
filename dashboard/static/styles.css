@@ -619,6 +619,69 @@ dl.comparacion dd { margin: 0; font-family: var(--mono); font-size: 0.88rem; fon
 .tooltip span { color: var(--muted); }
 .tooltip[hidden] { display: none; }
 
+/* ----------------------------------------------------------------- agente */
+.tab-aviso {
+  display: inline-grid; place-items: center; min-width: 1.45em; height: 1.45em; padding: 0 0.4em;
+  border-radius: 999px; background: var(--serious-fill); color: #fff;
+  font-size: 0.72rem; font-weight: 750; font-variant-numeric: tabular-nums;
+}
+.tab-aviso[hidden] { display: none; }
+
+.agente { display: grid; gap: 16px; max-width: 58rem; }
+.agente-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.agente-id { font-size: 1.2rem; overflow-wrap: anywhere; }
+.chat { list-style: none; display: grid; gap: 14px; }
+.msj { display: grid; gap: 4px; width: min(100%, 44rem); min-width: 0; }
+.msj-quien { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.76rem; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+.msj-burbuja {
+  display: grid; gap: 10px; min-width: 0; padding: 12px 16px; border-radius: var(--radius);
+  background: var(--surface); box-shadow: 0 0 0 1px var(--ring); overflow-wrap: anywhere;
+}
+.msj-nuestro .msj-burbuja { box-shadow: inset 4px 0 0 var(--accent), 0 0 0 1px var(--ring); }
+.msj-usuario { justify-self: end; }
+/* Las respuestas y los avisos del proxy, del ancho de su texto. */
+.msj-usuario:not(.msj-composer), .msj-sistema { width: auto; max-width: min(100%, 44rem); }
+.msj-usuario .msj-quien { justify-content: flex-end; }
+.msj-usuario .msj-burbuja { background: var(--accent-bg); }
+.msj-sistema { justify-self: center; }
+.msj-sistema .msj-burbuja { background: var(--tono-bg, var(--surface-2)); color: var(--tono, var(--ink-2)); box-shadow: none; text-align: center; }
+.msj-final .msj-burbuja { background: var(--tono-bg); box-shadow: inset 4px 0 0 var(--tono-fill), 0 0 0 1px var(--ring); }
+.msj-final-texto { display: flex; align-items: center; gap: 8px; color: var(--tono); font-size: 1.05rem; }
+.msj-final-texto .icono { width: 1.3em; height: 1.3em; stroke-width: 2.6; }
+.msj-texto { font-size: 1.02rem; }
+.msj-pedido { margin: 0; font-size: 1.15rem; }
+
+.msj-composer { width: min(100%, 44rem); }
+.msj-composer .msj-burbuja { background: var(--surface); box-shadow: 0 0 0 2px var(--serious-fill), var(--shadow); }
+.composer-texto {
+  width: 100%; min-height: 5.5rem; resize: vertical; padding: 10px 12px;
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+}
+.composer-texto:disabled { background: var(--surface-2); cursor: not-allowed; }
+.acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.cuenta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; font-size: 0.9rem; color: var(--ink-2); }
+.cuenta.t-warn { color: var(--tono); font-weight: 600; align-items: center; gap: 6px; }
+.cuenta-valor { font-weight: 750; font-size: 1rem; color: var(--ink); }
+.aviso-post { color: var(--tono); font-weight: 600; }
+
+.requisitos { list-style: none; display: grid; gap: 4px; font-size: 0.92rem; }
+.requisitos li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.req-campo { color: var(--muted); font-weight: 650; min-width: 6.5rem; }
+.entregas { list-style: none; display: grid; gap: 2px; }
+.flexibilidades { list-style: none; display: grid; gap: 6px; }
+.flexibilidades li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+
+.msj-oportunidad.pendiente .msj-burbuja { box-shadow: inset 4px 0 0 var(--serious-fill), 0 0 0 2px var(--serious-fill), var(--shadow); }
+.oportunidad-titulo { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; }
+.oportunidad-pregunta { font-weight: 700; font-size: 1.05rem; }
+.tabla-cambios { background: var(--surface-2); border-radius: var(--radius-sm); }
+/* La burbuja parte palabras (overflow-wrap: anywhere); los rótulos, no. */
+.tabla-cambios th { overflow-wrap: normal; white-space: nowrap; }
+.tabla-cambios th[scope="row"] { font-weight: 650; }
+.tabla-cambios td.ofrecido { font-weight: 700; }
+.tabla-cambios .flecha { width: 1.5rem; padding-inline: 0; color: var(--muted); }
+
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1100px) {
   .veredicto-grilla, .recibo-grilla { grid-template-columns: minmax(0, 1fr); }

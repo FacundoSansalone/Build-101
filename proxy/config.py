@@ -57,6 +57,11 @@ class Config:
     # PROXY_ALLOW_STUB=1: sin el guard.evaluar() real, usar el stub de prueba
     # (si no, el proxy no arranca). Los veredictos quedan marcados "stub".
     permitir_stub: bool = False
+    # Etapa 2: cuánto se retiene un find_products esperando al usuario. Las dos
+    # esperas caen en la misma llamada del agente del cliente, que espera
+    # hasta 600 s (DEFAULT_TIMEOUT del sample): la suma tiene que quedar abajo.
+    espera_contexto_s: float = 120.0  # el porqué (si vence, sigue el pedido literal)
+    espera_decision_s: float = 420.0  # la consulta (si vence, no se compra nada)
 
     @property
     def rpc_path(self) -> str:
@@ -102,7 +107,24 @@ class Config:
                 env.get("PROXY_ALLOW_REMOTE", "0"), "PROXY_ALLOW_REMOTE"
             ),
             permitir_stub=_bool(env.get("PROXY_ALLOW_STUB", "0"), "PROXY_ALLOW_STUB"),
+            espera_contexto_s=_segundos(
+                env.get("PROXY_ESPERA_CONTEXTO_S"), base.espera_contexto_s,
+                "PROXY_ESPERA_CONTEXTO_S",
+            ),
+            espera_decision_s=_segundos(
+                env.get("PROXY_ESPERA_DECISION_S"), base.espera_decision_s,
+                "PROXY_ESPERA_DECISION_S",
+            ),
         )
+
+
+def _segundos(valor: str | None, defecto: float, nombre: str) -> float:
+    if valor is None or not valor.strip():
+        return defecto
+    segundos = float(valor)
+    if not 0 < segundos < 600:
+        raise ValueError(f"{nombre} tiene que estar entre 0 y 600 segundos, no {valor!r}")
+    return segundos
 
 
 def es_loopback(host: str) -> bool:

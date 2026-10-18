@@ -20,7 +20,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from contracts import GUARD_VEREDICTO_KEY
+from contracts import GUARD_PARAMETROS_KEY, GUARD_VEREDICTO_KEY
+
+# Data parts que solo pone el proxy: si llegan del comercio, se borran.
+CLAVES_DEL_PROXY = (GUARD_VEREDICTO_KEY, GUARD_PARAMETROS_KEY)
 
 CART_KEY = "ap2.cart"
 OFFER_DETAILS_KEY = "demo.offer_details"
@@ -151,7 +154,7 @@ def quitar_veredictos_ajenos(obj: Any) -> tuple[Any, bool]:
     Devuelve (objeto, cambió). Si no había nada que sacar devuelve el mismo
     objeto; si no, una copia (lo demás, incluido el ap2.checkout, igual).
     """
-    if contar_clave(obj, GUARD_VEREDICTO_KEY) == 0:
+    if all(contar_clave(obj, clave) == 0 for clave in CLAVES_DEL_PROXY):
         return obj, False
     copia = copy.deepcopy(obj)
     vaciados: set[int] = set()  # id() de los objetos que se quedaron sin partes
@@ -191,7 +194,7 @@ def _es_parte_veredicto(parte: Any) -> bool:
     return (
         isinstance(parte, dict)
         and isinstance(parte.get("data"), dict)
-        and GUARD_VEREDICTO_KEY in parte["data"]
+        and any(clave in parte["data"] for clave in CLAVES_DEL_PROXY)
     )
 
 
@@ -392,6 +395,11 @@ def _es_entero(v: Any) -> bool:
 
 
 _CART_ID_SEGURO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+
+
+def cart_id_seguro(valor: Any) -> str | None:
+    """El cart_id si es un identificador corto y sin texto libre; si no, None."""
+    return valor if isinstance(valor, str) and _CART_ID_SEGURO.fullmatch(valor) else None
 
 
 def veredicto_para_agente(veredicto_json: dict[str, Any]) -> dict[str, Any]:

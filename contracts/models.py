@@ -9,7 +9,7 @@ decisiones están anotadas en CLAUDE.md → "Decisiones".
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,12 +39,19 @@ EstadoEvidencia = Literal[
 ]
 
 CampoRequisito = Literal[
-    "precio", "moneda", "categoria", "uso", "talle", "marca", "comercio"
+    "precio", "moneda", "categoria", "uso", "talle", "marca", "comercio",
+    "cantidad", "entregas",  # etapa 2 (docs/FLUJO.md)
 ]
 
 # Data part que agrega el proxy a la tarea A2A con el veredicto. Va en un
 # artefacto aparte: el ap2.checkout firmado no se toca.
 GUARD_VEREDICTO_KEY = "guard.veredicto"
+
+# Data part que agrega el proxy a la respuesta de find_products cuando el
+# usuario aceptó una oportunidad: los parámetros nuevos para el agente del
+# cliente. Como el veredicto, solo lo pone el proxy (si viene del comercio,
+# se borra).
+GUARD_PARAMETROS_KEY = "guard.parametros_autorizados"
 
 # ---------------------------------------------------------------------------
 # Ficha del pedido
@@ -59,12 +66,27 @@ _CLAVES_INTENT: dict[str, tuple[CampoRequisito, str]] = {
     "size": ("talle", "incluye"),
     "brand": ("marca", "igual"),
     "merchant": ("comercio", "igual"),
+    "quantity": ("cantidad", "igual"),
+    "deliveries": ("entregas", "cubre"),  # [{"quantity": 10, "date": "2026-10-19"}]
 }
+
+
+class Entrega(BaseModel):
+    """`cantidad` unidades a más tardar en `fecha`.
+
+    En un cronograma (lista) las cantidades se suman: [10 el lunes, 10 el
+    jueves] = 10 para el lunes y 20 en total para el jueves.
+    """
+
+    cantidad: int = Field(gt=0)
+    fecha: date
 
 
 class Requisito(BaseModel):
     campo: CampoRequisito
-    operador: Literal["igual", "maximo", "incluye"]  # incluye: talle ∈ talles
+    # incluye: talle ∈ talles. cubre: el cronograma de entregas de la oferta
+    # cubre, acumulado, cada `Entrega` pedida (valor = list[Entrega]).
+    operador: Literal["igual", "maximo", "incluye", "cubre"]
     valor: Any
     obligatorio: bool  # True = hard, False = preferido
 
@@ -141,6 +163,10 @@ class Oferta(BaseModel):
     moneda: str
     stock: int | None = None
     talles: list[int] = Field(default_factory=list)
+    # Etapa 2: lo que el comercio declara que entrega (no se verifica antes de
+    # comprar). `cantidad` = unidades del cart; `entregas` = cronograma.
+    cantidad: int | None = None
+    entregas: list[Entrega] = Field(default_factory=list)
     evidencia: dict[str, Evidencia] = Field(default_factory=dict)
     # El texto libre (item_label, description) NO llega a ningún chequeo.
     # Se guarda solo para el recibo y el dashboard.
@@ -268,6 +294,71 @@ class Evaluador(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Etapa 2: contexto del pedido y oportunidades (docs/FLUJO.md)
+# ---------------------------------------------------------------------------
+
+
+class Flexibilidad(BaseModel):
+    descripcion: str
+    origen: Literal["dicha", "inferida"]  # la dijo el usuario o la dedujo el agente
+
+
+class Contexto(BaseModel):
+    """Lo que hay detrás del pedido. Conocerlo NO autoriza a cambiar nada:
+    los parámetros vigentes siguen siendo los de la ficha de la compra."""
+
+    pedido: str                     # lo que pidió el agente del cliente
+    pregunta: str                   # lo que le preguntó nuestro agente al usuario
+    respuesta: str | None = None    # lo que contestó (None = omitió o venció)
+    necesidad: str | None = None    # la necesidad en una frase
+    # Cronograma real, si la necesidad lo tiene ("10 el lunes y 10 el jueves").
+    necesidad_entregas: list[Entrega] = Field(default_factory=list)
+    flexibilidades: list[Flexibilidad] = Field(default_factory=list)
+
+
+class Cambio(BaseModel):
+    """Una diferencia entre lo pedido y lo que ofrece el comercio."""
+
+    campo: CampoRequisito
+    pedido: Any = None
+    ofrecido: Any = None
+
+
+class Oportunidad(BaseModel):
+    """Una oferta que no cumple el pedido pero podría cubrir la necesidad.
+
+    La propone nuestro agente; solo el usuario la autoriza. Los números de
+    `cambios` y `requisitos_propuestos` salen de los datos de la oferta (no
+    del texto del LLM); `por_que` es la explicación para el usuario.
+    """
+
+    id: str
+    cart_id: str
+    sku: str = ""
+    titulo: str = ""
+    precio: float | None = None
+    moneda: str = ""
+    cambios: list[Cambio]
+    por_que: str
+    requisitos_propuestos: list[Requisito]
+
+
+class ResultadoFiltro(BaseModel):
+    """Salida del filtro de seguridad (Dev 1, `filtro/`)."""
+
+    pasa: bool
+    motivo: str = ""  # texto fijo del filtro: nunca copia texto del proveedor
+    senales: list[str] = Field(default_factory=list)
+
+
+class Filtro(Protocol):
+    def __call__(self, respuesta: dict[str, Any]) -> ResultadoFiltro:
+        """Revisa la respuesta del proveedor (el `result` de la tarea A2A)
+        antes que cualquier otra etapa. Si falla, el proxy bloquea."""
+        ...
+
+
+# ---------------------------------------------------------------------------
 # Evento (proxy → dashboard, por SSE en :8010/guard/events y en JSONL)
 # ---------------------------------------------------------------------------
 
@@ -288,5 +379,10 @@ class Evento(BaseModel):
         "bloqueado",            # el proxy cortó el flujo
         "guard_cambiado",       # el interruptor Guard sí/no cambió
         "error",
+        # Etapa 2 (docs/FLUJO.md):
+        "pedido_detectado",     # nuestro agente le pregunta el porqué al usuario
+        "contexto_registrado",  # el usuario contestó (u omitió, o venció)
+        "oportunidad",          # consulta al usuario: negociación en pausa
+        "oportunidad_decidida", # aceptada, rechazada o vencida
     ]
     datos: dict[str, Any] = Field(default_factory=dict)  # JSON del cart, JWT, Veredicto…

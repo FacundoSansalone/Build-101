@@ -231,6 +231,22 @@ Propuesta inicial; se ajusta al acordarla.
 12. **Opcional:** registrar oportunidades y decisiones en Supabase
     (`persistencia.py`).
 
+### Estado (2026-10-18, rama `etapa2/intencion`)
+
+| Tarea | Estado |
+|---|---|
+| Contrato | Hecho y aditivo; falta que lo revisen los tres (ver CLAUDE.md → Decisiones) |
+| 1. Filtro (Dev 1) | Falta. Ya está el enganche en el proxy: `GUARD_FILTRO=paquete.modulo:funcion`, con la firma `contracts.Filtro` |
+| 2. Escenarios de computadoras en `world/` (Dev 1) | Falta. Hasta entonces, `fixtures/etapa2/computadoras.json` (escrito a mano) |
+| 3. `find_products` lee los parámetros autorizados | Hecho (`shopper/tools.py`, anotado en `NOTICE.md`) |
+| 4. Medir las corridas sin sistema | Falta |
+| 5 y 6. Contexto y detector (`intencion/`) | Hecho, con tests (cliente de Gemini falso) |
+| 7. Medir el detector con Gemini real | Hecho: 9/9 (`gemini-3.1-flash-lite-preview`, 3 casos × 3; `python -m intencion.evaluar_casos`) |
+| 8. Guard con los parámetros de la compra | Hecho (`cantidad`, `entregas` y operador `cubre`) |
+| 9 y 10. Etapas en el proxy y API | Hecho, con tests de punta a punta contra el comercio falso |
+| 11. Dashboard: vista Agente | Hecho (pestaña 7, `#agente`), con tests de Python y JS; probado en el navegador contra un proxy falso |
+| 12. Supabase | No se hizo (opcional) |
+
 ### Orden y puntos de control
 
 1. **Contrato**, los tres juntos, antes que nada.
