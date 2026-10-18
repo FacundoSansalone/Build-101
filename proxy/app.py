@@ -29,6 +29,7 @@ import asyncio
 import contextvars
 import copy
 import functools
+import hashlib
 import hmac
 import logging
 import time
@@ -176,6 +177,10 @@ _MAX_ID = 200  # largo máximo de contexto_id / cart_id en la API de aprobacione
 # Contextos sin dueño que recuerda una llamada anónima (`Llamada.contextos_sin_dueno`):
 # un stream trae uno; más allá de esto se vuelve a preguntar (la memoria no crece).
 _MAX_CONTEXTOS_POR_LLAMADA = 16
+# Veredictos del filtro sobre la Agent Card (`ProxyGuard._card_pasa`): el
+# agente la pide seguido y la misma card no se vuelve a filtrar por un rato.
+_MAX_CARDS_FILTRADAS = 64
+_VIGENCIA_CARD_S = 300.0
 
 # Plantillas fijas del texto para el agente: "KaiAI: <status>. <motivo>"
 # (el motivo lo arma guard/ sin texto del comercio). Ningún string del
@@ -529,6 +534,9 @@ class ProxyGuard:
         # agente no hay pregunta ni oportunidades; sin filtro no hay corte.
         self.agente = agente
         self.filtro = filtro
+        # Veredictos del filtro sobre la Agent Card, por sha256 de los bytes
+        # de la card: (vence en monotonic, pasa). Ver `_card_pasa`.
+        self._cards_filtradas: OrderedDict[str, tuple[float, bool]] = OrderedDict()
         # Lo que dice `describir()` del módulo del filtro (solo informa).
         self.filtro_modo = filtro_modo if filtro is not None else None
         # Los cierra el lifespan de `create_app`. Públicos: `/v1` sin estado
@@ -955,7 +963,7 @@ class ProxyGuard:
         # Con un integrador el Guard está siempre prendido (como en `rpc`).
         activo = True if integrador is not None else self.guard_activo
         if activo and self.filtro is not None and not await self._card_pasa(
-            card, comercio, integrador
+            card, contenido, comercio, integrador
         ):
             return JSONResponse({"error": "card_bloqueada"}, status_code=502)
         publica = self._url_publica_card(request, comercio)
@@ -964,26 +972,48 @@ class ProxyGuard:
         return JSONResponse(a2a.reescribir_card(card, publica))
 
     async def _card_pasa(
-        self, card: dict[str, Any], comercio: Comercio, integrador: Integrador | None
+        self,
+        card: dict[str, Any],
+        contenido: bytes,
+        comercio: Comercio,
+        integrador: Integrador | None,
     ) -> bool:
         """La Agent Card también es texto del comercio que lee el agente
         (nombre, descripciones, skills): pasa por el filtro antes de llegarle.
         Si el filtro la corta, falla o tarda de más, no se entrega (y queda un
-        evento `error` con un motivo fijo, nada de la card)."""
+        evento `error` con un motivo fijo, nada de la card).
+
+        El agente la pide seguido y el filtro puede hacer hasta tres preguntas
+        al modelo: el veredicto queda por sha256 de los bytes de la card
+        (`_VIGENCIA_CARD_S`, hasta `_MAX_CARDS_FILTRADAS`). Una card distinta
+        se filtra de nuevo. Se guarda lo que dijo el filtro (pasa o corta);
+        una falla no, así el próximo pedido la vuelve a revisar."""
         llamada = Llamada(
             pedido=a2a.Pedido(), guard_activo=True, comercio=comercio, integrador=integrador
         )
-        try:
-            if (await self._correr_filtro(card)).pasa:
-                return True
-            motivo = "La Agent Card del comercio no pasó el filtro de seguridad: no se entrega."
-        except Exception as e:  # noqa: BLE001 - fail-closed
-            logger.exception("El filtro de seguridad falló con la Agent Card")
-            motivo = (
-                f"El filtro de seguridad no pudo revisar la Agent Card ({type(e).__name__}): "
-                "no se entrega."
+        clave = hashlib.sha256(contenido).hexdigest()
+        guardado = self._cards_filtradas.get(clave)
+        pasa = guardado[1] if guardado is not None and time.monotonic() < guardado[0] else None
+        if pasa is None:
+            try:
+                pasa = (await self._correr_filtro(card)).pasa is True
+            except Exception as e:  # noqa: BLE001 - fail-closed
+                logger.exception("El filtro de seguridad falló con la Agent Card")
+                self._error(
+                    llamada,
+                    f"El filtro de seguridad no pudo revisar la Agent Card ({type(e).__name__}): "
+                    "no se entrega.",
+                )
+                return False
+            _recordar(
+                self._cards_filtradas, clave, (time.monotonic() + _VIGENCIA_CARD_S, pasa),
+                _MAX_CARDS_FILTRADAS,
             )
-        self._error(llamada, motivo)
+        if pasa:
+            return True
+        self._error(
+            llamada, "La Agent Card del comercio no pasó el filtro de seguridad: no se entrega."
+        )
         return False
 
     # -- JSON-RPC ------------------------------------------------------------

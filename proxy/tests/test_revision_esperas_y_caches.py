@@ -38,6 +38,7 @@ from proxy.tests.gateway_ayudantes import (
     crear_compra,
 )
 from proxy.tests.test_compras_api import crear as crear_api
+from proxy.tests.test_nucleo_revision import _INYECCION, _card_con, _get_card
 from proxy.tests.test_etapa2 import DATOS, RESPUESTA_USUARIO, AgenteFalso
 from proxy.tipos_gateway import ErrorAlmacen
 
@@ -314,3 +315,94 @@ async def test_la_compra_ajena_sigue_creciendo_y_el_proceso_tambien(reloj_quieto
     assert marcas_ajena == sorted(set(marcas_ajena)) and marcas_ajena[0] > _INSTANTE + timedelta(hours=1)
     assert marcas_propia == sorted(set(marcas_propia))
     assert marcas_propia[0] > propia.creada and marcas_propia[-1] < _INSTANTE + timedelta(seconds=1)
+
+
+# ---------------------------------------------------------------------------
+# 5. El filtro sobre la Agent Card: un veredicto por contenido, con vencimiento
+# ---------------------------------------------------------------------------
+
+
+def _filtro_contado(pasa: bool = True, fallas: int = 0):
+    """Un filtro que cuenta cuántas veces corre; las primeras `fallas` lanzan."""
+    from contracts import ResultadoFiltro
+
+    vistos: list[Any] = []
+
+    def filtro(respuesta):
+        vistos.append(respuesta)
+        if len(vistos) <= fallas:
+            raise RuntimeError("caído")
+        return ResultadoFiltro(pasa=pasa, senales=[] if pasa else ["prueba"])
+
+    return filtro, vistos
+
+
+async def test_la_misma_card_no_se_vuelve_a_filtrar(armar_proxy):
+    """Cada GET de la card corría el filtro entero (hasta tres preguntas al
+    modelo, 30 s de tope). La misma card ya revisada usa el mismo veredicto."""
+    filtro, vistos = _filtro_contado()
+    app = armar_proxy(filtro=filtro)
+    for _ in range(3):
+        resp = await _get_card(app)
+        assert resp.status_code == 200
+    assert len(vistos) == 1
+
+
+async def test_una_card_distinta_se_filtra_de_nuevo(armar_proxy, monkeypatch):
+    filtro, vistos = _filtro_contado()
+    app = armar_proxy(filtro=filtro)
+    assert (await _get_card(app)).status_code == 200
+    _card_con(monkeypatch, "Otra descripción del comercio.")
+    assert (await _get_card(app)).status_code == 200
+    assert len(vistos) == 2 and vistos[1]["description"] == "Otra descripción del comercio."
+
+
+async def test_un_corte_queda_como_corte_y_se_avisa_cada_vez(armar_proxy, monkeypatch):
+    _card_con(monkeypatch, _INYECCION)
+    filtro, vistos = _filtro_contado(pasa=False)
+    app = armar_proxy(filtro=filtro)
+    for _ in range(2):
+        resp = await _get_card(app)
+        assert resp.status_code == 502 and resp.json() == {"error": "card_bloqueada"}
+    assert len(vistos) == 1
+    eventos = app.state.proxy.bus.historial()
+    assert [e.tipo for e in eventos] == ["error", "error"]
+    assert "Ignore" not in "".join(e.model_dump_json() for e in eventos)
+
+
+async def test_una_falla_del_filtro_no_se_guarda(armar_proxy):
+    """Fail-closed igual que antes: si el filtro falla, no se entrega; y no
+    queda nada guardado, así el próximo GET lo vuelve a revisar."""
+    filtro, vistos = _filtro_contado(fallas=1)
+    app = armar_proxy(filtro=filtro)
+    resp = await _get_card(app)
+    assert resp.status_code == 502 and resp.json() == {"error": "card_bloqueada"}
+    assert (await _get_card(app)).status_code == 200
+    assert (await _get_card(app)).status_code == 200
+    assert len(vistos) == 2
+
+
+async def test_el_veredicto_de_la_card_vence(armar_proxy):
+    filtro, vistos = _filtro_contado()
+    app = armar_proxy(filtro=filtro)
+    cards = app.state.proxy._cards_filtradas
+    assert (await _get_card(app)).status_code == 200
+    ((clave, (vence, pasa)),) = cards.items()
+    assert pasa is True
+    assert app_mod._VIGENCIA_CARD_S - 5 < vence - time.monotonic() <= app_mod._VIGENCIA_CARD_S
+    cards[clave] = (time.monotonic() - 1, pasa)  # pasó la vigencia
+    assert (await _get_card(app)).status_code == 200
+    assert len(vistos) == 2
+
+
+async def test_los_veredictos_de_cards_tienen_tope(armar_proxy, monkeypatch):
+    monkeypatch.setattr(app_mod, "_MAX_CARDS_FILTRADAS", 2)
+    filtro, vistos = _filtro_contado()
+    app = armar_proxy(filtro=filtro)
+    for descripcion in ("una", "dos", "tres"):
+        _card_con(monkeypatch, descripcion)
+        assert (await _get_card(app)).status_code == 200
+    assert len(app.state.proxy._cards_filtradas) == 2
+    _card_con(monkeypatch, "una")  # la más vieja salió: se filtra de nuevo
+    assert (await _get_card(app)).status_code == 200
+    assert len(vistos) == 4
