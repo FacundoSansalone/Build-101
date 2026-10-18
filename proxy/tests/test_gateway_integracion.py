@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from contracts import Ficha, ResultadoFiltro
+from contracts import Ficha, Oportunidad, ResultadoFiltro
 from proxy.tests.ayudantes import checkouts, evaluador_espia, texto_estado, veredictos
 from proxy.tests.gateway_ayudantes import (
     CLAVE_ACME,
@@ -249,6 +249,68 @@ async def test_porque_por_webhook_y_oportunidad_decidida_por_la_api(config_gw):
         # Responder otra vez ya no corresponde.
         tarde = await c.post(f"/v1/compras/{compra_id}/respuesta", json={"omitir": True})
         assert tarde.status_code == 409 and tarde.json()["error"]["codigo"] == "estado"
+
+
+async def _hasta_la_oportunidad(c, mundo, compra_id: str) -> tuple[asyncio.Task, str]:
+    """Arranca la búsqueda (queda retenida) y devuelve la tarea y el id de la
+    oportunidad que espera la decisión."""
+    busqueda = asyncio.create_task(buscar(c, compra_id, escenario="computadoras"))
+    vista = await _compra_en(c, compra_id, "esperando_decision")
+    return busqueda, vista["pendiente"]["oportunidad"]["id"]
+
+
+@pytest.mark.parametrize("resuelta_vieja", [False, True])
+@pytest.mark.parametrize(("decision", "estado"), [("aceptar", "aceptada"), ("rechazar", "rechazada")])
+async def test_la_decision_devuelve_la_compra_ya_resuelta(config_gw, decision, estado, resuelta_vieja):
+    """La respuesta del POST trae la compra con la decisión aplicada, no la foto
+    de antes de que la búsqueda retenida la aplique (`esperando_decision`).
+
+    `resuelta_vieja`: una compra hidratada del almacén trae `resuelta` puesta
+    (`Compra.desde_fila`); igual hay que esperar a que cambie el estado."""
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], agente=AgenteFalso())
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(
+            c, pedido="20 computadoras para el lunes", ficha=_ficha_computadoras(),
+            intencion={"porque": RESPUESTA_USUARIO},
+        ))["compra_id"]
+        if resuelta_vieja:
+            mundo.proxy.compras.get(compra_id).resuelta.set()
+        busqueda, oportunidad_id = await _hasta_la_oportunidad(c, mundo, compra_id)
+        resp = await c.post(
+            f"/v1/compras/{compra_id}/decision",
+            json={"oportunidad_id": oportunidad_id, "decision": decision},
+        )
+        assert resp.status_code == 200, resp.text
+        vista = resp.json()
+        assert vista["estado"] == estado
+        assert vista["pendiente"] is None
+        # Aceptada, la ficha vigente es la propuesta (lo que cambia va marcado).
+        aceptados = [r for r in vista["ficha"]["requisitos"] if r.get("origen") == "aceptado"]
+        assert bool(aceptados) is (decision == "aceptar")
+        assert (await busqueda).status_code == 200
+
+
+async def test_si_nadie_aplica_la_decision_vuelve_la_foto_de_ese_momento(config_gw):
+    """Con el tope vencido no cambia nada: la decisión quedó tomada y la vista
+    es la del momento (el GET la muestra resuelta cuando la búsqueda la aplica)."""
+    mundo = armar_gateway(config_gw, evaluador_espia()[0])
+    mundo.app.state.nucleo.espera_resolucion_s = 0.05
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(c))["compra_id"]
+        compra = mundo.proxy.compras.get(compra_id)
+        compra.estado = "esperando_decision"  # sin ninguna búsqueda retenida
+        compra.oportunidad = Oportunidad(
+            id="opo-1", cart_id="cart_2", cambios=[], por_que="x", requisitos_propuestos=[],
+        )
+        inicio = time.monotonic()
+        resp = await c.post(
+            f"/v1/compras/{compra_id}/decision",
+            json={"oportunidad_id": "opo-1", "decision": "aceptar"},
+        )
+        assert time.monotonic() - inicio < 1.0
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "esperando_decision"
+    assert compra._decision.result() == "aceptar"  # noqa: SLF001
 
 
 async def test_con_porque_no_pregunta_y_arma_el_contexto(config_gw):

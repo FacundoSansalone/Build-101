@@ -56,6 +56,11 @@ logger = logging.getLogger("proxy.gateway")
 # en el estado de la derecha se lee en el de la izquierda.
 _NORMALIZADA_DESDE = {"negociando": "esperando_contexto", "vencida": "esperando_decision"}
 
+# Cuánto espera `POST /decision` a que la búsqueda retenida aplique la
+# decisión antes de armar la vista (en la práctica, unas vueltas del loop).
+ESPERA_RESOLUCION_S = 2.0
+_PASO_RESOLUCION_S = 0.01
+
 
 def _no_disponible() -> ErrorApi:
     return ErrorApi(
@@ -82,6 +87,7 @@ class NucleoProxy:
         # sola instancia): sin él, N POST concurrentes leen el mismo conteo y
         # se pasan todos del límite de compras activas.
         self._candados_creacion: dict[str, asyncio.Lock] = {}
+        self.espera_resolucion_s = ESPERA_RESOLUCION_S
 
     # -- comercios -------------------------------------------------------------
 
@@ -237,7 +243,34 @@ class NucleoProxy:
             "Compra %s: el integrador %s decidió %s la oportunidad %s",
             compra.id, integrador.id, decision, oportunidad_id,
         )
+        await self._esperar_resolucion(compra)
         return self.proxy.foto(compra)
+
+    async def _esperar_resolucion(self, compra: Compra) -> None:
+        """Hasta que la búsqueda retenida aplique la decisión (o el tope).
+
+        `decidir` solo resuelve el `Future`: el estado (`aceptada`,
+        `rechazada`) y la ficha nueva los pone la búsqueda cuando retoma, unas
+        vueltas del loop después. Sin esperar, la respuesta del POST salía con
+        `esperando_decision`. Si vence el tope no cambia nada: la decisión ya
+        quedó tomada y la vista es la del momento (el GET la ve resuelta).
+
+        Se mira el estado y no solo `resuelta`: una compra hidratada del
+        almacén ya la trae puesta (`Compra.desde_fila`).
+        """
+        loop = asyncio.get_running_loop()
+        fin = loop.time() + self.espera_resolucion_s
+        while compra.estado == "esperando_decision":
+            restante = fin - loop.time()
+            if restante <= 0:
+                return
+            if compra.resuelta.is_set():
+                await asyncio.sleep(min(_PASO_RESOLUCION_S, restante))
+                continue
+            try:
+                await asyncio.wait_for(compra.resuelta.wait(), restante)
+            except TimeoutError:
+                return
 
     async def aprobar(
         self, integrador: Integrador, compra_id: str, cart_id: str, contexto_id: str | None
