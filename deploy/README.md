@@ -11,7 +11,7 @@ para integradores externos. Solo con un archivo de claves: ver
 
 | Script | Qué hace |
 |---|---|
-| `start_all.sh [escenario]` | Levanta todo en esta máquina con el agente pasando por el proxy, espera a que responda y, si un proceso muere, apaga todo. Logs en `.logs/`. |
+| `start_all.sh [escenario]` | Levanta todo en esta máquina con el agente pasando por el proxy, espera a que responda y, si un proceso muere, apaga todo. Logs en `.logs/`. Escenario por defecto `notebook_honesto`. Funciona en Linux, macOS y Windows con Git Bash. |
 | `tenki.sh [escenario]` | Crea una VM en Tenki Sandbox, sube el código y el `.env`, instala dependencias, publica el :8020 (y el :8030 si hay archivo de claves) y corre `start_all.sh` adentro. |
 
 ## Local
@@ -65,6 +65,8 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
 | `GUARD_FILTRO` | `filtro:filtrar` | Filtro del proxy. |
 | `FILTRO_SOLO_HEURISTICAS` | `1` | Con el modelo, el filtro corta el desafío OTP del comercio honesto ([DEMO.md](../docs/DEMO.md)). |
 | `DEMO_PAUSA_AUTO_S` | `8` | Espacia las respuestas automáticas de `/demo` (plan gratuito de Gemini). `0` con una clave paga. |
+| `DEMO_HOY` | `2026-10-18` | El "hoy" del agente de intención. Las ofertas tienen fechas fijas ("el lunes" es el 19): sin esto, el caso honesto no propone en otro día. |
+| `PROXY_MAX_SUSCRIPTORES_SSE` | `200` | Suscriptores de `/guard/events` a la vez. Cada pestaña del panel abre una: con el default del proxy (20), la pestaña 21 se queda sin eventos. |
 
 El `.env` de la raíz viaja a la VM tal cual (necesita `GOOGLE_API_KEY`; las
 `SUPABASE_*` son opcionales) y puede pisar cualquiera de estas variables.
