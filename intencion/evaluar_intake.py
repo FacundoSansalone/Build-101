@@ -15,7 +15,7 @@ cuando se la piden. Mide:
 Sin red por defecto: mide la cobertura de candidatos (que el valor esperado
 esté entre las opciones: el modelo no puede elegir uno que no está) y, si hay
 respuestas grabadas, las repite. Contra decisiones real solo con
-`RUN_DECISIONES_TESTS=1` (como mucho `--max-llamadas`, 30 por defecto); las
+`RUN_DECISIONES_TESTS=1` (como mucho `--max-llamadas`, 40 por defecto); las
 respuestas se graban para repetir y calibrar sin volver a pagar:
 
     PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m intencion.evaluar_intake
@@ -142,7 +142,7 @@ class ClienteGrabado:
     el usuario, así la calibración repite sin volver a llamar.
     """
 
-    def __init__(self, real: Any, cache: dict[str, Any], max_llamadas: int = 30) -> None:
+    def __init__(self, real: Any, cache: dict[str, Any], max_llamadas: int = 40) -> None:
         self.real = real
         self.cache = cache
         self.max_llamadas = max_llamadas
@@ -180,16 +180,28 @@ def _esperados(valor: Any) -> list[Any]:
     return valor if isinstance(valor, list) else [valor]
 
 
+def del_caso(caso: Mapping[str, Any], hoy: date, categorias: Sequence[str]) -> tuple[date, list[str]]:
+    """El día y el catálogo del caso: los del set, salvo que el caso traiga los suyos
+    (el pedido del 2026-10-19, un lunes, con el catálogo del comercio general)."""
+    if caso.get("hoy"):
+        hoy = date.fromisoformat(caso["hoy"])
+    return hoy, list(caso.get("categorias") or categorias)
+
+
 def cobertura(caso: Mapping[str, Any], hoy: date, categorias: Sequence[str]) -> list[str]:
     """Lo esperado que el modelo no podría elegir (lista vacía = todo está)."""
+    hoy, categorias = del_caso(caso, hoy, categorias)
     cands = intake.extraer([caso["pedido"], *caso["respuestas"]], hoy)
     problemas: list[str] = []
     final = caso["final"]
+    # Una categoría de la taxonomía (un ID) la pone el código si el usuario la nombró.
+    nombrada = cands.categoria.id if cands.categoria is not None else None
     for cat in _esperados(final["categoria"]):
-        if cat not in (*categorias, "fuera_de_catalogo", "faltante"):
+        if cat not in (*categorias, "fuera_de_catalogo", "faltante", nombrada):
             problemas.append(f"categoría {cat} no es opción")
     cantidad = final["cantidad"]
-    montos = {c.valor for c in cands.montos}
+    # Los que se ofrecen como tope: sin los números de cosas (ver `intake.preguntas`).
+    montos = {c.valor for c in cands.montos if not c.de_cosas}
     cantidades = {c.valor for c in cands.cantidades} | {1}
     if cantidad != "faltante" and cantidad not in cantidades:
         problemas.append(f"cantidad {cantidad} no está entre {sorted(cantidades)}")
@@ -244,8 +256,8 @@ class ResultadoCaso:
 def _valor_final(p: intake.Parametro, fuera: bool, confirmada: bool) -> Any:
     if p.estado == "faltante" or (p.estado == "a_confirmar" and not confirmada):
         return "faltante"
-    if p.nombre == "categoria":
-        return "fuera_de_catalogo" if fuera else p.valor
+    if p.nombre == "categoria":  # la del catálogo o el ID de la taxonomía ("278")
+        return "fuera_de_catalogo" if fuera else (p.eleccion if p.eleccion is not None else p.valor)
     return p.valor
 
 
@@ -257,6 +269,7 @@ def correr_caso(
     umbrales: Umbrales | None = None,
 ) -> ResultadoCaso:
     """La conversación simulada. El usuario confirma cuando se lo piden."""
+    hoy, categorias = del_caso(caso, hoy, categorias)
     agente = AgenteDecisiones(cliente, umbrales=umbrales)
     pedido = caso["pedido"]
     res = ResultadoCaso(id=caso["id"])
@@ -488,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--casos", default="", help="ids separados por coma (default: todos)")
     parser.add_argument("--cache", default=str(CACHE_PATH), help="respuestas grabadas (JSON)")
     parser.add_argument("--env-file", default=None, help=".env con OPENAI_API_KEY o TYPESAFE_API_KEY")
-    parser.add_argument("--max-llamadas", type=int, default=30)
+    parser.add_argument("--max-llamadas", type=int, default=40)
     parser.add_argument("--regrabar", action="store_true", help="ignora lo grabado (con red)")
     parser.add_argument("--calibrar", action="store_true", help="barre umbrales con lo grabado")
     parser.add_argument("--resuelto", type=float, default=intake.UMBRALES.resuelto)

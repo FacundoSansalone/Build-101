@@ -32,8 +32,12 @@ def test_el_set_es_variado():
     assert idiomas == {"es", "en"}
     categorias = {c["final"]["categoria"] for c in casos if isinstance(c["final"]["categoria"], str)}
     assert {"basketball_shoes", "laptops", "headphones", "fuera_de_catalogo"} <= categorias
-    # Lo que se paga: unas 2 a 3 llamadas por caso, dentro de ~30.
-    assert sum(1 + len(c["respuestas"]) for c in casos) <= 30
+    # Tipos generales de la taxonomía ("computadoras", "cámaras"), con el
+    # catálogo del comercio general, un lunes (la prueba del 2026-10-19).
+    assert {"278", "142"} <= categorias
+    assert any(c.get("hoy") == "2026-10-19" and "laptops" in c.get("categorias", []) for c in casos)
+    # Lo que se paga: unas 2 a 3 llamadas por caso, dentro de ~40.
+    assert sum(1 + len(c["respuestas"]) for c in casos) <= 40
 
 
 @pytest.mark.parametrize("caso_id", sorted(CASOS))
