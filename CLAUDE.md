@@ -525,9 +525,11 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     propio (`liylqznfyqvyppuupqra`), no el del equipo, con 003 y 004
     aplicadas por `deploy/vercel/aplicar_migraciones.py` (2026-10-19). En el
     proyecto del equipo no están aplicadas.
-  - **Túnel de la demo:** cloudflared rápido + `tunel_router.py` con prefijo
-    secreto. La URL cambia en cada arranque: hay que actualizar
-    `GATEWAY_COMERCIOS_JSON` en Vercel y redesplegar.
+  - **Túnel de la demo:** `bash deploy/vercel/tunel_demo.sh` levanta
+    `tunel_router.py` (prefijo secreto) y un túnel sin cuenta: cloudflared
+    rápido si la red deja salir al puerto 7844, y si no pinggy por SSH en el
+    443 (dura 60 min; el script lo reabre). La URL cambia en cada arranque: el
+    script actualiza `GATEWAY_COMERCIOS_JSON` en Vercel y redespliega.
   - **Prueba local sin Supabase:** `deploy/vercel/postgrest_local.py`,
     `local_multi.py` (balanceador por pedido, como Vercel) y
     `proxy/scripts/smoke_v1_pausas.py`.

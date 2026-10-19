@@ -25,7 +25,7 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 | `generar_secretos.py` | Clave del recibo, clave de integrador y los registros JSON, cada uno en su archivo. No imprime secretos |
 | `verificar_supabase.py` | Solo lectura: ¿están las tablas y columnas de las migraciones 003 y 004? |
 | `tunel_router.py` | Un solo puerto (:8090) para la simulación: `/a2a/*` al comercio, el resto al catálogo |
-| `tunel_demo.sh` | Un comando para la demo contra Vercel: enrutador + túnel rápido de cloudflared (sin cuenta), reescribe `GATEWAY_COMERCIOS_JSON` con la URL nueva y redespliega |
+| `tunel_demo.sh` | Un comando para la demo contra Vercel: enrutador + túnel sin cuenta (`TUNEL=auto`: cloudflared rápido si hay salida al puerto 7844; si no, pinggy por SSH en el 443, que dura 60 min y el script reabre solo). Reescribe `GATEWAY_COMERCIOS_JSON` con la URL nueva y redespliega |
 | `aplicar_migraciones.py` | 003 y 004 por la API de administración de Supabase, con `SUPABASE_ACCESS_TOKEN` |
 | `local_multi.py` | Vercel en tu máquina: N instancias de `index:app` y un balanceador por pedido en :8040 |
 | `postgrest_local.py` | PostgREST falso por HTTP en :54321 (las tablas `gw_*` en memoria): la prueba local **sin Supabase** |
