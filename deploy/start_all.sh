@@ -7,10 +7,13 @@
 #   dashboard            :8020  (/demo: el input de la compra; lo único que se
 #                                publica en un deploy)
 #
-#   bash deploy/start_all.sh                 # escenario notebook_honesto (guion de DEMO.md)
-#   bash deploy/start_all.sh B               # otro escenario (después se cambia desde /demo)
+#   bash deploy/start_all.sh                 # comercio general (cualquier pedido, cualquier día)
+#   bash deploy/start_all.sh general_inyeccion  # otro comportamiento del comercio
+#   bash deploy/start_all.sh notebook_honesto   # un escenario fijo (guion de DEMO.md)
 #
 # Todo habla por 127.0.0.1 como en local: no cambia nada de world/ ni del proxy.
+# Manda la ficha que confirma el usuario en /demo (PROXY_FICHA_DEMO=0, el
+# default del proxy) y las fechas son las de hoy.
 # Variables (además de las del .env de la raíz):
 #   DASHBOARD_PUBLIC_ORIGINS  deploy: https://<dominio público> del panel. Si
 #                             está, el panel escucha en 0.0.0.0.
@@ -19,10 +22,10 @@
 #   FILTRO_SOLO_HEURISTICAS   1 por defecto: con el modelo, el filtro corta el
 #                             desafío OTP del comercio honesto (DEMO.md)
 #   DEMO_PAUSA_AUTO_S         8 por defecto: plan gratuito de Gemini (0 si es pago)
-#   DEMO_HOY                  2026-10-18 por defecto: el "hoy" de nuestro agente.
-#                             Las ofertas de los escenarios tienen fechas fijas
-#                             (el domingo 2026-10-18): sin esto, "el lunes" de
-#                             otro día no coincide y el caso honesto no propone.
+#   DEMO_HOY                  sin fijar por defecto (hoy de verdad). Solo para
+#                             reproducir una grabación de un escenario fijo,
+#                             que tiene fechas fijas ("el lunes" es el
+#                             2026-10-19): DEMO_HOY=2026-10-18 PROXY_FICHA_DEMO=1.
 #   PROXY_MAX_SUSCRIPTORES_SSE 200 por defecto: cada pestaña del panel abre una
 #                             suscripción al proxy (con 20, la pestaña 21 se
 #                             queda sin eventos).
@@ -47,7 +50,10 @@
 
 set -euo pipefail
 
-ESCENARIO="${1:-notebook_honesto}"
+# El comercio general (preset "general" de scenarios.json): busca en su
+# dataset según el pedido, sin LLM. Los escenarios fijos quedan para el
+# benchmark, los tests y las grabaciones.
+ESCENARIO="${1:-general}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -58,7 +64,8 @@ if [ -f .temp-db/deploy.env ]; then set -a; source .temp-db/deploy.env; set +a; 
 export GUARD_FILTRO="${GUARD_FILTRO:-filtro:filtrar}"
 export FILTRO_SOLO_HEURISTICAS="${FILTRO_SOLO_HEURISTICAS:-1}"
 export DEMO_PAUSA_AUTO_S="${DEMO_PAUSA_AUTO_S:-8}"
-export DEMO_HOY="${DEMO_HOY:-2026-10-18}"
+# DEMO_HOY no se fija acá: si viene del .env o del entorno (una grabación),
+# el set -a de arriba ya la exporta.
 export PROXY_MAX_SUSCRIPTORES_SSE="${PROXY_MAX_SUSCRIPTORES_SSE:-200}"
 
 PY="world/ap2/.venv/bin/python"

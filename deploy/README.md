@@ -11,13 +11,33 @@ para integradores externos. Solo con un archivo de claves: ver
 
 | Script | Qué hace |
 |---|---|
-| `start_all.sh [escenario]` | Levanta todo en esta máquina con el agente pasando por el proxy, espera a que responda y, si un proceso muere, apaga todo. Logs en `.logs/`. Escenario por defecto `notebook_honesto`. Funciona en Linux, macOS y Windows con Git Bash. |
+| `start_all.sh [escenario]` | Levanta todo en esta máquina con el agente pasando por el proxy, espera a que responda y, si un proceso muere, apaga todo. Logs en `.logs/`. Escenario por defecto `general` (el comercio general: cualquier pedido, cualquier día). Funciona en Linux, macOS y Windows con Git Bash. |
 | `tenki.sh [escenario]` | Crea una VM en Tenki Sandbox, sube el código y el `.env`, instala dependencias, publica el :8020 (y el :8030 si hay archivo de claves) y corre `start_all.sh` adentro. |
 
 ## Local
 
 ```sh
-bash deploy/start_all.sh                 # → http://localhost:8020/demo
+bash deploy/start_all.sh                    # comercio general → http://localhost:8020/demo
+bash deploy/start_all.sh general_inyeccion  # otro comportamiento del comercio
+```
+
+Por defecto manda la ficha que confirma el usuario en `/demo`
+(`PROXY_FICHA_DEMO=0`) y las fechas son las de hoy (sin `DEMO_HOY`). Los
+escenarios fijos (`notebook_honesto`, `computadoras`, `B`…) quedan para el
+benchmark, los tests y las grabaciones. Para reproducir una grabación con su
+ficha y sus fechas fijas:
+
+```sh
+DEMO_HOY=2026-10-18 PROXY_FICHA_DEMO=1 bash deploy/start_all.sh computadoras
+```
+
+Para probar el gateway por `/v1` sin LLM de nuestro lado, con la demo
+levantada (usa el comercio :8001 y el catálogo :8011; arma su propio gateway
+con una clave temporal, sin abrir puertos):
+
+```sh
+PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/bin/python -m proxy.scripts.smoke_v1_general \
+    --pedido "un monitor de 27 pulgadas" --tope 400 --categoria 305
 ```
 
 ## Tenki Sandbox
@@ -65,7 +85,8 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
 | `GUARD_FILTRO` | `filtro:filtrar` | Filtro del proxy. |
 | `FILTRO_SOLO_HEURISTICAS` | `1` | Con el modelo, el filtro corta el desafío OTP del comercio honesto ([DEMO.md](../docs/DEMO.md)). |
 | `DEMO_PAUSA_AUTO_S` | `8` | Espacia las respuestas automáticas de `/demo` (plan gratuito de Gemini). `0` con una clave paga. |
-| `DEMO_HOY` | `2026-10-18` | El "hoy" del agente de intención. Las ofertas tienen fechas fijas ("el lunes" es el 19): sin esto, el caso honesto no propone en otro día. |
+| `DEMO_HOY` | — | Sin fijar: hoy de verdad (el comercio general arma las fechas desde hoy). Solo para reproducir una grabación de un escenario fijo, que tiene fechas fijas ("el lunes" es el 2026-10-19): `DEMO_HOY=2026-10-18`, junto con `PROXY_FICHA_DEMO=1`. |
+| `PROXY_FICHA_DEMO` | `0` | `0`: manda la ficha que confirmó el usuario. `1`: la del escenario fijo (grabaciones, benchmark por el proxy, `smoke_checkout.py`). |
 | `PROXY_MAX_SUSCRIPTORES_SSE` | `200` | Suscriptores de `/guard/events` a la vez. Cada pestaña del panel abre una: con el default del proxy (20), la pestaña 21 se queda sin eventos. |
 
 El `.env` de la raíz viaja a la VM tal cual (necesita `GOOGLE_API_KEY`; las
