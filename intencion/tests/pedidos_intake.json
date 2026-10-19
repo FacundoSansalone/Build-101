@@ -1,5 +1,5 @@
 {
-  "_comentario": "Set de pedidos para medir el intake (python -m intencion.evaluar_intake). Hoy es el domingo 2026-10-18. 'respuestas' son las del usuario simulado, en orden: contesta la primera pregunta con la primera, cada repregunta con la siguiente, y confirma la ficha cuando se la piden (si se queda sin respuestas, omite). 'turno0': estado esperado de cada parámetro con el pedido solo (una lista = cualquiera de esos). 'final': valor esperado después de confirmar ('fuera_de_catalogo', null = sin plazo, 'faltante' = sigue faltando). 'repreguntas': preguntas por lo que falta después de la primera. 'menciones': atributos que tienen que quedar en la ficha ('campo' o 'atributo:nombre' → valor, o {valor, obligatorio}). 'cronograma': lo que necesita, por fecha.",
+  "_comentario": "Set de pedidos para medir el intake (python -m intencion.evaluar_intake). Hoy es el domingo 2026-10-18. 'respuestas' son las del usuario simulado, en orden: contesta la primera pregunta con la primera, cada repregunta con la siguiente, y confirma la ficha cuando se la piden (si se queda sin respuestas, omite). 'turno0': estado esperado de cada parámetro con el pedido solo (una lista = cualquiera de esos). 'final': valor esperado después de confirmar ('fuera_de_catalogo', null = sin plazo, 'faltante' = sigue faltando). 'repreguntas': preguntas por lo que falta después de la primera. 'menciones': atributos que tienen que quedar en la ficha ('campo' o 'atributo:nombre' → valor, o {valor, obligatorio}). 'cronograma': lo que necesita, por fecha. Un caso puede traer su 'hoy' y sus 'categorias' (los del 2026-10-19, un lunes, con el catálogo del comercio general). Una categoría con un ID ('278') es la de la taxonomía de Google que nombró el usuario (un tipo general, como 'computadoras').",
   "hoy": "2026-10-18",
   "categorias": ["basketball_shoes", "lifestyle_sneakers", "running_shoes", "laptops", "headphones"],
   "casos": [
@@ -38,7 +38,7 @@
       "pedido": "Comprame 20 computadoras para el lunes, hasta 20000 USD.",
       "respuestas": ["Entran 10 trabajadores el lunes y otros 10 el jueves."],
       "turno0": {"categoria": ["resuelto", "a_confirmar"], "cantidad": "resuelto", "precio": "resuelto", "moneda": "resuelto", "plazo": "resuelto"},
-      "final": {"categoria": ["laptops", "fuera_de_catalogo"], "cantidad": 20, "precio": 20000, "moneda": "USD", "plazo": "2026-10-19"},
+      "final": {"categoria": ["278", "fuera_de_catalogo"], "cantidad": 20, "precio": 20000, "moneda": "USD", "plazo": "2026-10-19"},
       "repreguntas": 0,
       "cronograma": [[10, "2026-10-19"], [10, "2026-10-22"]]
     },
@@ -85,7 +85,7 @@
       "tipo": "ambiguo",
       "pedido": "I want new shoes, around $100.",
       "respuestas": ["To go running in the park.", "By Friday."],
-      "turno0": {"categoria": ["faltante", "a_confirmar"], "cantidad": ["a_confirmar", "resuelto"], "precio": ["resuelto", "a_confirmar"], "moneda": ["a_confirmar", "faltante"], "plazo": "faltante"},
+      "turno0": {"categoria": ["resuelto", "a_confirmar"], "cantidad": ["a_confirmar", "resuelto"], "precio": ["resuelto", "a_confirmar"], "moneda": ["a_confirmar", "faltante"], "plazo": "faltante"},
       "final": {"categoria": "running_shoes", "cantidad": 1, "precio": 100, "moneda": "USD", "plazo": "2026-10-23"},
       "repreguntas": 1
     },
@@ -117,6 +117,63 @@
       "final": {"categoria": "running_shoes", "cantidad": 1, "precio": 120, "moneda": "USD", "plazo": "2026-10-23"},
       "repreguntas": 0,
       "menciones": {"marca": {"valor": "Adidas", "obligatorio": false}, "talle": 10}
+    },
+    {
+      "id": "demo_computadoras_lunes_es",
+      "tipo": "completo",
+      "hoy": "2026-10-19",
+      "categorias": ["desktops", "laptops", "tablets", "backpacks", "coffee_makers", "desks", "digital_cameras", "game_consoles", "hard_drives", "headphones", "headsets", "keyboards", "mice", "mobile_phones", "monitors", "office_chairs", "printers", "projectors", "routers", "shoes", "speakers", "televisions", "usb_drives", "webcams"],
+      "pedido": "Comprame 20 computadoras para el lunes, hasta 20000 USD. / 20 computadoras por un total de 20000 USD",
+      "respuestas": ["Entran 10 trabajadores el lunes y otros 10 el jueves."],
+      "turno0": {"categoria": "resuelto", "cantidad": "resuelto", "precio": ["resuelto", "a_confirmar", "faltante"], "moneda": "resuelto", "plazo": ["resuelto", "a_confirmar"]},
+      "final": {"categoria": "278", "cantidad": 20, "precio": 20000, "moneda": "USD", "plazo": "2026-10-26"},
+      "repreguntas": 0,
+      "cronograma": [[10, "2026-10-26"], [10, "2026-10-29"]]
+    },
+    {
+      "id": "computadoras_sin_tope_lunes_es",
+      "tipo": "incompleto",
+      "hoy": "2026-10-19",
+      "categorias": ["desktops", "laptops", "tablets", "backpacks", "coffee_makers", "desks", "digital_cameras", "game_consoles", "hard_drives", "headphones", "headsets", "keyboards", "mice", "mobile_phones", "monitors", "office_chairs", "printers", "projectors", "routers", "shoes", "speakers", "televisions", "usb_drives", "webcams"],
+      "pedido": "Comprame 20 computadoras para el lunes.",
+      "respuestas": ["Entran 10 trabajadores el lunes y otros 10 el jueves.", "Hasta 20000 dólares en total."],
+      "turno0": {"categoria": "resuelto", "cantidad": "resuelto", "precio": "faltante", "moneda": "faltante", "plazo": ["resuelto", "a_confirmar"]},
+      "final": {"categoria": "278", "cantidad": 20, "precio": 20000, "moneda": "USD", "plazo": "2026-10-26"},
+      "repreguntas": 1,
+      "cronograma": [[10, "2026-10-26"], [10, "2026-10-29"]]
+    },
+    {
+      "id": "camaras_general_es",
+      "tipo": "completo",
+      "hoy": "2026-10-19",
+      "categorias": ["desktops", "laptops", "tablets", "backpacks", "coffee_makers", "desks", "digital_cameras", "game_consoles", "hard_drives", "headphones", "headsets", "keyboards", "mice", "mobile_phones", "monitors", "office_chairs", "printers", "projectors", "routers", "shoes", "speakers", "televisions", "usb_drives", "webcams"],
+      "pedido": "Necesito 3 cámaras para la oficina, hasta 900 dólares en total, para el viernes.",
+      "respuestas": ["Son para las salas de reuniones."],
+      "turno0": {"categoria": "resuelto", "cantidad": "resuelto", "precio": ["resuelto", "a_confirmar"], "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "142", "cantidad": 3, "precio": 900, "moneda": "USD", "plazo": "2026-10-23"},
+      "repreguntas": 0
+    },
+    {
+      "id": "computers_general_en",
+      "tipo": "completo",
+      "hoy": "2026-10-19",
+      "categorias": ["desktops", "laptops", "tablets", "backpacks", "coffee_makers", "desks", "digital_cameras", "game_consoles", "hard_drives", "headphones", "headsets", "keyboards", "mice", "mobile_phones", "monitors", "office_chairs", "printers", "projectors", "routers", "shoes", "speakers", "televisions", "usb_drives", "webcams"],
+      "pedido": "Buy me 5 computers by Friday, max 6000 USD total.",
+      "respuestas": ["They are for the new interns."],
+      "turno0": {"categoria": "resuelto", "cantidad": "resuelto", "precio": "resuelto", "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "278", "cantidad": 5, "precio": 6000, "moneda": "USD", "plazo": "2026-10-23"},
+      "repreguntas": 0
+    },
+    {
+      "id": "corrige_plazo_es",
+      "tipo": "completo",
+      "hoy": "2026-10-19",
+      "categorias": ["desktops", "laptops", "tablets", "backpacks", "coffee_makers", "desks", "digital_cameras", "game_consoles", "hard_drives", "headphones", "headsets", "keyboards", "mice", "mobile_phones", "monitors", "office_chairs", "printers", "projectors", "routers", "shoes", "speakers", "televisions", "usb_drives", "webcams"],
+      "pedido": "Comprame 2 monitores para el viernes, hasta 500 dólares en total.",
+      "respuestas": ["Son para la oficina. Mejor para el lunes, el viernes no hay nadie."],
+      "turno0": {"categoria": "resuelto", "cantidad": "resuelto", "precio": ["resuelto", "a_confirmar"], "moneda": "resuelto", "plazo": "resuelto"},
+      "final": {"categoria": "monitors", "cantidad": 2, "precio": 500, "moneda": "USD", "plazo": "2026-10-26"},
+      "repreguntas": 0
     }
   ]
 }

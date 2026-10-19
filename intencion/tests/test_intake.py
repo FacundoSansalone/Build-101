@@ -557,17 +557,21 @@ def test_lo_resuelto_antes_no_se_pierde_si_el_modelo_duda_despues():
     assert "precio" in interpretar(ahora, cands, CATEGORIAS, 1).faltan
 
 
-def test_si_el_modelo_elige_otro_valor_vale_el_nuevo():
+def test_otro_valor_vale_solo_si_el_usuario_lo_corrige():
     cands = extraer(["hasta 200 dólares", "no, mejor hasta 250"], HOY)
     antes = interpretar(
         {"precio": eleccion("precio", clave_de(cands.montos, 200.0), 0.95)}, cands, CATEGORIAS, 0
     )
+    corrige = {"corrige_precio": predicado("corrige_precio", 0.9)}
     ahora = {"precio": eleccion("precio", clave_de(cands.montos, 250.0), 0.55, no_dicho=0.45)}
-    precio = _parametro(interpretar(ahora, cands, CATEGORIAS, 1, anterior=antes), "precio")
-    assert precio.estado == "faltante"  # dudoso y distinto: se vuelve a preguntar
+    r = interpretar({**ahora, **corrige}, cands, CATEGORIAS, 1, anterior=antes)
+    assert _parametro(r, "precio").estado == "faltante"  # corrige con un valor dudoso: se repregunta
     ahora = {"precio": eleccion("precio", "no_dicho", 0.9)}
+    r = interpretar({**ahora, **corrige}, cands, CATEGORIAS, 1, anterior=antes)
+    assert _parametro(r, "precio").estado == "faltante"  # dice que está mal y no da otro
+    # Sin corrección, "no dicho" no borra lo que dijo (ver test_intake_regresiones).
     precio = _parametro(interpretar(ahora, cands, CATEGORIAS, 1, anterior=antes), "precio")
-    assert precio.estado == "faltante"  # "no dicho" claro: el modelo ya no lo ve
+    assert (precio.estado, precio.valor) == ("resuelto", 200.0)
 
 
 # -- 4. qué pregunta sigue ----------------------------------------------------------

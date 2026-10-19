@@ -111,13 +111,43 @@ defecto si hay `OPENAI_API_KEY` o `TYPESAFE_API_KEY`
 (`INTENCION_PROVEEDOR=decisiones|gemini`, ver
 [proxy/README.md](../proxy/README.md#etapa-2-contexto-filtro-y-oportunidad)).
 
-**Necesarios:** producto (categoría del catálogo, o "fuera del catálogo
-público"), cantidad, tope de precio y moneda, plazo. Además, los atributos
-que el usuario mencionó (marca, talle, memoria, color, inalámbrico…), con si
-los exige o los prefiere. Un producto fuera del catálogo no es un error: la
-confirmación dice que no figura en el catálogo público y que lo que declare
-el comercio se verifica con otras fuentes antes de la firma (lo obligatorio
-que no se pueda verificar, el Guard lo escala).
+**Necesarios:** producto (categoría del catálogo, un tipo general de la
+taxonomía de Google, o "fuera del catálogo público"), cantidad, tope de
+precio y moneda, plazo. Además, los atributos que el usuario mencionó
+(marca, talle, memoria, color, inalámbrico…), con si los exige o los
+prefiere. Un producto fuera del catálogo no es un error: la confirmación
+dice que no figura en el catálogo público y que lo que declare el comercio
+se verifica con otras fuentes antes de la firma (lo obligatorio que no se
+pueda verificar, el Guard lo escala).
+
+**Un tipo general es un producto.** "computadoras" no es una categoría del
+catálogo del comercio general (laptops, desktops, tablets…), pero sí de la
+taxonomía (278, padre de 328, 325 y 4745); "cámaras" (142) frente a webcams
+y cámaras digitales, igual. El código encuentra la categoría que nombra el
+usuario (`taxonomia.palabras.nombradas`: sin modelo, y sin los complementos
+ni los modificadores: "una mochila para la notebook" es una mochila, "un
+cargador de notebook" y "a laptop charger" no nombran ninguna, pero "un par
+de zapatillas" sí) y la de cada categoría del catálogo
+(`intake.taxonomia_de_categoria`: el nombre del árbol, la tabla de palabras,
+o un nombre del árbol con todas sus palabras). Si la del usuario es más
+general que alguna del catálogo, el modelo ve la opción `general`; y queda
+**resuelta y dicha**, con el ID de la taxonomía en `Parametro.eleccion` (el
+valor es la palabra, "computadoras") y **sin requisito** (la rama la
+verifica el Guard con `Ficha.categoria_taxonomia`), cuando:
+
+- el modelo elige `general`;
+- el modelo elige una del catálogo que achica lo que dijo (laptops para
+  "computadoras") y ninguna palabra del usuario nombra esa ni una de su rama
+  ("notebooks" sí: entonces vale laptops, con su requisito);
+- el modelo no reconoce el producto (`no_dicha`, o duda dentro de esa
+  rama) y el usuario lo nombró. Si el modelo apunta a otra cosa, aunque dude
+  (fuera del catálogo, otra rama), no se fuerza. Si el usuario acaba de
+  corregir el producto, vale la que nombra su última respuesta (o ninguna:
+  se repregunta). Si es ajena a todo el catálogo (y se sabe la de todas),
+  queda fuera del catálogo.
+
+`fuera_de_catalogo` es un juicio del modelo y no se pisa ("un cargador para
+la computadora").
 
 **El pedido:** la búsqueda del agente del cliente o, en `/demo`, las
 palabras del usuario más esa búsqueda (`"<usuario> / <búsqueda>"`, ver
@@ -140,8 +170,48 @@ valor elegido (las opciones que dan el mismo valor se suman):
 | 0,60 a 0,80 | a confirmar | a confirmar |
 | < 0,60, o "no dicho" | faltante: se repregunta | faltante |
 
-Si el modelo sigue eligiendo un valor ya resuelto en un turno anterior, su
-probabilidad no baja de la de antes (memoria entre turnos).
+**Memoria entre turnos** (el turno anterior; si no está en la caché del
+agente, se recalcula):
+
+- si el modelo sigue eligiendo el mismo valor, su probabilidad no baja de la
+  de antes;
+- **lo que el usuario dijo y quedó resuelto no se pierde** porque una
+  respuesta posterior no lo mencione. Visto de punta a punta el 2026-10-19:
+  el plazo (lunes 26) pasó a faltante ante "Entran 10 trabajadores el lunes y
+  otros 10 el jueves", la ficha se confirmó sin plazo y el Guard aprobó una
+  oferta que llegaba tarde. Cambia solo si el usuario **lo corrige**: con un
+  turno anterior, por cada necesario resuelto se pregunta
+  `corrige_<parámetro>` ("¿en su última respuesta lo corrige o lo cambia?") y
+  hace falta ≥ 0,80; sin eso, ni "no dicho" ni otro valor lo pisan. También
+  si lo **precisa**: una categoría dentro de la rama de la anterior
+  ("computadoras" → laptops) o, después de "fuera del catálogo", una que
+  nombran sus palabras (no basta con que la elija el modelo);
+- lo que estaba a confirmar no lo borra un "no dicho": un valor nuevo claro
+  (≥ 0,60) lo reemplaza;
+- se recuerda lo elegido (`Parametro.eleccion`), no lo derivado: del precio,
+  el monto y si es por unidad (con la cantidad corregida, el total se
+  recalcula); del plazo, la fecha (las entregas usan la cantidad de ahora).
+  Un plazo exigido no pasa a preferido sin corrección (una firmeza clara
+  solo lo vuelve más estricto);
+- un atributo resuelto (marca, talle…) tampoco se pierde por una duda del
+  modelo ni baja por una firmeza dudosa: solo un "no" claro (≤ 0,20; la
+  pregunta dice "si lo descartó, lo negó o lo corrigió") lo saca.
+
+**Fechas:** un día de la semana es el próximo, nunca hoy: dicho un lunes,
+"el lunes" es el de la semana que viene, igual en el pedido y en las
+respuestas (y que en el comercio, `demo_world.consulta`). En una misma
+oración, un día que viene después de otra fecha y caería hasta 6 días antes
+que ella es el de la semana siguiente: dicho un lunes, "10 el lunes y otros
+10 el jueves" es el 26 y el 29, no el 22 (el cronograma usa las fechas de la
+respuesta entera). No se corre entre oraciones, ante una alternativa ("el
+viernes, si no el miércoles") ni por una fecha lejana: ahí queda el próximo,
+del lado estricto. Con decisiones real, "para el lunes" dicho un lunes queda
+a veces a confirmar (0,59 a 0,88): es ambiguo, y la confirmación lo muestra.
+
+**El tope:** la pregunta no ofrece los números de cosas ("20 computadoras",
+"10 unidades": un producto de la tabla o una palabra de cantidad después),
+que nunca son el tope. Con "20" entre las opciones, "hasta 20000 USD"
+quedaba en 0,59 con decisiones real; sin ella, 0,80 a 0,95.
 
 **Preguntas:** todas con plantilla (es/en según el pedido); el modelo no
 redacta nada. La primera es el porqué más lo que falte; después, "me falta
@@ -173,18 +243,29 @@ candidatos del código. La detección de oportunidades se delega en
 ```sh
 # sin red: cobertura de candidatos y repetición de lo grabado
 PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m intencion.evaluar_intake --calibrar
-# contra decisiones real (hasta --max-llamadas, 30 por defecto; graba las respuestas)
+# contra decisiones real (hasta --max-llamadas, 40 por defecto; graba las respuestas)
 RUN_DECISIONES_TESTS=1 PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python \
   -m intencion.evaluar_intake --env-file .env
 ```
 
-Set: [`tests/pedidos_intake.json`](tests/pedidos_intake.json), 12 pedidos
+Set: [`tests/pedidos_intake.json`](tests/pedidos_intake.json), 17 pedidos
 en castellano e inglés (zapatillas, notebooks, auriculares, fuera de
-catálogo; completos, incompletos y ambiguos). Respuestas grabadas:
+catálogo; completos, incompletos y ambiguos). Cinco son del 2026-10-19, un
+lunes, con el catálogo del comercio general (cada caso puede traer su `hoy`
+y sus `categorias`): computadoras y cámaras como tipo general, el pedido de
+la prueba de punta a punta, uno sin tope que se repregunta y una corrección
+del plazo. Respuestas grabadas:
 [`tests/respuestas_decisiones.json`](tests/respuestas_decisiones.json).
 
-Resultado con OpenAI Decisions (`gpt-6-luna`, 2026-10-18, 30 llamadas):
-estado en el turno 0 (preguntar o no) 60/60, **0 resueltos con valor
+Resultado con OpenAI Decisions (`gpt-6-luna`, 2026-10-19, 39 llamadas):
+17/17 casos perfectos, valores finales 85/85, **0 resueltos con valor
+equivocado**, repreguntas 5 de 5, cronograma 4/4, turno 0 84/85 (el de más:
+"para el lunes" dicho un lunes, 0,59), latencia 0,46 s de media (máx.
+0,78 s). Las preguntas de corrección: 0,88 en la corrección real ("Mejor
+para el lunes"), ≤ 0,18 en el resto. Los umbrales siguen en 0,80 y 0,60
+(`--calibrar`: de 0,70 a 0,85 en `resuelto` da lo mismo).
+
+Antes (2026-10-18, 12 casos, 30 llamadas): estado en el turno 0 (preguntar o no) 60/60, **0 resueltos con valor
 equivocado**, 11/12 casos perfectos (el 12.º sin grabar más allá del turno 0
 por el tope de llamadas), repreguntas 3 de 4 esperadas (la que falta es la
 del caso sin grabar), latencia por llamada 0,53 s de media (máx. 0,75 s).
