@@ -10,6 +10,7 @@ ADK y proxy falsos con `httpx.MockTransport`; datos sintéticos de test.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -149,7 +150,7 @@ def _escribir_token(repo: Path) -> None:
 
 
 def _app(tmp_path: Path, adk: FakeADK | None = None, proxy: FakeProxy | None = None,
-         auto: bool = True):
+         auto: bool = True, fijos: bool = False):
     adk = adk or FakeADK()
     proxy = proxy or FakeProxy()
     cfg = Config(
@@ -157,6 +158,7 @@ def _app(tmp_path: Path, adk: FakeADK | None = None, proxy: FakeProxy | None = N
         proxy_transport=httpx.MockTransport(proxy.handler),
         adk_transport=httpx.MockTransport(adk.handler),
         world_temp_dir=tmp_path / "world-temp", demo_auto=auto,
+        demo_escenarios_fijos=fijos,
     )
     return create_app(cfg)
 
@@ -653,33 +655,164 @@ def test_nueva_compra_es_una_sesion_nueva(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_escenarios_agrupados_por_categoria(tmp_path):
+GENERALES = [
+    "general", "general_inyeccion", "general_otra_categoria", "general_dato_falso",
+    "general_miente_categoria", "general_precio_inflado", "general_entrega_partes",
+    "general_entrega_partes_inyeccion", "general_sin_stock", "general_sin_resultados",
+]
+FIJOS = [
+    "baseline", "B", "B2", "C", "notebook_honesto", "notebook_malicioso", "notebook_dato_falso",
+    "auriculares_honesto", "auriculares_malicioso", "computadoras", "computadoras_malicioso",
+]
+
+
+@pytest.fixture
+def mundo(monkeypatch):
+    """El mundo con el comercio general y los escenarios fijos (lo que conoce
+    `demo_world`), sin depender de la copia de world/ que tenga el entorno."""
+
+    def fijar(escenarios=(*GENERALES, *FIJOS), generales=GENERALES):
+        monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: set(escenarios))
+        monkeypatch.setattr(demo, "_generales_del_mundo", lambda: list(generales))
+
+    fijar()
+    return fijar
+
+
+def _grupos(c: TestClient) -> dict[str, list[tuple[str, str]]]:
+    datos = c.get("/api/demo/escenarios").json()
+    return {g["categoria"]: [(o["id"], o["etiqueta"]) for o in g["opciones"]] for g in datos["grupos"]}
+
+
+def test_el_selector_ofrece_los_comportamientos_del_comercio_general(tmp_path, mundo):
     with TestClient(_app(tmp_path), base_url=BASE) as c:
         datos = c.get("/api/demo/escenarios").json()
-    categorias = {g["categoria"]: [o["id"] for o in g["opciones"]] for g in datos["grupos"]}
-    assert categorias["Zapatillas"] == ["baseline", "B", "B2", "C"]
-    assert categorias["Notebook"] == ["notebook_honesto", "notebook_malicioso", "notebook_dato_falso"]
-    assert categorias["Auriculares"] == ["auriculares_honesto", "auriculares_malicioso"]
-    etiquetas = {o["id"]: o["etiqueta"] for g in datos["grupos"] for o in g["opciones"]}
-    assert etiquetas["notebook_dato_falso"] == "miente un dato"
-    assert etiquetas["B"] == "inyección" and etiquetas["C"] == "precio inflado"
+    (grupo,) = datos["grupos"]  # sin DEMO_ESCENARIOS_FIJOS, solo el comercio general
+    assert grupo["categoria"] == "Comportamiento del comercio" and grupo["tipo"] == "general"
+    assert [(o["id"], o["etiqueta"]) for o in grupo["opciones"]] == [
+        ("general", "Honesto"),
+        ("general_inyeccion", "Inyección en la oferta"),
+        ("general_otra_categoria", "Ofrece otra categoría a tiempo"),
+        ("general_dato_falso", "Miente un dato"),
+        ("general_miente_categoria", "Miente la categoría"),
+        ("general_precio_inflado", "Precio inflado"),
+        ("general_entrega_partes", "Entrega en partes"),
+        ("general_entrega_partes_inyeccion", "Entrega en partes + inyección"),
+        ("general_sin_stock", "Sin stock suficiente"),
+        ("general_sin_resultados", "Sin resultados"),
+    ]
+    honestos = {o["id"]: o["honesto"] for o in grupo["opciones"]}
+    assert honestos["general"] is True and honestos["general_entrega_partes"] is True
+    assert honestos["general_inyeccion"] is False and honestos["general_dato_falso"] is False
+    assert honestos["general_sin_resultados"] is None
+    # El comercio general responde a cualquier pedido: no hay pedido de ejemplo.
+    assert {o["pedido"] for o in grupo["opciones"]} == {None}
     assert datos["activo"] is None
 
 
-def test_el_pedido_de_ejemplo_sale_de_los_fixtures(tmp_path):
+def test_las_sugerencias_de_pedido_no_dependen_del_escenario_ni_de_una_fecha(tmp_path, mundo):
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        sugerencias = c.get("/api/demo/escenarios").json()["sugerencias"]
+        _post(c, "/api/demo/escenario", {"escenario": "general_inyeccion"})
+        assert c.get("/api/demo/escenarios").json()["sugerencias"] == sugerencias
+    textos = [s["texto"] for s in sugerencias]
+    assert len(textos) == 4 and all(s["etiqueta"] for s in sugerencias)
+    assert "monitor de 27 pulgadas" in textos[0] and "400 USD" in textos[0] and "viernes" in textos[0]
+    assert "20 computadoras" in textos[1] and "lunes" in textos[1] and "20000 USD" in textos[1]
+    assert "cancelación de ruido" in textos[2] and "150 USD" in textos[2]
+    assert "talle 42" in textos[3] and "correr" in textos[3] and "120 USD" in textos[3]
+    for texto in textos:  # días de la semana, nunca una fecha fija
+        assert 0 < len(texto) <= demo.MAX_TEXTO
+        assert not re.search(r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}", texto), texto
+
+
+def test_los_escenarios_fijos_solo_con_demo_escenarios_fijos(tmp_path, mundo):
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert list(_grupos(c)) == ["Comportamiento del comercio"]
+        r = _post(c, "/api/demo/escenario", {"escenario": "B"})
+        assert r.status_code == 400 and "B" not in r.json()["opciones"]
+    assert not (tmp_path / "world-temp" / "demo_scenario").exists()
+    with TestClient(_app(tmp_path, fijos=True), base_url=BASE) as c:
+        grupos = _grupos(c)
+        assert list(grupos) == ["Comportamiento del comercio", "Escenarios fijos (prueba)"]
+        assert [e for e, _ in grupos["Escenarios fijos (prueba)"]] == FIJOS
+        etiquetas = dict(grupos["Escenarios fijos (prueba)"])
+        assert etiquetas["notebook_dato_falso"] == "Notebook · miente un dato"
+        assert etiquetas["B"] == "Zapatillas · inyección" and etiquetas["C"] == "Zapatillas · precio inflado"
+        assert etiquetas["computadoras"] == "Computadoras · entrega en dos partes"
+        assert _post(c, "/api/demo/escenario", {"escenario": "B"}).status_code == 200
+
+
+def test_sin_el_comercio_general_en_el_mundo_no_se_ofrece(tmp_path, mundo):
+    """Mientras world/ no tenga los presets generales, no aparecen (y elegirlos
+    da 400). Sin DEMO_ESCENARIOS_FIJOS, el selector queda vacío."""
+    mundo(escenarios=FIJOS, generales=[])
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert c.get("/api/demo/escenarios").json()["grupos"] == []
+        assert _post(c, "/api/demo/escenario", {"escenario": "general"}).status_code == 400
+    with TestClient(_app(tmp_path, fijos=True), base_url=BASE) as c:
+        assert list(_grupos(c)) == ["Escenarios fijos (prueba)"]
+    # Solo algunos presets: los que el mundo conoce, en el mismo orden.
+    mundo(escenarios=["general_dato_falso", "general"], generales=["general_dato_falso", "general"])
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert _grupos(c)["Comportamiento del comercio"] == [
+            ("general", "Honesto"), ("general_dato_falso", "Miente un dato"),
+        ]
+
+
+def test_un_preset_general_nuevo_del_mundo_aparece_con_un_nombre_legible(tmp_path, mundo):
+    """Un comportamiento que world/ suma (`"tipo": "general"`) sin etiqueta acá
+    se ofrece igual, con el nombre armado desde su id."""
+    mundo(escenarios=[*GENERALES, "general_entrega_tarde"], generales=[*GENERALES, "general_entrega_tarde", "../x"])
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        opciones = _grupos(c)["Comportamiento del comercio"]
+        assert opciones[-1] == ("general_entrega_tarde", "Entrega tarde")
+        assert all(e != "../x" for e, _ in opciones)
+        assert _post(c, "/api/demo/escenario", {"escenario": "general_entrega_tarde"}).status_code == 200
+
+
+def test_sin_demo_world_se_ofrece_la_lista_entera(tmp_path, monkeypatch):
+    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: None)
+    monkeypatch.setattr(demo, "_generales_del_mundo", lambda: [])
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        assert [e for e, _ in _grupos(c)["Comportamiento del comercio"]] == GENERALES
+    with TestClient(_app(tmp_path, fijos=True), base_url=BASE) as c:
+        assert ("computadoras_malicioso", "Computadoras · inyección") in _grupos(c)["Escenarios fijos (prueba)"]
+
+
+def test_el_pedido_de_ejemplo_sale_de_los_fixtures_solo_en_los_fijos(tmp_path, mundo):
     (tmp_path / "fixtures" / "etapa2").mkdir(parents=True)
     (tmp_path / "fixtures" / "etapa2" / "notebook_honesto.json").write_text(
         json.dumps({"intent": {"user_request": "pedido de test de notebook"}}), encoding="utf-8")
-    with TestClient(_app(tmp_path), base_url=BASE) as c:
+    # Aunque haya un fixture con ese nombre, un preset general no tiene pedido de ejemplo.
+    (tmp_path / "fixtures" / "scenario_general.json").write_text(
+        json.dumps({"intent": {"user_request": "no se usa"}}), encoding="utf-8")
+    assert demo._pedido_de_ejemplo(Config(repo_root=tmp_path), "general") is None
+    with TestClient(_app(tmp_path, fijos=True), base_url=BASE) as c:
         datos = c.get("/api/demo/escenarios").json()
     pedidos = {o["id"]: o["pedido"] for g in datos["grupos"] for o in g["opciones"]}
     assert pedidos["notebook_honesto"] == "pedido de test de notebook"
-    assert pedidos["B"] is None
+    assert pedidos["B"] is None and pedidos["general"] is None
 
 
-def test_cambiar_el_escenario_escribe_el_archivo_del_comercio_y_empieza_otra_compra(tmp_path):
+def test_los_nombres_alcanzan_para_el_escenario_activo_aunque_no_se_ofrezca(tmp_path, mundo):
+    """El comercio puede tener activo un escenario fijo (`run_world.sh B`)
+    aunque el selector no lo muestre: la página igual sabe cómo nombrarlo."""
+    carpeta = tmp_path / "world-temp"
+    carpeta.mkdir()
+    (carpeta / "demo_scenario").write_text("B", encoding="utf-8")
+    with TestClient(_app(tmp_path), base_url=BASE) as c:
+        datos = c.get("/api/demo/escenarios").json()
+    assert datos["activo"] == "B"
+    assert datos["nombres"]["B"] == {"etiqueta": "Zapatillas · inyección", "tipo": "fijo", "pedido": None}
+    assert datos["nombres"]["general_precio_inflado"] == {
+        "etiqueta": "Precio inflado", "tipo": "general", "pedido": None,
+    }
+
+
+def test_cambiar_el_escenario_escribe_el_archivo_del_comercio_y_empieza_otra_compra(tmp_path, mundo):
     adk = FakeADK()
-    with TestClient(_app(tmp_path, adk=adk), base_url=BASE) as c:
+    with TestClient(_app(tmp_path, adk=adk, fijos=True), base_url=BASE) as c:
         _post(c, "/api/demo/mensaje", {"texto": "uno"})
         _esperar(c)
         r = _post(c, "/api/demo/escenario", {"escenario": "notebook_dato_falso"})
@@ -690,6 +823,9 @@ def test_cambiar_el_escenario_escribe_el_archivo_del_comercio_y_empieza_otra_com
         assert estado["escenario"] == "notebook_dato_falso"
         assert estado["mensajes"] == [] and estado["sesion"]["id"] is None
         assert c.get("/api/demo/escenarios").json()["activo"] == "notebook_dato_falso"
+        # Un comportamiento del comercio general, igual.
+        r = _post(c, "/api/demo/escenario", {"escenario": "general_entrega_partes"})
+        assert r.status_code == 200 and archivo.read_text(encoding="utf-8") == "general_entrega_partes"
 
 
 @pytest.mark.parametrize("malo", [
@@ -804,17 +940,23 @@ def test_config_de_la_demo_desde_el_entorno(monkeypatch):
     monkeypatch.setenv("DEMO_AUTO", "0")
     monkeypatch.setenv("WORLD_TEMP_DB_DIR", "otra/carpeta")
     monkeypatch.setenv("DEMO_PAUSA_AUTO_S", "6")
+    monkeypatch.setenv("DEMO_ESCENARIOS_FIJOS", "1")
     cfg = config_desde_entorno()
     assert cfg.adk_url == "http://127.0.0.1:9000"
     assert cfg.demo_auto is False
+    assert cfg.demo_escenarios_fijos is True
     assert cfg.demo_pausa_auto_s == 6.0
     assert cfg.world_temp_dir.is_absolute() and cfg.world_temp_dir.name == "carpeta"
     monkeypatch.delenv("ADK_URL")
     monkeypatch.delenv("DEMO_AUTO")
     monkeypatch.delenv("WORLD_TEMP_DB_DIR")
     monkeypatch.setenv("DEMO_PAUSA_AUTO_S", "no-es-un-numero")
+    monkeypatch.setenv("DEMO_ESCENARIOS_FIJOS", "0")
     cfg = config_desde_entorno()
     assert cfg.adk_url == "http://127.0.0.1:8000" and cfg.demo_auto is True
+    assert cfg.demo_escenarios_fijos is False
+    monkeypatch.delenv("DEMO_ESCENARIOS_FIJOS")
+    assert config_desde_entorno().demo_escenarios_fijos is False  # por defecto, apagado
     assert cfg.demo_pausa_auto_s == 0.0
     assert cfg.world_temp_dir.parts[-3:] == ("world", "ap2", ".temp-db")
 
@@ -888,42 +1030,6 @@ def test_la_ruta_y_el_tope_del_pedido_son_los_del_proxy():
 
     assert demo.RUTA_PEDIDO_USUARIO in RUTAS_POST_CONTROL  # con token, Host local y JSON
     assert demo.MAX_TEXTO <= LARGO_MAXIMO  # todo lo que acepta el input entra
-
-
-# ---------------------------------------------------------------------------
-# Computadoras con proveedor malicioso (el escenario lo agrega world/)
-# ---------------------------------------------------------------------------
-
-
-def _opciones(c: TestClient) -> dict[str, list[tuple[str, str]]]:
-    datos = c.get("/api/demo/escenarios").json()
-    return {g["categoria"]: [(o["id"], o["etiqueta"]) for o in g["opciones"]] for g in datos["grupos"]}
-
-
-def test_computadoras_con_inyeccion_si_el_mundo_lo_conoce(tmp_path, monkeypatch):
-    conocidos = {e for _, opciones in demo.GRUPOS for e, _ in opciones}
-    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: conocidos)
-    with TestClient(_app(tmp_path), base_url=BASE) as c:
-        assert _opciones(c)["Computadoras"] == [
-            ("computadoras", "entrega en dos partes"), ("computadoras_malicioso", "inyección"),
-        ]
-        r = _post(c, "/api/demo/escenario", {"escenario": "computadoras_malicioso"})
-        assert r.status_code == 200 and r.json()["activo"] == "computadoras_malicioso"
-
-
-def test_un_escenario_que_el_mundo_no_tiene_no_se_ofrece(tmp_path, monkeypatch):
-    """Mientras world/ no tenga `computadoras_malicioso`, el botón no aparece
-    (y elegirlo igual da 400, como hoy)."""
-    sin = {e for _, opciones in demo.GRUPOS for e, _ in opciones} - {"computadoras_malicioso"}
-    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: sin)
-    with TestClient(_app(tmp_path), base_url=BASE) as c:
-        assert _opciones(c)["Computadoras"] == [("computadoras", "entrega en dos partes")]
-        assert len(_opciones(c)["Notebook"]) == 3  # el resto, igual
-        assert _post(c, "/api/demo/escenario", {"escenario": "computadoras_malicioso"}).status_code == 400
-    # Sin demo_world (no se puede saber), se ofrece la lista entera.
-    monkeypatch.setattr(demo, "_escenarios_del_mundo", lambda: None)
-    with TestClient(_app(tmp_path), base_url=BASE) as c:
-        assert ("computadoras_malicioso", "inyección") in _opciones(c)["Computadoras"]
 
 
 def test_mientras_se_registra_el_pedido_la_conversacion_queda_ocupada(tmp_path):

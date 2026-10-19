@@ -109,6 +109,9 @@ class Config:
     world_temp_dir: Path | None = None
     demo_auto: bool = True
     demo_pausa_auto_s: float = 0.0  # entre respuestas automáticas (plan gratuito de Gemini)
+    # /demo ofrece los escenarios fijos (benchmark y tests) además de los
+    # comportamientos del comercio general: DEMO_ESCENARIOS_FIJOS=1.
+    demo_escenarios_fijos: bool = False
     # Solo para tests: transporte de httpx hacia el proxy y hacia ADK.
     proxy_transport: httpx.AsyncBaseTransport | None = field(
         default=None, compare=False
@@ -198,6 +201,7 @@ def config_desde_entorno() -> Config:
         pausa = max(0.0, min(float(os.environ.get("DEMO_PAUSA_AUTO_S", "0")), 60.0))
     except ValueError:
         pausa = 0.0
+    fijos = os.environ.get("DEMO_ESCENARIOS_FIJOS", "0").strip().lower() in {"1", "true", "si", "sí", "yes"}
     return Config(
         proxy_url=os.environ.get("PROXY_URL", DEFAULT_PROXY_URL).rstrip("/"),
         port=int(os.environ.get("DASHBOARD_PORT", DEFAULT_PORT)),
@@ -206,6 +210,7 @@ def config_desde_entorno() -> Config:
         world_temp_dir=world_temp,
         demo_auto=auto,
         demo_pausa_auto_s=pausa,
+        demo_escenarios_fijos=fijos,
         origenes_publicos=origenes_publicos(os.environ.get("DASHBOARD_PUBLIC_ORIGINS", "")),
         hosts_extra=tuple(
             h.strip().lower() for h in os.environ.get("DASHBOARD_EXTRA_HOSTS", "").split(",") if h.strip()

@@ -15,9 +15,11 @@ tarjeta, la confirmación del resumen y el OTP (`123`). Se detectan por el
 estado de la sesión de ADK y por qué herramientas se llamaron, nunca por el
 texto del comercio. La elección del producto es siempre del usuario.
 
-El selector de comercio escribe el escenario activo en el archivo que lee el
-comercio en cada búsqueda (`demo_world.scenario`, solo lectura), sin
-reiniciar nada.
+El selector "Comportamiento del comercio" elige cómo responde el comercio
+general (honesto, con inyección, mintiendo un dato…) a cualquier pedido; los
+escenarios fijos de prueba se ofrecen solo con DEMO_ESCENARIOS_FIJOS=1. Escribe
+el escenario activo en el archivo que lee el comercio en cada búsqueda
+(`demo_world.scenario`, solo lectura), sin reiniciar nada.
 
 El panel no decide: transporta lo que dice el usuario y muestra lo que pasa.
 """
@@ -64,22 +66,68 @@ OTP_DEMO = "123"  # el del sample (DEMO.md)
 
 ESPERAN_AL_USUARIO = frozenset({"esperando_contexto", "esperando_decision"})
 
-# Selector visible del comercio: categoría → (escenario, etiqueta).
-GRUPOS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("Zapatillas", (
-        ("baseline", "honesto"), ("B", "inyección"), ("B2", "miente un dato"), ("C", "precio inflado"),
-    )),
-    ("Notebook", (
-        ("notebook_honesto", "honesto"), ("notebook_malicioso", "inyección"),
-        ("notebook_dato_falso", "miente un dato"),
-    )),
-    ("Auriculares", (("auriculares_honesto", "honesto"), ("auriculares_malicioso", "inyección"))),
-    ("Computadoras", (
-        ("computadoras", "entrega en dos partes"), ("computadoras_malicioso", "inyección"),
-    )),
+class Opcion(NamedTuple):
+    """Un botón del selector del comercio. `honesto` pinta el punto del botón
+    (verde, rojo o ninguno); no decide nada."""
+
+    id: str
+    etiqueta: str
+    honesto: bool | None = None
+
+
+class Grupo(NamedTuple):
+    titulo: str
+    tipo: str  # "general" (responde a cualquier pedido) | "fijo"
+    opciones: tuple[Opcion, ...]
+
+
+# El comercio general de world/ responde a cualquier pedido con el
+# comportamiento del preset activo (scenarios.json, `"tipo": "general"`).
+TITULO_GENERAL = "Comportamiento del comercio"
+COMPORTAMIENTOS: tuple[Opcion, ...] = (
+    Opcion("general", "Honesto", True),
+    Opcion("general_inyeccion", "Inyección en la oferta", False),
+    Opcion("general_otra_categoria", "Ofrece otra categoría a tiempo", False),
+    Opcion("general_dato_falso", "Miente un dato", False),
+    Opcion("general_miente_categoria", "Miente la categoría", False),
+    Opcion("general_precio_inflado", "Precio inflado", False),
+    Opcion("general_entrega_partes", "Entrega en partes", True),
+    Opcion("general_entrega_partes_inyeccion", "Entrega en partes + inyección", False),
+    Opcion("general_sin_stock", "Sin stock suficiente", True),
+    Opcion("general_sin_resultados", "Sin resultados", None),
 )
-ESCENARIOS = frozenset(e for _, opciones in GRUPOS for e, _ in opciones)
+# Los escenarios fijos responden siempre lo mismo, pidas lo que pidas: quedan
+# para el benchmark y los tests, y /demo los ofrece solo con
+# DEMO_ESCENARIOS_FIJOS=1.
+TITULO_FIJOS = "Escenarios fijos (prueba)"
+ESCENARIOS_FIJOS: tuple[Opcion, ...] = (
+    Opcion("baseline", "Zapatillas · honesto", True),
+    Opcion("B", "Zapatillas · inyección", False),
+    Opcion("B2", "Zapatillas · miente un dato", False),
+    Opcion("C", "Zapatillas · precio inflado", False),
+    Opcion("notebook_honesto", "Notebook · honesto", True),
+    Opcion("notebook_malicioso", "Notebook · inyección", False),
+    Opcion("notebook_dato_falso", "Notebook · miente un dato", False),
+    Opcion("auriculares_honesto", "Auriculares · honesto", True),
+    Opcion("auriculares_malicioso", "Auriculares · inyección", False),
+    Opcion("computadoras", "Computadoras · entrega en dos partes", True),
+    Opcion("computadoras_malicioso", "Computadoras · inyección", False),
+)
+GENERALES = frozenset(o.id for o in COMPORTAMIENTOS)
+FIJOS = frozenset(o.id for o in ESCENARIOS_FIJOS)
+ESCENARIOS = GENERALES | FIJOS
 ARCHIVO_ESCENARIO = "demo_scenario"  # demo_world.scenario.SCENARIO_FILE_NAME
+_NOMBRE_PRESET = re.compile(r"^general_[a-z0-9_]{1,40}$")
+
+# Pedidos para empezar, los mismos con cualquier comportamiento: el comercio
+# general busca lo que se le pida. Plazos en días de la semana, nunca una
+# fecha fija (valen cualquier día).
+SUGERENCIAS: tuple[tuple[str, str], ...] = (
+    ("Monitor 27\" para diseño", "Necesito un monitor de 27 pulgadas para diseño, hasta 400 USD, para el viernes."),
+    ("20 computadoras", "Comprame 20 computadoras para el lunes, hasta 20000 USD."),
+    ("Auriculares con cancelación de ruido", "Quiero unos auriculares con cancelación de ruido, hasta 150 USD."),
+    ("Zapatillas talle 42", "Busco zapatillas para correr, talle 42, hasta 120 USD."),
+)
 
 # Herramientas del agente de compras que se cuentan en el relato, con los
 # argumentos que se muestran (el resto no sale del servidor).
@@ -628,11 +676,65 @@ def _escenarios_del_mundo() -> set[str] | None:
         return None
 
 
+def _generales_del_mundo() -> list[str]:
+    """Los presets del comercio general (`"tipo": "general"` en scenarios.json),
+    en su orden. Sin demo_world, ninguno."""
+    try:
+        from demo_world import scenario
+    except ImportError:
+        return []
+    try:
+        escenarios = scenario.load_scenarios()["scenarios"]
+        return [
+            nombre for nombre, info in escenarios.items()
+            if isinstance(info, dict) and info.get("tipo") == "general"
+        ]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return []
+
+
+def _etiqueta_de_preset(nombre: str) -> str:
+    """"general_entrega_tarde" → "Entrega tarde" (un preset sin etiqueta acá)."""
+    texto = nombre.removeprefix("general_").replace("_", " ").strip()
+    return texto[:1].upper() + texto[1:]
+
+
+def _comportamientos() -> tuple[Opcion, ...]:
+    """Los nuestros y, al final, los presets generales que world/ sume sin
+    etiqueta acá (con el nombre armado desde su id)."""
+    nuevos = tuple(
+        Opcion(n, _etiqueta_de_preset(n))
+        for n in dict.fromkeys(_generales_del_mundo())
+        if isinstance(n, str) and _NOMBRE_PRESET.match(n) and n not in ESCENARIOS
+    )
+    return COMPORTAMIENTOS + nuevos
+
+
+def grupos_visibles(cfg: Config) -> list[Grupo]:
+    """Lo que ofrece el selector: los comportamientos del comercio general y,
+    con DEMO_ESCENARIOS_FIJOS=1, los escenarios fijos. Solo lo que el comercio
+    conoce (sin demo_world, la lista entera); un grupo vacío no se muestra."""
+    del_mundo = _escenarios_del_mundo()
+    grupos = [Grupo(TITULO_GENERAL, "general", _comportamientos())]
+    if cfg.demo_escenarios_fijos:
+        grupos.append(Grupo(TITULO_FIJOS, "fijo", ESCENARIOS_FIJOS))
+    visibles = []
+    for grupo in grupos:
+        opciones = tuple(o for o in grupo.opciones if del_mundo is None or o.id in del_mundo)
+        if opciones:
+            visibles.append(grupo._replace(opciones=opciones))
+    return visibles
+
+
+def escenarios_permitidos(cfg: Config) -> list[str]:
+    """Lo que se puede elegir es lo que se ofrece."""
+    return [o.id for g in grupos_visibles(cfg) for o in g.opciones]
+
+
 def fijar_escenario(cfg: Config, nombre: str) -> str:
     """Escribe el escenario activo donde lo lee el comercio en cada búsqueda
     (`$TEMP_DB_DIR/demo_scenario`, el mismo archivo que `set_scenario`)."""
-    del_mundo = _escenarios_del_mundo()
-    if nombre not in ESCENARIOS or (del_mundo is not None and nombre not in del_mundo):
+    if nombre not in escenarios_permitidos(cfg):
         raise ValueError(nombre)
     carpeta = _carpeta_escenario(cfg)
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -643,6 +745,10 @@ def fijar_escenario(cfg: Config, nombre: str) -> str:
 
 
 def _pedido_de_ejemplo(cfg: Config, escenario: str) -> str | None:
+    """El `user_request` del fixture de un escenario fijo. Un comportamiento
+    del comercio general no tiene: responde a cualquier pedido."""
+    if escenario in GENERALES or escenario.startswith("general_"):
+        return None
     for path in (
         cfg.fixtures_dir / f"scenario_{escenario}.json",
         cfg.fixtures_dir / "etapa2" / f"{escenario}.json",
@@ -689,32 +795,43 @@ async def api_demo_escenarios(request: Request) -> Response:
     cfg: Config = request.app.state.cfg
     # Solo lo que el comercio conoce (como `fijar_escenario`): un escenario
     # que world/ todavía no tiene no aparece. Sin demo_world, la lista entera.
-    del_mundo = _escenarios_del_mundo()
     grupos = [
         {
-            "categoria": categoria,
+            "categoria": g.titulo,
+            "tipo": g.tipo,
             "opciones": [
-                {"id": e, "etiqueta": etiqueta, "pedido": _pedido_de_ejemplo(cfg, e)}
-                for e, etiqueta in opciones
-                if del_mundo is None or e in del_mundo
+                {"id": o.id, "etiqueta": o.etiqueta, "honesto": o.honesto,
+                 "pedido": _pedido_de_ejemplo(cfg, o.id)}
+                for o in g.opciones
             ],
         }
-        for categoria, opciones in GRUPOS
+        for g in grupos_visibles(cfg)
     ]
-    return JSONResponse({"activo": escenario_activo(cfg), "grupos": grupos})
+    # Cómo nombrar cualquier escenario conocido, aunque no se ofrezca: el
+    # activo puede ser uno fijo (`run_world.sh B`) y el historial, de antes.
+    nombres = {
+        o.id: {"etiqueta": o.etiqueta, "tipo": tipo, "pedido": _pedido_de_ejemplo(cfg, o.id)}
+        for tipo, opciones in (("general", _comportamientos()), ("fijo", ESCENARIOS_FIJOS))
+        for o in opciones
+    }
+    sugerencias = [{"etiqueta": etiqueta, "texto": texto} for etiqueta, texto in SUGERENCIAS]
+    return JSONResponse({
+        "activo": escenario_activo(cfg), "grupos": grupos, "nombres": nombres, "sugerencias": sugerencias,
+    })
 
 
 async def api_demo_escenario(request: Request) -> Response:
+    cfg: Config = request.app.state.cfg
     cuerpo = await _cuerpo_con(request, {"escenario"})
     if cuerpo is None or not isinstance(cuerpo["escenario"], str):
-        return _error(400, "se_espera", formato={"escenario": sorted(ESCENARIOS)})
+        return _error(400, "se_espera", formato={"escenario": escenarios_permitidos(cfg)})
     try:
-        activo = fijar_escenario(request.app.state.cfg, cuerpo["escenario"])
+        activo = fijar_escenario(cfg, cuerpo["escenario"])
     except ValueError:
-        return _error(400, "escenario_desconocido", opciones=sorted(ESCENARIOS))
+        return _error(400, "escenario_desconocido", opciones=escenarios_permitidos(cfg))
     except OSError:
         return _error(500, "no_se_pudo_escribir_el_escenario")
-    _conversacion(request).nueva()  # otro comercio: otra compra
+    _conversacion(request).nueva()  # otro comportamiento: otra compra
     return JSONResponse({"activo": activo})
 
 
