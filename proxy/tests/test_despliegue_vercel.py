@@ -880,7 +880,11 @@ def test_generar_secretos_escribe_todo_y_no_imprime_nada_secreto(tmp_path, capsy
     assert clave_api not in (carpeta / "vercel.env").read_text(encoding="utf-8")  # es del cliente
 
     impreso = salida.out + salida.err
-    for secreto in (clave_api, clave_api.rsplit("_", 1)[-1], b64[:40], secreto_webhook, prefijo,
+    # psg_<kid>_<secreto>: el kid es hex, pero el secreto (token_urlsafe) puede
+    # traer "_": se parte por el kid, no por el último "_" (que a veces dejaba
+    # un pedacito de 1-3 caracteres que aparecía por casualidad en la salida).
+    secreto_api = clave_api.split("_", 2)[2]
+    for secreto in (clave_api, secreto_api, b64[:40], secreto_webhook, prefijo,
                     "BEGIN PRIVATE KEY"):
         assert secreto not in impreso
 
