@@ -83,14 +83,17 @@ class Config:
     # hasta 600 s (DEFAULT_TIMEOUT del sample): la suma tiene que quedar abajo.
     espera_contexto_s: float = 120.0  # el porqué (si vence, sigue el pedido literal)
     espera_decision_s: float = 420.0  # la consulta (si vence, no se compra nada)
-    # PROXY_FICHA_DEMO=0: no usar las fichas de la demo (scenarios.json o
-    # fixtures/), como con un comercio real. Mandan los parámetros que armó y
-    # confirmó el intake; sin compra no hay parámetros autorizados (escala).
-    ficha_demo: bool = True
-    # DEMO_HOY=YYYY-MM-DD: el "hoy" que ve el agente de intención. Las ofertas
-    # de la demo tienen fechas fijas ("el lunes" es el 2026-10-19): corrida
-    # otro día, se fija para que el caso dé lo mismo. No llega al Guard (los
-    # vencimientos del checkout firmado se miran con el reloj de verdad).
+    # Manda la ficha que confirmó el usuario (etapa 3): por defecto no se usan
+    # las fichas de la demo (scenarios.json o fixtures/), como con un comercio
+    # real. Mandan los parámetros que armó y confirmó el intake; sin compra no
+    # hay parámetros autorizados (escala). PROXY_FICHA_DEMO=1 vuelve a usar la
+    # del escenario fijo (grabaciones, benchmark por el proxy, smoke_checkout).
+    ficha_demo: bool = False
+    # DEMO_HOY=YYYY-MM-DD: el "hoy" que ve el agente de intención. Sin fijar,
+    # el del reloj (el comercio general arma las fechas desde hoy). Solo para
+    # reproducir una grabación de los escenarios fijos, que tienen fechas
+    # fijas ("el lunes" es el 2026-10-19). No llega al Guard (los vencimientos
+    # del checkout firmado se miran con el reloj de verdad).
     demo_hoy: date | None = None
     # -- gateway de producción (diseño del gateway, §1.1 y §1.9) -------------
     # Sin `GATEWAY_CLAVES_ARCHIVO` (o sin claves activas) no hay oyente
@@ -201,7 +204,7 @@ class Config:
                 env.get("PROXY_ESPERA_DECISION_S"), base.espera_decision_s,
                 "PROXY_ESPERA_DECISION_S",
             ),
-            ficha_demo=_bool(env.get("PROXY_FICHA_DEMO", "1"), "PROXY_FICHA_DEMO"),
+            ficha_demo=_bool(env.get("PROXY_FICHA_DEMO", "0"), "PROXY_FICHA_DEMO"),
             demo_hoy=_fecha(env.get("DEMO_HOY"), "DEMO_HOY"),
             gateway_host=(env.get("GATEWAY_HOST") or base.gateway_host).strip(),
             gateway_port=gateway_port,

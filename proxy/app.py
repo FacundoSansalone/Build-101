@@ -109,10 +109,13 @@ from proxy.evaluador import (
 from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import (
     cargar_catalogo,
-    cargar_intent,
+    categoria_de_la_ficha,
+    categorias_para_el_pedido,
     ficha_del_intent,
     intent_ap2,
     intent_del_escenario,
+    ruta_categoria,
+    skus_de,
     violaciones_ap2,
 )
 from proxy.pedido_usuario import LARGO_MAXIMO as LARGO_MAXIMO_PEDIDO
@@ -280,9 +283,19 @@ def _filtrar(headers: Any, excluidos: set[str]) -> dict[str, str]:
 
 
 def _ficha_verificable(
-    texto: str, requisitos: list[Requisito], categoria_taxonomia: str | None = None
+    texto: str,
+    requisitos: list[Requisito],
+    categoria_taxonomia: str | None = None,
+    *,
+    confirmada: bool = True,
 ) -> Ficha | None:
-    """La ficha del agente con lo que el Guard sabe chequear (None si nada)."""
+    """La ficha del agente con lo que el Guard sabe chequear (None si nada).
+
+    `confirmada=False` cuando nadie la autorizó: sin intake no hay turno de
+    confirmación y lo que extrajo el agente del pedido es una propuesta (los
+    LLM no autorizan): el Guard escala. Con intake, lo que va acá es lo que
+    el usuario dijo con confianza alta o confirmó (`requisitos_autorizables`).
+    """
     from intencion.agente_decisiones import requisitos_verificables
 
     verificables, _ = requisitos_verificables(list(requisitos))
@@ -291,9 +304,34 @@ def _ficha_verificable(
     return Ficha(
         pedido_original=texto,
         requisitos=verificables,
-        confirmada=True,
+        confirmada=confirmada,
         categoria_taxonomia=categoria_taxonomia,
     )
+
+
+def _con_categoria(ficha: Ficha | None, categoria_taxonomia: str | None) -> Ficha | None:
+    """La misma ficha con la categoría de la taxonomía (la última clasificada)."""
+    if ficha is None or ficha.categoria_taxonomia == categoria_taxonomia:
+        return ficha
+    return ficha.model_copy(update={"categoria_taxonomia": categoria_taxonomia})
+
+
+def _descripcion(texto: str, turnos: list[Turno]) -> str:
+    """El pedido y las respuestas del usuario: lo que lee el clasificador."""
+    return " / ".join([texto, *(t.respuesta for t in turnos if t.respuesta)])
+
+
+def _anotar_categoria(
+    estado: EstadoIntake, texto: str, turnos: list[Turno], propuesta: Any
+) -> str | None:
+    """Deja en `estado` la categoría de la compra: la `propuesta` del
+    clasificador si es un ID del árbol (o la de las palabras, si es más
+    específica en su rama) y, si no, la de las palabras del pedido y, si no
+    nombra ninguna, de las respuestas."""
+    respuestas = [t.respuesta for t in turnos if t.respuesta]
+    estado.categoria_taxonomia = categoria_de_la_ficha(propuesta, [texto, *respuestas])
+    estado.clasificado_con = _descripcion(texto, turnos)
+    return estado.categoria_taxonomia
 
 
 def _con_titulo_publico(oportunidad: Any, ofertas: list[Any]) -> Any:
@@ -316,7 +354,18 @@ class EstadoIntake:
     confirmada: bool | None = None
     ficha_autorizada: list[Requisito] | None = None
     sin_verificar_guard: list[Requisito] | None = None
-    categoria_taxonomia: str | None = None  # taxonomía de Google (si hay cliente)
+    # Taxonomía de Google: la del clasificador del agente o la de las palabras
+    # del pedido (`fuentes.categoria_de_la_ficha`). Se clasifica antes de pedir
+    # la confirmación y otra vez al cerrar solo si el usuario agregó texto.
+    categoria_taxonomia: str | None = None
+    clasificado_con: str | None = None  # el texto con el que se clasificó
+
+    def categoria_json(self) -> dict[str, Any]:
+        """El ID y la ruta del árbol (texto nuestro, nunca del comercio)."""
+        return {
+            "categoria_taxonomia": self.categoria_taxonomia,
+            "categoria_ruta": ruta_categoria(self.categoria_taxonomia),
+        }
 
     def intake_json(self) -> dict[str, Any]:
         r = self.resultado
@@ -339,12 +388,14 @@ class EstadoIntake:
             "sin_verificar_guard": [
                 q.model_dump(mode="json") for q in self.sin_verificar_guard or []
             ],
-            "categoria_taxonomia": self.categoria_taxonomia,
+            **self.categoria_json(),
         }
 
     def a_json(self) -> dict[str, Any]:
         datos: dict[str, Any] = {"turno": self.turno, "confirmar": self.confirmar}
         datos.update(self.intake_json())
+        if self.clasificado_con is not None:
+            datos.update(self.categoria_json())  # también en el turno de confirmar
         if self.final:
             datos.update(self.cierre_json())
         return datos
@@ -813,18 +864,16 @@ class ProxyGuard:
         )
 
     def ficha(self) -> Ficha:
-        """La ficha global de la demo (el pedido de zapatillas de scenarios.json).
+        """La ficha sin parámetros autorizados: vacía y sin confirmar.
 
-        Con `PROXY_FICHA_DEMO=0` (como un comercio real) no hay ficha de la
-        demo: una vacía y sin confirmar, sin parámetros autorizados, con la que
-        el Guard escala (nunca aprueba sin saber qué autorizó el usuario).
+        Es la de una compra sin parámetros (sin intake, o el agente no armó
+        nada) cuando tampoco hay ficha de la demo para su escenario: el Guard
+        escala (nunca aprueba sin saber qué autorizó el usuario). Etapa 3: ya
+        no hay ficha global de la demo; ni un escenario sin `intent` propio
+        ni un comercio que no dice el escenario caen al pedido de zapatillas.
         """
         if self._ficha is None:
-            self._ficha = (
-                ficha_del_intent(cargar_intent())
-                if self.config.ficha_demo
-                else Ficha(pedido_original="", requisitos=[], confirmada=False)
-            )
+            self._ficha = Ficha(pedido_original="", requisitos=[], confirmada=False)
         return self._ficha
 
     @property
@@ -846,6 +895,9 @@ class ProxyGuard:
             "intencion": getattr(self.agente, "nombre", "agente") if self.agente else None,
             "filtro": self.filtro is not None,
             "filtro_modo": self.filtro_modo,
+            # PROXY_FICHA_DEMO: ¿se usan las fichas de los escenarios fijos?
+            # (lo lee `smoke_checkout.py`; solo informa).
+            "ficha_demo": self.config.ficha_demo,
         }
         if self.gateway_configurado:
             # Solo con el gateway configurado: sin configuración nueva, el
@@ -867,8 +919,9 @@ class ProxyGuard:
 
     def ficha_de(self, contexto_id: str | None) -> Ficha:
         """Los parámetros autorizados de esa compra (etapa 2) o, si no hay
-        compra con parámetros, la ficha de la demo: la del escenario de esa
-        compra (con sus atributos) y, si no se conoce, la global."""
+        compra con parámetros, la ficha de la demo del escenario de esa compra
+        (con sus atributos, solo con `PROXY_FICHA_DEMO=1`) y, si no hay, una
+        vacía sin confirmar (`ficha`): el Guard escala."""
         escenario = self._escenario(contexto_id)
         compra = self.compras.de_contexto(contexto_id)
         if compra is not None:
@@ -1805,15 +1858,15 @@ class ProxyGuard:
             logger.exception("La ficha del escenario %s no es válida", escenario)
             return None
 
-    async def _categorias(self, comercio: Comercio | None = None) -> list[str]:
+    async def _categorias(self, comercio: Comercio | None = None, texto: str = "") -> list[str]:
         """Categorías del catálogo público del comercio de la llamada: el
         agente solo puede elegir una de estas (así el Guard compara contra un
-        valor que el catálogo usa)."""
+        valor que el catálogo usa). Primero las del pedido
+        (`fuentes.categorias_para_el_pedido`): el intake ofrece como mucho 40
+        y, con un catálogo grande, la pedida no queda afuera."""
         comercio = comercio or self.comercios.por_defecto
         catalogo, _, _ = await cargar_catalogo(self.client, comercio.catalogo_url)
-        return sorted(
-            {p["category"] for p in catalogo.values() if isinstance(p.get("category"), str)}
-        )
+        return categorias_para_el_pedido(catalogo, texto)
 
     async def _etapa_contexto(self, llamada: Llamada) -> None:
         """Paso 1: antes de negociar, nuestro agente pregunta el porqué y, con
@@ -1847,20 +1900,27 @@ class ProxyGuard:
         hoy = self.hoy()
         categorias: list[str] | None = None
         resultado: Any = None  # intencion.intake.ResultadoIntake del último turno
+        requisitos: list[Requisito] = []
         try:
-            categorias = await self._categorias(llamada.comercio)
+            categorias = await self._categorias(llamada.comercio, texto)
             pregunta = await self._llm(self.agente.preguntar, texto, hoy, categorias)
             pregunta_texto = pregunta.pregunta
             resultado = getattr(pregunta, "intake", None)
-            ficha_llm = _ficha_verificable(texto, pregunta.requisitos)
+            requisitos = list(pregunta.requisitos)
         except Exception as e:  # noqa: BLE001 - sin agente, el pedido sigue literal
             logger.exception("El agente de intención no pudo armar la pregunta")
             self._error(
                 llamada, f"El agente de intención no pudo armar la pregunta ({type(e).__name__})"
             )
-            pregunta_texto, ficha_llm, resultado = _PREGUNTA_POR_DEFECTO, None, None
+            pregunta_texto, requisitos, resultado = _PREGUNTA_POR_DEFECTO, [], None
         con_intake = resultado is not None and callable(
             getattr(self.agente, "evaluar_intake", None)
+        )
+        # Sin intake no hay turno de confirmación: lo que extrajo el agente
+        # queda sin confirmar (el Guard escala). La categoría de las palabras
+        # va desde el principio; al cerrar, la del clasificador si hay.
+        ficha_llm = _ficha_verificable(
+            texto, requisitos, categoria_de_la_ficha(None, [texto]), confirmada=con_intake
         )
         compra = self.compras.crear(texto, pregunta_texto, ficha_llm, pedido.contexto_id)
         llamada.compra = compra
@@ -1883,17 +1943,27 @@ class ProxyGuard:
                         await self._contexto_turno(llamada, texto, turnos, hoy, con_intake)
                         or contexto
                     )
-                    if nuevo is not None:
-                        estado.resultado = nuevo
-                        if not compra.ficha_resuelta:
-                            compra.ficha_llm = _ficha_verificable(
-                                texto, nuevo.requisitos_autorizables(confirmada=False)
-                            )
                 # ¿Otra pregunta? Solo si el intake la pide y queda tiempo.
                 otra, sin_tiempo = False, False
                 if nuevo is not None and nuevo.siguiente in ("repreguntar", "confirmar"):
                     otra = self._restante(llamada) - _MARGEN_S >= _MINIMO_REPREGUNTA_S
                     sin_tiempo = not otra
+                # La categoría, antes de pedir la confirmación (la ficha que
+                # confirma el usuario ya la lleva) y al cerrar. Con la misma
+                # conversación no se vuelve a clasificar.
+                if not otra:
+                    await self._clasificar(llamada, texto, turnos, estado)
+                elif nuevo.siguiente == "confirmar":
+                    await self._clasificar(
+                        llamada, texto, turnos, estado, reserva=_MINIMO_REPREGUNTA_S
+                    )
+                if nuevo is not None:
+                    estado.resultado = nuevo
+                    if not compra.ficha_resuelta:
+                        compra.ficha_llm = _ficha_verificable(
+                            texto, nuevo.requisitos_autorizables(confirmada=False),
+                            estado.categoria_taxonomia,
+                        )
                 datos: dict[str, Any] = {
                     "compra_id": compra.id,
                     "turno": estado.turno,
@@ -1905,11 +1975,12 @@ class ProxyGuard:
                 if con_intake:
                     datos["intake"] = estado.resultado.a_json()
                     if not otra:
-                        categoria = await self._clasificar(llamada, texto, turnos)
-                        self._cerrar_intake(
-                            compra, texto, estado, confirmada=confirmo, categoria_taxonomia=categoria
-                        )
+                        self._cerrar_intake(compra, texto, estado, confirmada=confirmo)
                         datos.update(estado.cierre_json(), sin_tiempo=sin_tiempo)
+                elif not compra.ficha_resuelta:
+                    compra.ficha_llm = _con_categoria(compra.ficha_llm, estado.categoria_taxonomia)
+                if not otra:
+                    datos.update(estado.categoria_json())
                 self._emitir(
                     "contexto_registrado",
                     datos,
@@ -1929,6 +2000,8 @@ class ProxyGuard:
                 compra.estado = "negociando"
             compra.contexto = contexto
             if con_intake and not estado.final:
+                if estado.clasificado_con is None:  # cortada antes: sin modelo
+                    _anotar_categoria(estado, texto, turnos, None)
                 self._cerrar_intake(compra, texto, estado, confirmada=False)
             compra.contexto_listo.set()
 
@@ -1958,6 +2031,9 @@ class ProxyGuard:
         }
         if r is not None:
             datos.update(estado.intake_json())
+        if estado.clasificado_con is not None:
+            # El turno de confirmar: la categoría de la ficha que se confirma.
+            datos.update(estado.categoria_json())
         self._emitir(
             "pedido_detectado",
             datos,
@@ -1999,43 +2075,53 @@ class ProxyGuard:
             )
             return None
 
-    async def _clasificar(self, llamada: Llamada, texto: str, turnos: list[Turno]) -> str | None:
-        """La categoría de la taxonomía de Google para la ficha del intake.
+    async def _clasificar(
+        self,
+        llamada: Llamada,
+        texto: str,
+        turnos: list[Turno],
+        estado: EstadoIntake,
+        reserva: float = 0.0,
+    ) -> str | None:
+        """La categoría de la taxonomía de Google para la ficha de la compra
+        (queda en `estado`).
 
-        Solo con un agente que sabe clasificar (`clasificar_taxonomia`, el de
-        decisiones) y si queda tiempo en la llamada. Es una propuesta que se
-        registra en la ficha: el Guard no depende de ella. Si falla, vacía.
+        Con un agente que sabe clasificar (`clasificar_taxonomia`, el de
+        decisiones) y si queda tiempo en la llamada (más `reserva`, lo que
+        necesita el turno que sigue), su propuesta; si no hay, si no devuelve
+        un ID del árbol o si falla, la de las palabras del pedido
+        (`fuentes.categoria_de_la_ficha`, sin modelo). Con la misma
+        conversación que la vez anterior no se vuelve a clasificar.
         """
+        descripcion = _descripcion(texto, turnos)
+        if estado.clasificado_con == descripcion:
+            return estado.categoria_taxonomia
+        propuesta = None
         funcion = getattr(self.agente, "clasificar_taxonomia", None)
-        if not callable(funcion) or self._restante(llamada) - _MARGEN_S < _MINIMO_TAXONOMIA_S:
-            return None
-        descripcion = " / ".join([texto, *(t.respuesta for t in turnos if t.respuesta)])
-        try:
-            categoria = await self._llm(funcion, descripcion)
-        except Exception as e:  # noqa: BLE001 - sin taxonomía, la ficha sigue igual
-            logger.exception("El agente de intención no pudo clasificar el pedido")
-            self._error(
-                llamada, f"El agente de intención no pudo clasificar el pedido ({type(e).__name__})"
-            )
-            return None
-        return categoria if isinstance(categoria, str) and categoria.isdigit() else None
+        restante = self._restante(llamada) - _MARGEN_S - reserva
+        if callable(funcion) and restante >= _MINIMO_TAXONOMIA_S:
+            try:
+                propuesta = await self._llm(funcion, descripcion)
+            except Exception as e:  # noqa: BLE001 - sin el clasificador, las palabras
+                logger.exception("El agente de intención no pudo clasificar el pedido")
+                self._error(
+                    llamada,
+                    f"El agente de intención no pudo clasificar el pedido ({type(e).__name__})",
+                )
+        return _anotar_categoria(estado, texto, turnos, propuesta)
 
     def _cerrar_intake(
-        self,
-        compra: Compra,
-        texto: str,
-        estado: EstadoIntake,
-        confirmada: bool,
-        categoria_taxonomia: str | None = None,
+        self, compra: Compra, texto: str, estado: EstadoIntake, confirmada: bool
     ) -> None:
-        """Los parámetros autorizados que salen del intake.
+        """Los parámetros autorizados que salen del intake, con la categoría
+        ya clasificada (`estado.categoria_taxonomia`).
 
         Lo que el usuario dijo con confianza alta va siempre; lo inferido o
         dudoso, solo si confirmó la ficha. Lo que el Guard no supiera chequear
         (`guard.chequeos.CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS`; hoy
-        todo, atributos y `minimo` incluidos) se informaría aparte. Si la demo
-        tiene una ficha confirmada, esa sigue mandando (`Compra.resolver_ficha`;
-        `PROXY_FICHA_DEMO=0` la apaga).
+        todo, atributos y `minimo` incluidos) se informaría aparte. Con
+        `PROXY_FICHA_DEMO=1`, si el escenario de la demo tiene una ficha
+        confirmada, esa manda (`Compra.resolver_ficha`).
         """
         from intencion.agente_decisiones import requisitos_verificables
 
@@ -2044,9 +2130,8 @@ class ProxyGuard:
         verificables, fuera = requisitos_verificables(requisitos)
         estado.final, estado.confirmar, estado.confirmada = True, False, confirmada
         estado.ficha_autorizada, estado.sin_verificar_guard = verificables, fuera
-        estado.categoria_taxonomia = categoria_taxonomia
         if not compra.ficha_resuelta:
-            compra.ficha_llm = _ficha_verificable(texto, verificables, categoria_taxonomia)
+            compra.ficha_llm = _ficha_verificable(texto, verificables, estado.categoria_taxonomia)
 
     def _compra_json(self, datos: dict[str, Any]) -> dict[str, Any]:
         """La compra del registro + el estado del intake (turno, faltan…)."""
@@ -2161,8 +2246,10 @@ class ProxyGuard:
             from guard.verificador import verificar_todas
 
             comercio = llamada.comercio or self.comercios.por_defecto
-            catalogo, comercio_id, _ = await cargar_catalogo(self.client, comercio.catalogo_url)
             detalles = copy.deepcopy(respuesta.offer_details or [])
+            catalogo, comercio_id, _ = await cargar_catalogo(
+                self.client, comercio.catalogo_url, skus=skus_de(detalles)
+            )
             catalogo, _ = await self._con_fabricante(catalogo, detalles)
             vistas = OfertasVistas(
                 carts=copy.deepcopy(respuesta.carts), offer_details=detalles, comercio_id=comercio_id
@@ -2579,8 +2666,11 @@ class ProxyGuard:
     ) -> Decision:
         escenario = guardadas.escenario
         comercio = llamada.comercio or self.comercios.por_defecto
+        # Solo los productos de las ofertas de esta compra (si no alcanza, la
+        # lista entera): el Guard busca en el catálogo por SKU.
         catalogo, comercio_catalogo, fuente = await cargar_catalogo(
-            self.client, comercio.catalogo_url, comercio.respaldo_fixture
+            self.client, comercio.catalogo_url, comercio.respaldo_fixture,
+            skus=skus_de(guardadas.offer_details),
         )
         # El comercio es el que FIRMÓ el checkout, no el que dice el catálogo
         # (que puede no existir). Un catálogo de otro comercio no se usa.

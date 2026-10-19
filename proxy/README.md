@@ -72,7 +72,10 @@ puerto (con el `SO_REUSEADDR` de uvicorn, Windows lo dejaba).
 ## Apuntar el flujo al proxy
 
 - **Shopping Agent:** `MERCHANT_AGENT_URL=http://localhost:8010/a2a/merchant_agent bash world/run_world.sh B`
-- **Benchmark:** `--merchant-url http://localhost:8010/a2a/merchant_agent`
+- **Benchmark:** `--merchant-url http://localhost:8010/a2a/merchant_agent`,
+  con el proxy levantado con `PROXY_FICHA_DEMO=1 INTENCION_ACTIVA=0` (los
+  escenarios del benchmark se evalúan con su ficha; con el default, sin
+  compra, todo escala)
 
 ```sh
 cd world/ap2
@@ -86,6 +89,10 @@ PYTHONUTF8=1 .venv/Scripts/python -m demo_world.benchmark --source a2a \
   `checkout_hash` sea el SHA-256 del JWT y, con `--merchant-key` (el PEM de
   `MERCHANT_SIGNING_KEY_PATH` del comercio), que la firma ES256 valga:
 
+Son casos de escenarios fijos: el proxy tiene que correr con
+`PROXY_FICHA_DEMO=1 INTENCION_ACTIVA=0` (el script lo lee en `/guard/state`
+→ `ficha_demo` y, si no, no sigue).
+
 ```sh
 PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_checkout \
   --escenario B --cart cart_4 --esperado failed       # bloqueado
@@ -93,6 +100,25 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
   --escenario C --cart cart_1 --aprobar --esperado completed --merchant-key <pem>
   # escalar → retenido → POST /guard/aprobaciones (con el token de
   # .temp-db/guard_api_token; otro archivo con --token-file) → reintento → pasa intacto
+```
+
+- **Compra de integrador por `/v1`, sin LLM de nuestro lado**
+  (`scripts/smoke_v1_general.py`): `POST /v1/compras` con una ficha (tope,
+  moneda, cantidad y `categoria_taxonomia`), `find_products` y
+  `create_checkout` con `X-Compra-Id`, e imprime el `status`. Por defecto
+  arma un gateway de prueba **en el mismo proceso** (sin abrir puertos: una
+  clave temporal que no se guarda, el Guard real, el filtro solo con
+  heurísticas, sin agente de intención) contra el comercio y el catálogo
+  que estén levantados (`bash deploy/start_all.sh general`). Con
+  `--gateway <url>` y `--clave` (o `KAIAI_CLAVE`), contra uno levantado.
+  Elige el cart más barato dentro del tope (o `--cart`):
+
+```sh
+PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_v1_general \
+  --pedido "un monitor de 27 pulgadas" --tope 400 --categoria 305 --esperado aprobado
+PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_v1_general \
+  --pedido "una notebook" --tope 1500 --categoria 328 --escenario general_otra_categoria \
+  --esperado escalar
 ```
 
 ## Qué hace
@@ -154,15 +180,22 @@ eventos que evaluó el proxy. El SSE de `/guard/events` hace lo mismo.
 
 De dónde salen las entradas de `evaluar()`:
 
-- **Ficha:** los parámetros autorizados de la compra (etapa 2, abajo) o, si
-  no hay compra, la ficha confirmada **del escenario de esa compra** y, si
-  no se conoce, la global (`demo_world.scenario.intent()`; si no se puede
-  importar, `fixtures/scenario_baseline.json` → `intent`). Siempre con
+- **Ficha:** los parámetros autorizados de la compra, los que confirmó el
+  usuario (etapa 2, abajo). Por defecto (`PROXY_FICHA_DEMO=0`, etapa 3)
+  nunca se usa la ficha de un escenario fijo: sin compra (o sin parámetros)
+  la ficha es vacía y sin confirmar, y el Guard escala. Con
+  `PROXY_FICHA_DEMO=1` (grabaciones, benchmark por el proxy,
+  `smoke_checkout.py`) manda la ficha confirmada **del escenario de esa
+  compra** (`fuentes.intent_del_escenario`): su `intent` propio o, solo para
+  los de zapatillas (`baseline`, `A`, `B`, `B2`, `C`, que no tienen uno), el
+  global de scenarios.json; si `demo_world` no se puede importar, el
+  `intent` de `fixtures/scenario_<nombre>.json` o `fixtures/etapa2/`.
+  Ningún otro escenario cae al pedido de zapatillas: uno sin `intent`
+  propio, uno del comercio general (`"tipo": "general"`) o un comercio que
+  no dice el escenario no tienen ficha de la demo. Siempre con
   `guard.ficha.ficha_desde_intent`: los requisitos de `hard`/`preferred`,
   los atributos (`intent.attributes`) y la categoría de la taxonomía
-  (`google_product_category`). Con `PROXY_FICHA_DEMO=0` no se usan las fichas
-  de la demo (como con un comercio real): sin compra no hay parámetros
-  autorizados y el Guard escala.
+  (`google_product_category`).
 - **Fabricante (`fabricante/`):** antes de `evaluar()` el proxy consulta la
   ficha del fabricante por cada GTIN de las ofertas (el declarado y el del
   catálogo para ese SKU), con la fuente de `FABRICANTE_FUENTE` (por defecto
@@ -172,11 +205,18 @@ De dónde salen las entradas de `evaluar()`:
   obligatorio que solo declara el comercio escala: nunca aprueba por eso.
   El evento `veredicto` dice qué fuente se usó en `fabricante`. Lo mismo se
   usa para verificar las ofertas que ve el detector de oportunidades.
-- **Catálogo (no siempre existe):** `GET CATALOGO_URL/products` →
-  `sku -> producto`. Si no hay `CATALOGO_URL` o no responde, se evalúa **sin
-  catálogo** (todo queda "solo declarado" y lo obligatorio escala); el fixture
-  solo con `CATALOGO_RESPALDO_FIXTURE=1`. El evento `veredicto` dice cuál se
-  usó en `fuente` (`http`, `fixture` o `ninguno`).
+- **Catálogo (no siempre existe):** `sku -> producto`, solo de los SKU de
+  las ofertas de esa compra: `GET CATALOGO_URL/products/<sku>` por cada uno,
+  en paralelo (hasta 20). El producto tiene que traer `merchant` (el mismo
+  objeto que `/products`), así el chequeo de abajo sigue valiendo. Si eso no
+  alcanza (más de 20 SKU, un SKU que no es un identificador simple, una
+  falla o un timeout, ninguno encontrado, un producto sin `merchant` o dos
+  comercios distintos), `GET CATALOGO_URL/products` entero, como antes. Un
+  404 es "no está publicado". Si no hay `CATALOGO_URL` o no responde, se
+  evalúa **sin catálogo** (todo queda "solo declarado" y lo obligatorio
+  escala); el fixture solo con `CATALOGO_RESPALDO_FIXTURE=1`. El evento
+  `veredicto` dice cuál se usó en `fuente` (`http`, `fixture` o `ninguno`).
+  Las categorías que se le ofrecen al intake salen de la lista entera.
 - **Comercio:** `comercio_id` es el `merchant.id` **firmado** en el checkout,
   no el del catálogo. Si el catálogo dice ser de otro comercio, no se usa
   (`catalogo_descartado` en el evento `veredicto`).
@@ -242,8 +282,8 @@ replay. En memoria y en el SSE siguen todos.
 | `bloqueado` | `{"cart_id", "motivo", "status", "requiere_aprobacion": bool}` (`requiere_aprobacion: true` = retenido por `escalar`) |
 | `guard_cambiado` | `{"guard_activo": bool}` |
 | `error` | `{"mensaje"}` |
-| `pedido_detectado` | Etapa 2. `{"compra_id", "pedido", "pregunta", "requisitos": [Requisito], "vence", "turno": int, "confirmar": bool}`. Con intake, además `"faltan"`, `"a_confirmar"`, `"ficha_parcial"`, `"cortado"`, `"mensaje"`, `"fuera_de_catalogo"`. Uno por turno (0 = el porqué) |
-| `contexto_registrado` | Etapa 2. `{"compra_id", "turno", "respuesta": str\|null, "omitido": bool, "vencido": bool, "contexto": Contexto\|null}`. Con intake, `"intake"` y, en el último, `"final": true`, `"confirmada"`, `"ficha_autorizada"`, `"sin_verificar_guard"`, `"categoria_taxonomia"` (ID de la taxonomía de Google o `null`), `"sin_tiempo"` |
+| `pedido_detectado` | Etapa 2. `{"compra_id", "pedido", "pregunta", "requisitos": [Requisito], "vence", "turno": int, "confirmar": bool}`. Con intake, además `"faltan"`, `"a_confirmar"`, `"ficha_parcial"`, `"cortado"`, `"mensaje"`, `"fuera_de_catalogo"`. En el turno de confirmar la ficha, además `"categoria_taxonomia"` y `"categoria_ruta"` (ver abajo). Uno por turno (0 = el porqué) |
+| `contexto_registrado` | Etapa 2. `{"compra_id", "turno", "respuesta": str\|null, "omitido": bool, "vencido": bool, "contexto": Contexto\|null}`. En el último, `"categoria_taxonomia"` (ID de la taxonomía de Google o `null`) y `"categoria_ruta"` (la ruta del árbol, "Electronics > Video > Computer Monitors", texto nuestro, o `null`). Con intake, `"intake"` y, en el último, `"final": true`, `"confirmada"`, `"ficha_autorizada"`, `"sin_verificar_guard"`, `"sin_tiempo"` |
 | `oportunidad` | Etapa 2. `{"compra_id", "oportunidad": Oportunidad, "vence"}` |
 | `oportunidad_decidida` | Etapa 2. `{"compra_id", "oportunidad_id", "decision": "aceptada"\|"rechazada"\|"vencida", "requisitos_autorizados": [Requisito]\|null}` |
 
@@ -276,11 +316,23 @@ prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
    cancelación de ruido…) y el operador `minimo` **entran** a la ficha
    autorizada: el Guard los verifica (`guard.chequeos.CAMPOS_SOPORTADOS` y
    `OPERADORES_SOPORTADOS`); `sin_verificar_guard` queda para lo que el Guard
-   no supiera chequear (hoy, nada). Al cerrar, si el agente sabe clasificar
-   (el de decisiones) y queda tiempo, la ficha suma la categoría de la
-   **taxonomía de Google** (`taxonomia.clasificar`, unas 3 llamadas; sin
-   cliente queda vacía). Solo se repregunta si quedan al menos 30 s de la
-   llamada. Con Gemini (sin intake) es una sola pregunta, como antes.
+   no supiera chequear (hoy, nada). Solo se repregunta si quedan al menos
+   30 s de la llamada. Con Gemini (sin intake) es una sola pregunta, como
+   antes, y lo que extrajo el agente queda **sin confirmar** (no hay turno de
+   confirmación y los LLM no autorizan): el Guard escala y la persona decide.
+
+   **Categoría de la taxonomía de Google, siempre** (etapa 3): antes de pedir
+   la confirmación (así la ficha que confirma el usuario ya la lleva) y al
+   cerrar, solo si el usuario agregó texto. Si el agente sabe clasificar (el
+   de decisiones, `taxonomia.clasificar`, unas 3 llamadas) y queda tiempo,
+   su propuesta; si no hay, si no devuelve un ID del subconjunto del repo o
+   si falla, la de las palabras del pedido (`taxonomia.categoria_por_palabras`,
+   tabla determinística; el pedido manda sobre las respuestas). Si las dos
+   están y la de las palabras es más específica dentro de la rama de la
+   propuesta, esa. Los eventos llevan el ID y la ruta del árbol
+   (`categoria_ruta`); nada del comercio. Las categorías del catálogo que se
+   le ofrecen al intake van primero las del pedido (las de su rama de la
+   taxonomía o las que nombra): el intake ofrece como mucho 40.
 
    **El pedido con las palabras del usuario** (`proxy/pedido_usuario.py`):
    el agente de compras le pasa al comercio una paráfrasis ("20
@@ -291,8 +343,8 @@ prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
    usuario si la búsqueda no agrega nada). Solo por la API de control (con
    token), hasta 1000 caracteres, vence a los 180 s y se usa una vez. Sin
    registro, el pedido es la búsqueda, como siempre. No autoriza nada por
-   sí: umbrales y confirmación de siempre, y la ficha de la demo sigue
-   mandando. Las compras de integrador no lo usan.
+   sí: umbrales y confirmación de siempre (y, con `PROXY_FICHA_DEMO=1`, la
+   ficha de la demo sigue mandando). Las compras de integrador no lo usan.
 2. **Filtro.** Con un filtro cargado (`GUARD_FILTRO`, de Dev 1), cada
    respuesta del proveedor pasa por él antes que nada. Si bloquea o falla,
    el agente del cliente recibe una tarea `failed` con un texto fijo y
@@ -317,16 +369,17 @@ prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
    - **vence:** tarea `failed` sin nada del proveedor ("en pausa"): el
      silencio no es autorización.
 4. **Verificación.** En `create_checkout`, `evaluar()` usa los parámetros
-   autorizados **de esa compra** (si no hay compra, la ficha de la demo).
+   autorizados **de esa compra** (si no hay compra, una ficha vacía sin
+   confirmar: escala; con `PROXY_FICHA_DEMO=1`, la del escenario fijo).
    Una oferta que no los cumple se bloquea aunque el agente la elija.
 
 Reglas que no dependen de la demo:
 
-- **Ficha.** Si el escenario de la demo tiene una ficha confirmada
-  (`scenarios.json` o `fixtures/`), manda esa. La que arma el agente con el
-  pedido solo se usa si no hay ninguna (un comercio real, o
-  `PROXY_FICHA_DEMO=0`). El LLM puede extraer de más o de menos, y no puede
-  achicar ni agrandar la ficha confirmada.
+- **Ficha.** Manda la que confirmó el usuario en el intake (`PROXY_FICHA_DEMO=0`,
+  el default). Solo con `PROXY_FICHA_DEMO=1`, si el escenario fijo tiene una
+  ficha confirmada (`scenarios.json` o `fixtures/`), manda esa: para
+  grabaciones y el benchmark por el proxy. El LLM puede extraer de más o de
+  menos, y no puede achicar ni agrandar la ficha confirmada.
 - **Tiempo.** Las dos esperas caen en la misma llamada del agente del
   cliente, que espera hasta 600 s. El proxy usa un presupuesto de 570 s por
   llamada (los plazos se recortan a lo que queda), y cada llamada al agente
@@ -368,8 +421,8 @@ Reglas que no dependen de la demo:
 | `PROXY_ESPERA_CONTEXTO_S` | `120` | Cuánto se espera el porqué (y cada repregunta del intake) |
 | `PROXY_ESPERA_DECISION_S` | `420` | Cuánto se espera la decisión sobre la oportunidad |
 | `PROXY_PERMITIR_SIN_FILTRO` | `0` | Con la intención activa, sin `GUARD_FILTRO` el proxy no arranca; `1` lo permite (solo tests y demo, se avisa en el log) |
-| `PROXY_FICHA_DEMO` | `1` | `0`: no usar las fichas de la demo (`scenarios.json`, `fixtures/`), como con un comercio real. Mandan los parámetros que armó y confirmó el intake; sin compra, el Guard escala |
-| `DEMO_HOY` | — | Fecha `YYYY-MM-DD` que el agente de intención toma como hoy. Las ofertas de la demo tienen fechas fijas (hoy = domingo `2026-10-18`, "el lunes" = `2026-10-19`): para correrla otro día, `DEMO_HOY=2026-10-18`. Se avisa en el log al arrancar; otro formato no arranca. No llega al Guard: los vencimientos del checkout firmado se miran con el reloj de verdad |
+| `PROXY_FICHA_DEMO` | `0` | `0` (etapa 3): no se usan las fichas de la demo (`scenarios.json`, `fixtures/`), como con un comercio real. Mandan los parámetros que armó y confirmó el intake; sin compra, el Guard escala. `1`: manda la ficha del escenario fijo (grabaciones, benchmark por el proxy, `smoke_checkout.py`). `/guard/state` lo muestra en `ficha_demo` |
+| `DEMO_HOY` | — | Sin fijar, el hoy del reloj. Fecha `YYYY-MM-DD` que el agente de intención toma como hoy, solo para reproducir una grabación de un escenario fijo, que tiene fechas fijas (hoy = domingo `2026-10-18`, "el lunes" = `2026-10-19`): `DEMO_HOY=2026-10-18`. Se avisa en el log al arrancar; otro formato no arranca. No llega al Guard: los vencimientos del checkout firmado se miran con el reloj de verdad |
 | `FABRICANTE_FUENTE` | `fixture` | Ficha del fabricante por GTIN: `fixture` (`fixtures/fabricante/`, datos de prueba rotulados), `icecat` (en vivo) o `ninguna`. Un valor inválido (o `icecat` sin `ICECAT_USUARIO`) no arranca. Ver [`fabricante/README.md`](../fabricante/README.md) (`FABRICANTE_FIXTURES_DIR`, `ICECAT_*`) |
 | `FILTRO_SOLO_HEURISTICAS`, `DECISIONES_PROVEEDOR`, `DECISIONES_MODELO_*`, `FILTRO_TIMEOUT_S` | — | Del filtro y del cliente de decisiones: ver [`filtro/README.md`](../filtro/README.md) |
 
@@ -385,7 +438,8 @@ Reglas que no dependen de la demo:
 `GUARD_FILTRO` (por ejemplo, si corre solo con heurísticas), o `null` si no
 hay filtro o el módulo no lo tiene. También sale en la línea de arranque
 (`filtro: sí (<modo>)`). Solo informa: si `describir()` falla, se avisa y el
-filtro sigue igual.
+filtro sigue igual. `"ficha_demo"` (bool) dice si se usan las fichas de los
+escenarios fijos (`PROXY_FICHA_DEMO`); también solo informa.
 
 ## Seguridad
 
@@ -791,7 +845,7 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo` |
 | `guard_stub.py` | Stub con la firma de `contracts.Evaluador`: bloquea si el elegido es el último cart |
 | `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta `PROXY_MAX_SUSCRIPTORES_SSE`) y JSONL (los de compras de integrador, en el privado) |
-| `fuentes.py` | Intent y ficha de la demo (`ficha_del_intent`, con atributos), catálogo público (con su fuente), `intent_ap2(ficha)` y `ap2_check` con el tope de la compra |
+| `fuentes.py` | Intent y ficha de la demo (`intent_del_escenario`, `ficha_del_intent`, con atributos), categoría de la taxonomía de la ficha (`categoria_de_la_ficha`, `ruta_categoria`, `categorias_para_el_pedido`), catálogo público por SKU o entero (con su fuente), `intent_ap2(ficha)` y `ap2_check` con el tope de la compra |
 | `config.py` | Variables de entorno (también las `GATEWAY_*`), chequeo de loopback y `verificar_gateway` |
 | `persistencia.py` | Registro opcional en Supabase (veredictos y aprobaciones), en segundo plano y sin cortar el flujo si falla |
 | `compras.py` | Etapa 2: registro de compras en memoria (pedido, parámetros autorizados, contexto, oportunidad, decisión) y las dos esperas (`Compra.nueva_espera()` abre otra para cada repregunta). Las compras de integrador (`origen="api"`) además se guardan en el almacén del gateway y se restauran con `Compra.desde_fila` (el comentario de cabecera "todo vive en memoria" vale para la demo) |
@@ -808,7 +862,8 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `subir_benchmark.py` | `python -m proxy.subir_benchmark results/*.json`: sube corridas del benchmark a Supabase |
 | `sql/001_persistencia.sql` | Tablas de Supabase |
 | `sql/003_gateway.sql` | Tablas del estado del gateway (`gw_*`); se aplica a mano |
-| `scripts/smoke_checkout.py` | Prueba real de punta a punta con el cliente A2A del sample |
+| `scripts/smoke_checkout.py` | Prueba real de punta a punta con el cliente A2A del sample (escenarios fijos: exige `PROXY_FICHA_DEMO=1`) |
+| `scripts/smoke_v1_general.py` | Compra de integrador por `/v1` de punta a punta, sin LLM de nuestro lado (gateway de prueba en el proceso o uno levantado) |
 
 ## Tests
 
@@ -823,7 +878,12 @@ falso se puede hacer portar mal (`manipular`, `manipular_sse`, headers) para
 probar cada caso fail-closed. `tests/test_guard_real.py` corre el flujo con el
 `guard.evaluar()` real. Los tests que usan el stub lo habilitan
 explícitamente (`permitir_stub=True` en el `config` de `conftest.py`) y sus
-clientes mandan el token, como el dashboard.
+clientes mandan el token, como el dashboard. El `config` de los tests pide
+además la ficha de la demo (`ficha_demo=True`): los de siempre prueban con la
+del escenario; los del default de la etapa 3 usan `replace(config,
+ficha_demo=False)` (`test_etapa3.py`: ficha del usuario, sin caída a
+zapatillas, categoría siempre y catálogo por SKU; `test_smoke_scripts.py`:
+los dos scripts de prueba).
 
 Tests del gateway de producción (sin red ni Supabase reales: el almacén y el
 receptor de webhooks se inyectan):
