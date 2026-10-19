@@ -256,8 +256,11 @@ async def test_evaluar_recibe_las_entradas_del_contrato(
     assert llamada["ofertas"].carts == fixture["carts"]
     assert llamada["ofertas"].offer_details == fixture["offer_details"]
     assert llamada["ofertas"].comercio_id == "merchant_1"
-    assert set(llamada["catalogo"]) == {"NK-OUT-01", "NK-IND-02", "VL-OUT-03",
-                                        "AX-URB-04", "AX-URB-05"}
+    # El catálogo público es la unión de las zapatillas con el comercio
+    # general (etapa 3): las de la demo tienen que estar todas.
+    assert {"NK-OUT-01", "NK-IND-02", "VL-OUT-03", "AX-URB-04", "AX-URB-05"} <= set(
+        llamada["catalogo"]
+    )
     assert llamada["catalogo"]["NK-OUT-01"]["price"] == 120
     assert llamada["politica"] is None
     assert llamada["hash"] == merchant.ultimo_checkout["checkout_hash"]
