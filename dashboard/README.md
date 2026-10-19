@@ -70,7 +70,11 @@ queda como "Detalle técnico" (`/`).
   ven enteras. Al pedir confirmar la ficha, la línea trae **la ficha**
   (`ficha_parcial` del `pedido_detectado`): parámetro, valor y si lo dijiste,
   lo dedujo (confirmalo), está a confirmar o falta, y qué pasa si no
-  confirmás. "Nuestro agente entendió" sale del contexto estructurado (el
+  confirmás. Si el evento trae la ruta de la categoría en la taxonomía de
+  Google (`categoria_ruta`, lista o texto con `>`), la ficha suma la fila
+  "Categoría" (p. ej. "Electrónica › Computadoras › Laptops") después del
+  producto, y la línea que cierra la ficha la repite; sin ese dato, la ficha
+  queda como siempre. "Nuestro agente entendió" sale del contexto estructurado (el
   cronograma y lo que dijiste flexible: "necesitás 10 el lun 19/10 y 10 el
   jue 22/10; aceptás recibir en partes"), una vez por compra; sin eso, tu
   respuesta de ese turno. Nunca `contexto.necesidad` (texto de un modelo o
@@ -86,14 +90,29 @@ queda como "Detalle técnico" (`/`).
   paso y 12 en total. El relato lo resume en una línea ("Dirección y tarjeta
   de la billetera ✓"). `DEMO_PAUSA_AUTO_S` espacia las respuestas (con el
   plan gratuito de Gemini, 15 pedidos/min, usar 6–8).
-- **Selector de comercio** visible, por categoría (zapatillas, notebook,
-  auriculares, computadoras: "entrega en dos partes" e "inyección", la de
-  las cuatro corridas de FLUJO.md): `POST /api/demo/escenario {"escenario"}` escribe
-  `demo_scenario` donde lo lee el comercio (`WORLD_TEMP_DB_DIR`, por defecto
-  `world/ap2/.temp-db`, el `TEMP_DB_DIR` de `run_world.sh`), valida contra
-  `demo_world.scenario` (solo lectura) y empieza una compra nueva.
-  `GET /api/demo/escenarios` solo ofrece los que `demo_world` conoce (sin
-  `demo_world`, todos): un escenario que world/ todavía no tiene no aparece.
+- **Pedido libre.** El input acepta cualquier pedido: el comercio general
+  busca lo que le pidas. Debajo, cuatro **sugerencias** que no dependen del
+  comportamiento ni de una fecha (monitor de 27" para diseño hasta 400 USD
+  para el viernes; 20 computadoras para el lunes hasta 20000 USD; auriculares
+  con cancelación de ruido hasta 150 USD; zapatillas para correr talle 42
+  hasta 120 USD): un toque llena el input y enviar sigue siendo tuyo. Con un
+  escenario fijo activo, la sugerencia es su pedido (el `user_request` del
+  fixture) o ninguna, porque ese comercio responde siempre lo mismo.
+- **Selector "Comportamiento del comercio"**: cómo responde el comercio
+  general (los presets `"tipo": "general"` de `scenarios.json`): Honesto,
+  Inyección en la oferta, Ofrece otra categoría a tiempo, Miente un dato,
+  Miente la categoría, Precio inflado, Entrega en partes, Entrega en partes +
+  inyección, Sin stock suficiente y Sin resultados. Un preset general que
+  world/ sume sin etiqueta acá aparece al final con el nombre armado desde su
+  id. Los **escenarios fijos** (zapatillas, notebook, auriculares,
+  computadoras) quedan en el grupo "Escenarios fijos (prueba)", que se
+  muestra solo con `DEMO_ESCENARIOS_FIJOS=1`. `POST /api/demo/escenario
+  {"escenario"}` escribe `demo_scenario` donde lo lee el comercio
+  (`WORLD_TEMP_DB_DIR`, por defecto `world/ap2/.temp-db`, el `TEMP_DB_DIR` de
+  `run_world.sh`) y empieza una compra nueva; acepta solo lo que el selector
+  ofrece. `GET /api/demo/escenarios` solo ofrece lo que `demo_world` conoce
+  (sin `demo_world`, todo): un preset que world/ todavía no tiene no aparece y,
+  si no queda ninguno, el selector lo dice.
 - **Interruptor "Intermediario: activado/desactivado"**: `POST
   /api/proxy/guard/state` (el reenvío con token de siempre) después de una
   compra nueva. Apagado, el proxy deja fuera filtro, intake, oportunidades y
@@ -101,10 +120,13 @@ queda como "Detalle técnico" (`/`).
   diagrama baja al Guard atenuado y los mensajes van directo agente ↔
   comercio; el relato lo dice en una línea.
 - **Con y sin intermediario**: al terminar una corrida (pagada, frenada,
-  cortada, retenida, vencida) se guarda su resultado **por escenario y lado**
-  en `localStorage` (`psg.demo.comparacion`) y se muestra lado a lado para el
-  comercio elegido ("Se compró Zento Slim 14, con 8 GB de memoria RAM
-  (pediste 16 GB)" / "Frenada antes de la firma: no se pagó nada").
+  cortada, retenida, vencida) se guarda su resultado **por comportamiento del
+  comercio, pedido y lado** en `localStorage` (`psg.demo.contraste`, las 40
+  más nuevas; el pedido se compara sin mayúsculas, tildes ni puntuación) y se
+  muestra lado a lado cuando volvés a hacer el mismo pedido al mismo
+  comportamiento ("Se compró Zento Slim 14, con 8 GB de memoria RAM (pediste
+  16 GB)" / "Frenada antes de la firma: no se pagó nada"). `/demo/clasico`
+  sigue guardando por escenario en `psg.demo.comparacion`.
 - **Replay (plan B)**: en `/demo/clasico`, el selector "Grabación…"
   reproduce un `.jsonl` de `dashboard/demo/` o `.logs/` con el mismo
   diagrama y relato. `/demo` no lo usa.
@@ -115,6 +137,7 @@ queda como "Detalle técnico" (`/`).
 | `WORLD_TEMP_DB_DIR` | `world/ap2/.temp-db` | Carpeta donde el comercio lee `demo_scenario` |
 | `DEMO_AUTO` | `1` | `0` apaga las respuestas automáticas |
 | `DEMO_PAUSA_AUTO_S` | `0` | Segundos entre respuestas automáticas (0–60) |
+| `DEMO_ESCENARIOS_FIJOS` | `0` | `1` suma al selector los escenarios fijos de prueba (benchmark y tests) |
 
 ### API de `/demo` (para rehacer la vista sin romper la lógica)
 
@@ -122,9 +145,9 @@ queda como "Detalle técnico" (`/`).
 |---|---|
 | `GET /demo` | La página (`static/demo.html`) |
 | `GET /api/demo/estado` | `{sesion: {id, creada}, ocupado, auto, fin, escenario, mensajes: [...]}`. Mensajes: `usuario {texto, destino}`, `agente {texto, autor, oculto}`, `herramienta {nombre, args}` (solo `find_products.catalog_search` y `select_cart.cart_id`), `auto {paso, texto, detalle}`, `pago {cart_id}`, `error_agente {guard}` (sin texto crudo), `error {codigo}` |
-| `GET /api/demo/escenarios` | `{activo, grupos: [{categoria, opciones: [{id, etiqueta, pedido}]}]}` (`pedido` = el `user_request` del fixture) |
+| `GET /api/demo/escenarios` | `{activo, grupos: [{categoria, tipo, opciones: [{id, etiqueta, honesto, pedido}]}], nombres: {id: {etiqueta, tipo, pedido}}, sugerencias: [{etiqueta, texto}]}`. `tipo`: `general` o `fijo`; `honesto`: `true`, `false` o `null` (solo pinta el punto del botón); `pedido` = el `user_request` del fixture de un escenario fijo (`null` en los generales); `nombres` cubre todo lo conocido, aunque no se ofrezca (el activo puede ser uno fijo) |
 | `POST /api/demo/mensaje` `{"texto"}` | 202 `{destino: "agente"}`; 200/404/409 del proxy `{destino: contexto\|confirmar\|omitir\|decision}`; 422 `se_espera_si_o_no`; 409 `agente_ocupado`; 400 |
-| `POST /api/demo/escenario` `{"escenario"}` | `{activo}`; 400 si no está en la lista blanca ni en `demo_world` |
+| `POST /api/demo/escenario` `{"escenario"}` | `{activo}`; 400 si el selector no lo ofrece (fuera de la lista, desconocido para `demo_world` o fijo sin `DEMO_ESCENARIOS_FIJOS=1`) |
 | `POST /api/demo/nueva` `{}` | Compra nueva (otra sesión de ADK; cancela la que corría) |
 | `POST /api/demo/auto` `{"auto": bool}` | Prende o apaga el modo demo |
 
@@ -138,13 +161,17 @@ Lógica sin DOM (la vista solo la pinta; testeada con `node --test`):
   `modoDelInput({compras, ocupado, desde, ahora, replay})` → `{modo,
   etiqueta, placeholder, enviar, compraId}`, `desenlace(items)`,
   `resultadoCorrida(items, {escenario, guardActivo})`,
-  `resumenComparacion(sin, con)`, `guardarResultado(mapa, resultado)`.
+  `resumenComparacion(sin, con)`, `guardarResultado(mapa, resultado,
+  {clave, maximo})`, `claveComparacion(escenario, pedido)`,
+  `pedidoDeCorrida(items)`, `sugerenciasPara(escenarios, activo)`,
+  `nombreDeEscenario(escenarios, id)`, `textoDelComercio(escenarios, activo)`.
 - `lib/relato.js`: `armarRelato(items, {filtro})` → `[{id, ts, hora, texto,
   tono, actor, ficha?, nota?}]` (tono: `neutro|tenue|ok|aviso|crit|usuario|agente`; actor:
   `usuario|agente|guard|comercio|sistema|ap2`; `ficha` solo al pedir
-  confirmarla), `filasFicha(ficha_parcial)` → `[{nombre, valor, marca, tono,
-  preferido}]`, `textoEntendido(contexto)`, `resumirAgente`,
-  `limpiarTexto`, `humanizarAtributo`, `formatearMedida`.
+  confirmarla), `filasFicha(ficha_parcial, {categoriaRuta})` → `[{nombre,
+  valor, marca, tono, preferido}]`, `rutaCategoria(ruta)`,
+  `textoEntendido(contexto)`, `resumirAgente`, `limpiarTexto`,
+  `humanizarAtributo`, `formatearMedida`.
 - `lib/diagrama.js`: `geometria("horizontal"|"vertical")` (nodos, paths de
   las aristas, cuánto se corre el Guard apagado), `estadoInicial`,
   `paso(estado, item)` → `{estado, flujos: [{de, a, tono, clave,
@@ -154,8 +181,10 @@ Lógica sin DOM (la vista solo la pinta; testeada con `node --test`):
 - `demo.js` (controlador): sondea `/api/demo/estado` (0,9 s),
   `/api/proxy/guard/compras` (1,5 s) y `/api/proxy/guard/state` (4 s), escucha
   el SSE del proxy, y pinta en `#diagrama`, `#relato`, `#contraste`,
-  `#escenarios`, `#intermediario`, `#formulario/#entrada`, `#nueva`, `#auto`,
-  `#grabacion/#reproducir`.
+  `#escenarios` (y `#escenarios-vacio`), `#intermediario`,
+  `#formulario/#entrada`, `#sugerencias`, `#nueva` y `#historial`.
+  `tests/js/pagina.test.mjs` revisa que los controladores carguen como
+  módulos y que cada `#id` que busca `demo.js` esté en `demo.html`.
 
 ## Fuentes de datos
 

@@ -13,8 +13,9 @@ import { registrarSondeo, unaALaVez } from "./lib/conexion.js";
 import { armarRelato } from "./lib/relato.js";
 import { estadoInicial, geometria, NODOS, paso } from "./lib/diagrama.js";
 import {
-  desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, resultadoCorrida, resumenComparacion,
-  retenerLineas, tonosComparacion,
+  claveComparacion, desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, nombreDeEscenario,
+  pedidoDeCorrida, resultadoCorrida, resumenComparacion, retenerLineas, sugerenciasPara, textoDelComercio,
+  tonosComparacion,
 } from "./lib/demo.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -36,8 +37,16 @@ function leerHistorial() {
     return Array.isArray(h) ? h : [];
   } catch { return []; }
 }
+// El contraste con y sin intermediario, por comportamiento del comercio y
+// pedido (psg.demo.contraste). El de /demo/clasico, por escenario, sigue en
+// psg.demo.comparacion.
+const CLAVE_CONTRASTE = "demo.contraste";
+const MAX_CONTRASTES = 40;
 function leerComparacion() {
-  try { return JSON.parse(leerPref("demo.comparacion", "{}")) || {}; } catch { return {}; }
+  try {
+    const mapa = JSON.parse(leerPref(CLAVE_CONTRASTE, "{}"));
+    return mapa && typeof mapa === "object" && !Array.isArray(mapa) ? mapa : {};
+  } catch { return {}; }
 }
 
 // ---------------------------------------------------------------- estado
@@ -47,7 +56,8 @@ const estado = {
   demo: { sesion: { id: null, creada: null }, ocupado: false, auto: true, fin: null, mensajes: [], escenario: null },
   compras: [],
   proxy: { conectado: null, fallos: 0, guardActivo: null, filtro: false },
-  escenarios: { activo: null, grupos: [] },
+  escenarios: { activo: null, grupos: [], nombres: {}, sugerencias: [] },
+  escenariosCargados: false,
   replay: null, // {nombre, todos, eventos, inicio, temporizador}
   enviando: false,
   cambiando: false,
@@ -106,7 +116,8 @@ const refrescarProxy = unaALaVez(async () => {
 async function cargarEscenarios() {
   const r = await pedir("/api/demo/escenarios");
   if (r.ok && Array.isArray(r.datos?.grupos)) {
-    estado.escenarios = r.datos;
+    estado.escenarios = { nombres: {}, sugerencias: [], ...r.datos };
+    estado.escenariosCargados = true;
     construirSelector();
     programarRender();
   }
@@ -526,24 +537,33 @@ function escenarioActivo() {
   return estado.demo.escenario ?? estado.escenarios.activo ?? null;
 }
 
+/** El escenario con el que respondió el comercio en esta corrida (el que dicen sus eventos). */
+function escenarioDeCorrida(items) {
+  return [...items].reverse().find((i) => i.escenario)?.escenario ?? escenarioActivo();
+}
+
 function registrarCorrida(items) {
   if (estado.replay) return;
   const fin = desenlace(items);
   if (!fin) return;
-  const clave = `${estado.demo.sesion?.creada}|${fin.item.id}`;
-  if (estado.guardadas.has(clave)) return;
-  estado.guardadas.add(clave);
+  const vista = `${estado.demo.sesion?.creada}|${fin.item.id}`;
+  if (estado.guardadas.has(vista)) return;
+  estado.guardadas.add(vista);
   const delProxy = [...items].reverse().find((i) => i.origen === "proxy" && typeof i.guard_activo === "boolean");
-  const escenario = [...items].reverse().find((i) => i.escenario)?.escenario ?? escenarioActivo();
+  const escenario = escenarioDeCorrida(items);
   const resultado = resultadoCorrida(items, {
     escenario, guardActivo: delProxy ? delProxy.guard_activo : estado.proxy.guardActivo !== false,
   });
-  estado.comparacion = guardarResultado(estado.comparacion, resultado);
-  guardarPref("demo.comparacion", JSON.stringify(estado.comparacion));
+  // El mismo pedido al mismo comportamiento: con pedidos libres, el escenario
+  // solo compararía compras distintas.
+  const clave = claveComparacion(escenario, pedidoDeCorrida(items));
+  estado.comparacion = guardarResultado(estado.comparacion, resultado, { clave, maximo: MAX_CONTRASTES });
+  guardarPref(CLAVE_CONTRASTE, JSON.stringify(estado.comparacion));
 }
 
-function renderContraste() {
-  const par = estado.comparacion[escenarioActivo()] ?? {};
+function renderContraste(items) {
+  const clave = claveComparacion(escenarioDeCorrida(items), pedidoDeCorrida(items));
+  const par = (clave && estado.comparacion[clave]) || {};
   const textos = resumenComparacion(par.sin ?? null, par.con ?? null);
   const tonos = tonosComparacion(par.sin ?? null, par.con ?? null);
   $("#contraste").hidden = !(textos.sin || textos.con) || Boolean(estado.replay);
@@ -562,21 +582,38 @@ function renderContraste() {
 const formulario = $("#formulario");
 const entrada = $("#entrada");
 
-function pedidoDeEjemplo() {
-  const activo = escenarioActivo();
-  for (const g of estado.escenarios.grupos || []) {
-    for (const o of g.opciones || []) if (o.id === activo) return o.pedido ?? null;
-  }
-  return null;
-}
-
 function modoActual() {
-  const m = modoDelInput({
+  return modoDelInput({
     compras: estado.compras, ocupado: estado.demo.ocupado || estado.enviando,
     desde: estado.demo.sesion?.creada, ahora: Date.now(), replay: Boolean(estado.replay),
   });
-  if (m.modo === "agente" && pedidoDeEjemplo()) m.placeholder = "¿Qué querés comprar?";
-  return m;
+}
+
+// Pedidos para empezar (lib/demo.js → sugerenciasPara): los mismos con
+// cualquier comportamiento del comercio. Un toque llena el input; enviar
+// sigue siendo del usuario.
+const sugerencias = $("#sugerencias");
+
+function renderSugerencias(m, lineasVisibles) {
+  const lista = sugerenciasPara(estado.escenarios, escenarioActivo());
+  sugerencias.hidden = !(m.modo === "agente" && lista.length && !entrada.value && !lineasVisibles);
+  const firma = JSON.stringify(lista);
+  if (sugerencias.dataset.firma === firma) return;
+  sugerencias.dataset.firma = firma;
+  sugerencias.replaceChildren(...lista.map((s) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sugerencia";
+    b.textContent = s.etiqueta;
+    b.title = s.texto;
+    b.setAttribute("aria-label", `Usar el pedido: ${s.texto}`);
+    b.addEventListener("click", () => {
+      entrada.value = s.texto;
+      entrada.focus();
+      programarRender();
+    });
+    return b;
+  }));
 }
 
 function renderInput(lineasVisibles) {
@@ -587,8 +624,7 @@ function renderInput(lineasVisibles) {
   if (entrada.placeholder !== m.placeholder) entrada.placeholder = m.placeholder;
   entrada.readOnly = m.modo === "replay";
   $("#enviar").setAttribute("aria-disabled", String(!m.enviar));
-  const ejemplo = $("#ejemplo");
-  ejemplo.hidden = !(m.modo === "agente" && pedidoDeEjemplo() && !entrada.value && !lineasVisibles);
+  renderSugerencias(m, lineasVisibles);
 }
 
 function avisar(textoAviso, tono = "") {
@@ -638,22 +674,19 @@ async function enviar(ev) {
 
 formulario.addEventListener("submit", enviar);
 entrada.addEventListener("input", () => programarRender());
-$("#ejemplo").addEventListener("click", () => {
-  const p = pedidoDeEjemplo();
-  if (!p) return;
-  entrada.value = p;
-  entrada.focus();
-  programarRender();
-});
 
 // ---------------------------------------------------------------- controles
 
+// Comportamientos del comercio general y, con DEMO_ESCENARIOS_FIJOS=1, los
+// escenarios fijos de prueba (GET /api/demo/escenarios).
 function construirSelector() {
   const contenedor = $("#escenarios");
   contenedor.replaceChildren();
-  for (const g of estado.escenarios.grupos || []) {
+  const grupos = (estado.escenarios.grupos || []).filter((g) => (g.opciones || []).length);
+  for (const g of grupos) {
     const grupo = document.createElement("div");
     grupo.className = "grupo";
+    grupo.dataset.tipo = g.tipo ?? "";
     grupo.setAttribute("role", "group");
     grupo.setAttribute("aria-label", g.categoria);
     const nombre = document.createElement("span");
@@ -667,8 +700,8 @@ function construirSelector() {
       b.className = "opcion";
       b.dataset.escenario = o.id;
       b.textContent = o.etiqueta;
-      if (o.etiqueta === "honesto") b.dataset.honesto = "true";
-      else if (/inyecci|miente|inflado/.test(o.etiqueta)) b.dataset.honesto = "false";
+      // El punto del botón: verde si el comercio es honesto, rojo si ataca o miente.
+      if (typeof o.honesto === "boolean") b.dataset.honesto = String(o.honesto);
       b.setAttribute("aria-pressed", "false");
       b.setAttribute("aria-label", `${g.categoria}: ${o.etiqueta}`);
       b.addEventListener("click", () => elegirEscenario(o.id));
@@ -676,6 +709,7 @@ function construirSelector() {
     }
     contenedor.append(grupo);
   }
+  $("#escenarios-vacio").hidden = !estado.escenariosCargados || grupos.length > 0;
 }
 
 async function elegirEscenario(id) {
@@ -689,7 +723,7 @@ async function elegirEscenario(id) {
     await refrescarEstado();
     entrada.focus();
   } else {
-    avisar("No se pudo cambiar el comercio.", "error");
+    avisar("No se pudo cambiar el comportamiento del comercio.", "error");
   }
   programarRender();
 }
@@ -815,7 +849,7 @@ function render() {
   avanzarDiagrama(items);
   renderInput(relato.children.length > 0);
   renderControles();
-  renderContraste();
+  renderContraste(items);
   renderHistorial();
   renderCabecera(anterior);
 }
@@ -826,10 +860,7 @@ const MAX_HISTORIAL = 30;
 const MARCA_FIN = { ok: "✓", crit: "✕", aviso: "!" };
 
 function nombreEscenario(id) {
-  for (const g of estado.escenarios.grupos || []) {
-    for (const o of g.opciones || []) if (o.id === id) return `${g.categoria} · ${o.etiqueta}`;
-  }
-  return id ?? "";
+  return nombreDeEscenario(estado.escenarios, id);
 }
 
 /** La compra en curso queda en el historial apenas el usuario escribe algo. */
@@ -880,7 +911,8 @@ function renderHistorial() {
     titulo.textContent = h.titulo;
     const sub = document.createElement("span");
     sub.className = "historial-sub";
-    sub.textContent = `${nombreEscenario(h.escenario)} · ${h.guardActivo ? "con" : "sin"} intermediario · ${h.fin?.texto ?? "en curso"}`;
+    sub.textContent = [nombreEscenario(h.escenario), `${h.guardActivo ? "con" : "sin"} intermediario`, h.fin?.texto ?? "en curso"]
+      .filter(Boolean).join(" · ");
     b.append(marca, titulo, sub);
     b.addEventListener("click", () => {
       estado.viendo = h.id === estado.demo.sesion?.creada ? null : h.id;
@@ -904,10 +936,7 @@ function renderCabecera(anterior) {
   if (pastilla.textContent !== valor) pastilla.textContent = valor;
   pastilla.dataset.estado = estado.proxy.guardActivo === true ? "activado" : estado.proxy.guardActivo === false ? "desactivado" : "cargando";
   const sub = $("#bienvenida-sub");
-  const comercio = nombreEscenario(escenarioActivo());
-  const textoSub = comercio
-    ? `Comercio: ${comercio}. Tu agente negocia; KaiAI revisa antes de que firmes.`
-    : "Tu agente negocia con el comercio; KaiAI revisa antes de que firmes.";
+  const textoSub = textoDelComercio(estado.escenarios, escenarioActivo());
   if (sub.textContent !== textoSub) sub.textContent = textoSub;
 }
 
