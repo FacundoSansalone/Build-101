@@ -19,8 +19,10 @@ Dos almacenes con la misma interfaz (`tipos_gateway.AlmacenEstado`):
 
 Fail-closed: cualquier falla del almacén es `ErrorAlmacen` y quien llama
 bloquea (503 o corte); nunca se toma una falla por "no hay nada". Lo que se
-escribe en segundo plano va por `TareasEnFondo`, que nunca lanza: si una
-escritura se pierde y hay un reinicio, falta el dato y el proxy bloquea.
+escribe en segundo plano va por `TareasEnFondo.programar`, que nunca lanza: si
+una escritura se pierde y hay un reinicio, falta el dato y el proxy bloquea.
+Con varias instancias, `TareasEnFondo.barrera` espera las escrituras en vuelo
+antes de responder y avisa si falló una decisiva.
 
 Este módulo no decide cuándo persistir: lo decide el núcleo del proxy.
 """
@@ -28,10 +30,13 @@ Este módulo no decide cuándo persistir: lo decide el núcleo del proxy.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import copy
 import logging
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -46,6 +51,7 @@ from proxy.tipos_gateway import (
     AlmacenEstado,
     EntregaWebhook,
     ErrorAlmacen,
+    EscrituraDecisivaFallida,
     es_id,
 )
 
@@ -204,6 +210,15 @@ def fila_aprobacion_gw(
 # -- tareas en segundo plano --------------------------------------------------
 
 
+@dataclass
+class _Ambito:
+    """Las escrituras decisivas de un pedido (ver `TareasEnFondo.ambito`):
+    las que fallaron y todavía no se informaron, y las que siguen en vuelo."""
+
+    fallas: list[str] = field(default_factory=list)
+    en_vuelo: dict[asyncio.Task[None], str] = field(default_factory=dict)
+
+
 class TareasEnFondo:
     """Escrituras que no demoran la respuesta (actualizar la compra, las
     ofertas, el último veredicto y las entregas).
@@ -211,7 +226,15 @@ class TareasEnFondo:
     Tope de tareas en vuelo: si el almacén se cuelga, no crece sin límite;
     lo que no entra se descarta y se avisa. `programar` nunca lanza: una
     falla se loguea y va a `al_fallar` (el proxy la convierte en un evento
-    `error`)."""
+    `error`).
+
+    Con varias instancias (sin `waitUntil`, lo que queda en vuelo al
+    responder se puede perder) el núcleo llama a `barrera` antes de
+    responder, y marca `decisiva=True` las escrituras sin las que la
+    respuesta no vale (por ejemplo, las ofertas de un `find_products`): si
+    una falla, la barrera lanza `EscrituraDecisivaFallida` y el pedido
+    responde 503 `estado_no_disponible`. Las decisivas se agrupan por pedido
+    (`ambito`): la falla de un pedido no la recibe otro."""
 
     def __init__(
         self,
@@ -224,6 +247,12 @@ class TareasEnFondo:
         self._tareas: set[asyncio.Task[None]] = set()
         self.errores = 0
         self.descartadas = 0
+        self.fallas_decisivas = 0
+        # Una variable por instancia: dos proxies en el mismo proceso (los
+        # tests) no se mezclan las decisivas.
+        self._ambito: contextvars.ContextVar[_Ambito | None] = contextvars.ContextVar(
+            f"tareas_en_fondo_{id(self)}", default=None
+        )
 
     def _avisar(self, mensaje: str) -> None:
         logger.warning("%s", mensaje)
@@ -233,44 +262,126 @@ class TareasEnFondo:
             except Exception:  # noqa: BLE001 — el aviso nunca rompe al que escribe
                 logger.exception("al_fallar lanzó")
 
+    @contextlib.contextmanager
+    def ambito(self) -> Iterator[None]:
+        """Un pedido: las decisivas programadas adentro (en esta tarea o en
+        las que se creen desde acá) las informa la `barrera` de adentro.
+
+        Sin `ambito` explícito, la primera decisiva de una tarea abre uno
+        para esa tarea (cada pedido HTTP corre en su propia tarea)."""
+        token = self._ambito.set(_Ambito())
+        try:
+            yield
+        finally:
+            self._ambito.reset(token)
+
+    def _ambito_actual(self) -> _Ambito:
+        ambito = self._ambito.get()
+        if ambito is None:
+            ambito = _Ambito()
+            self._ambito.set(ambito)
+        return ambito
+
     def programar(
-        self, coro: Awaitable[None], descripcion: str, *, obligatoria: bool = False
+        self,
+        coro: Awaitable[None],
+        descripcion: str,
+        *,
+        obligatoria: bool = False,
+        decisiva: bool = False,
     ) -> None:
         """`obligatoria`: no se descarta por el tope de tareas en vuelo (el
         paso de una compra a un estado terminal: si se perdiera, la compra
-        cortada por seguridad reviviría después de un reinicio)."""
+        cortada por seguridad reviviría después de un reinicio).
+
+        `decisiva`: además de no descartarse por el tope, si falla (o no se
+        puede programar) queda registrada en el ámbito del pedido y la
+        informa `barrera`. Sin `decisiva`, todo como siempre."""
+        ambito = self._ambito_actual() if decisiva else None
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             _cerrar_coro(coro)
             self.descartadas += 1
+            if ambito is not None:
+                self._registrar_falla(ambito, f"{descripcion} (sin loop)")
             self._avisar(f"Estado: no se guardó {descripcion} (sin loop)")
             return
-        if len(self._tareas) >= self._max and not obligatoria:
+        if len(self._tareas) >= self._max and not (obligatoria or decisiva):
             _cerrar_coro(coro)
             self.descartadas += 1
             self._avisar(f"Estado: no se guardó {descripcion} (demasiadas escrituras en vuelo)")
             return
-        tarea = loop.create_task(self._correr(coro, descripcion))
+        tarea = loop.create_task(self._correr(coro, descripcion, ambito))
         self._tareas.add(tarea)
         tarea.add_done_callback(self._tareas.discard)
+        if ambito is not None:
+            ambito.en_vuelo[tarea] = descripcion
 
-    async def _correr(self, coro: Awaitable[None], descripcion: str) -> None:
+    def _registrar_falla(self, ambito: _Ambito, descripcion: str) -> None:
+        ambito.fallas.append(descripcion)
+        self.fallas_decisivas += 1
+
+    def _falla_de_tarea(self, ambito: _Ambito | None, descripcion: str) -> None:
+        """Una decisiva que falló, si todavía nadie la informó como "sin
+        confirmar" (una barrera que venció antes)."""
+        if ambito is not None and asyncio.current_task() in ambito.en_vuelo:
+            self._registrar_falla(ambito, descripcion)
+
+    async def _correr(
+        self, coro: Awaitable[None], descripcion: str, ambito: _Ambito | None = None
+    ) -> None:
         try:
             await coro
         except asyncio.CancelledError:
+            self._falla_de_tarea(ambito, f"{descripcion} (cancelada)")
             raise
         except ErrorAlmacen as e:
             self.errores += 1
+            self._falla_de_tarea(ambito, descripcion)
             self._avisar(f"Estado: no se guardó {descripcion} ({e})")
         except Exception as e:  # noqa: BLE001 — nunca lanza
             self.errores += 1
+            self._falla_de_tarea(ambito, descripcion)
             logger.exception("Estado: error inesperado guardando %s", descripcion)
             self._avisar(f"Estado: no se guardó {descripcion} ({type(e).__name__})")
+        finally:
+            if ambito is not None:
+                ambito.en_vuelo.pop(asyncio.current_task(), None)  # type: ignore[arg-type]
 
     @property
     def pendientes(self) -> int:
         return len(self._tareas)
+
+    async def barrera(self, timeout_s: float) -> bool:
+        """Espera hasta `timeout_s` las escrituras que estaban en vuelo al
+        llamarla (de cualquier pedido: sin `waitUntil`, lo que queda en vuelo
+        al responder se puede perder). True si terminaron todas; no cancela
+        las que no.
+
+        Después, si en el ámbito de este pedido hay decisivas que fallaron,
+        que no se pudieron programar o que siguen sin terminar, lanza
+        `EscrituraDecisivaFallida` (un `ErrorAlmacen`) con sus descripciones,
+        y las olvida: otra barrera del mismo ámbito no las repite."""
+        pendientes = set(self._tareas)
+        sin_terminar: set[asyncio.Task[None]] = set()
+        if pendientes:
+            _, sin_terminar = await asyncio.wait(pendientes, timeout=max(0.0, timeout_s))
+            # Ceder una vuelta: los done callbacks (`discard`) corren antes de volver.
+            await asyncio.sleep(0)
+        ambito = self._ambito.get()
+        if ambito is not None:
+            fallas = list(ambito.fallas)
+            ambito.fallas.clear()
+            for tarea, descripcion in list(ambito.en_vuelo.items()):
+                if not tarea.done():
+                    fallas.append(f"{descripcion} (sin confirmar)")
+                    del ambito.en_vuelo[tarea]
+                    self.fallas_decisivas += 1
+            if fallas:
+                logger.error("Estado: escrituras decisivas sin confirmar: %s", ", ".join(fallas))
+                raise EscrituraDecisivaFallida(tuple(fallas))
+        return not sin_terminar
 
     async def esperar(self) -> None:
         """Espera las escrituras en vuelo (tests y cierre)."""

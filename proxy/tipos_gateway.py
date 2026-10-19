@@ -99,6 +99,19 @@ class ErrorAlmacen(RuntimeError):
     """El almacén de estado no respondió o rechazó la operación (fail-closed)."""
 
 
+class EscrituraDecisivaFallida(ErrorAlmacen):
+    """Una escritura decisiva en segundo plano (`TareasEnFondo.programar(...,
+    decisiva=True)`) falló, se descartó o no terminó antes de la barrera.
+
+    Es un `ErrorAlmacen`: quien ya traduce esos errores a 503
+    `estado_no_disponible` no necesita nada más. `fallas` trae las
+    descripciones (fijas, sin datos de la compra)."""
+
+    def __init__(self, fallas: tuple[str, ...]) -> None:
+        super().__init__("escrituras decisivas sin confirmar: " + ", ".join(fallas))
+        self.fallas = fallas
+
+
 # -- solicitudes ya validadas (las arma api_v1) ------------------------------
 @dataclass(frozen=True)
 class SolicitudCompra:

@@ -9,6 +9,7 @@ aprobación una sola vez y ids validados antes de tocar nada.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -25,7 +26,7 @@ from proxy.estado import (
     fila_ultimo_veredicto,
 )
 from proxy.tests.test_compras_api import crear
-from proxy.tipos_gateway import EntregaWebhook, ErrorAlmacen
+from proxy.tipos_gateway import EntregaWebhook, ErrorAlmacen, EscrituraDecisivaFallida
 
 pytestmark = pytest.mark.anyio
 
@@ -384,3 +385,171 @@ def test_supabase_sin_credenciales_da_value_error():
 def test_valor_desconocido_da_value_error():
     with pytest.raises(ValueError):
         estado_desde_entorno({"GATEWAY_ESTADO": "redis"})
+
+
+# -- tareas en segundo plano: barrera y decisivas (varias instancias) ----------------
+
+
+async def test_barrera_sin_tareas_y_con_tareas_que_terminan():
+    fondo = TareasEnFondo()
+    assert await fondo.barrera(0.1) is True
+    hechas: list[str] = []
+
+    async def escribir(nombre: str) -> None:
+        await asyncio.sleep(0)
+        hechas.append(nombre)
+
+    fondo.programar(escribir("compra"), "compra")
+    fondo.programar(escribir("ofertas"), "ofertas", decisiva=True)
+    assert await fondo.barrera(1.0) is True
+    assert sorted(hechas) == ["compra", "ofertas"] and fondo.pendientes == 0
+
+
+async def test_barrera_vence_sin_cancelar_y_sin_decisivas_no_lanza():
+    """Sin `decisiva`, todo como hoy: una escritura lenta o que falla no
+    corta la respuesta (la barrera solo dice si terminaron)."""
+    fondo = TareasEnFondo()
+    liberar = asyncio.Event()
+
+    async def lenta() -> None:
+        await liberar.wait()
+
+    async def falla() -> None:
+        raise ErrorAlmacen("HTTP 500")
+
+    fondo.programar(lenta(), "compra")
+    fondo.programar(falla(), "veredicto")
+    assert await fondo.barrera(0.01) is False
+    assert fondo.pendientes == 1  # no se canceló
+    liberar.set()
+    assert await fondo.barrera(1.0) is True
+    assert fondo.errores == 1 and fondo.fallas_decisivas == 0
+
+
+async def test_decisiva_que_falla_hace_lanzar_la_barrera_una_vez():
+    avisos: list[str] = []
+    fondo = TareasEnFondo(al_fallar=avisos.append)
+
+    async def falla() -> None:
+        raise ErrorAlmacen("HTTP 503")
+
+    async def bien() -> None:
+        return None
+
+    fondo.programar(bien(), "compra", decisiva=True)
+    fondo.programar(falla(), "ofertas", decisiva=True)
+    with pytest.raises(EscrituraDecisivaFallida) as e:
+        await fondo.barrera(1.0)
+    assert isinstance(e.value, ErrorAlmacen)  # quien ya da 503 por ErrorAlmacen no cambia
+    assert e.value.fallas == ("ofertas",)
+    assert any("ofertas" in a for a in avisos)
+    # Informada, no se repite en la barrera siguiente del mismo pedido.
+    assert await fondo.barrera(0.1) is True
+    assert fondo.fallas_decisivas == 1
+
+
+async def test_decisiva_sin_terminar_al_vencer_la_barrera():
+    fondo = TareasEnFondo()
+    liberar = asyncio.Event()
+
+    async def lenta_que_falla() -> None:
+        await liberar.wait()
+        raise ErrorAlmacen("tarde")
+
+    fondo.programar(lenta_que_falla(), "compra", decisiva=True)
+    with pytest.raises(EscrituraDecisivaFallida) as e:
+        await fondo.barrera(0.01)
+    assert e.value.fallas == ("compra (sin confirmar)",)
+    # Si después falla, ya estaba informada: no vuelve a salir.
+    liberar.set()
+    assert await fondo.barrera(1.0) is True
+
+
+async def test_decisivas_de_cada_pedido_por_separado():
+    """La falla de un pedido no la recibe la barrera de otro (cada pedido
+    HTTP corre en su propia tarea y tiene su ámbito)."""
+    fondo = TareasEnFondo()
+
+    async def falla() -> None:
+        raise ErrorAlmacen("x")
+
+    async def bien() -> None:
+        return None
+
+    async def pedido(coro, descripcion: str) -> tuple[str, ...]:
+        fondo.programar(coro, descripcion, decisiva=True)
+        await asyncio.sleep(0)
+        try:
+            await fondo.barrera(1.0)
+        except EscrituraDecisivaFallida as e:
+            return e.fallas
+        return ()
+
+    malo, bueno = await asyncio.gather(
+        asyncio.create_task(pedido(falla(), "ofertas")),
+        asyncio.create_task(pedido(bien(), "compra")),
+    )
+    assert malo == ("ofertas",) and bueno == ()
+
+
+async def test_ambito_explicito_aisla_dentro_de_la_misma_tarea():
+    fondo = TareasEnFondo()
+
+    async def falla() -> None:
+        raise ErrorAlmacen("x")
+
+    with fondo.ambito():
+        fondo.programar(falla(), "ofertas", decisiva=True)
+        with fondo.ambito():
+            assert await fondo.barrera(1.0) is True  # el ámbito de adentro no la ve
+        with pytest.raises(EscrituraDecisivaFallida):
+            await fondo.barrera(1.0)
+
+
+async def test_decisiva_no_se_descarta_por_el_tope():
+    fondo = TareasEnFondo(max_pendientes=1)
+    liberar = asyncio.Event()
+
+    async def lenta() -> None:
+        await liberar.wait()
+
+    fondo.programar(lenta(), "una")
+    fondo.programar(lenta(), "dos", decisiva=True)  # entra igual
+    assert fondo.pendientes == 2 and fondo.descartadas == 0
+    liberar.set()
+    assert await fondo.barrera(1.0) is True
+
+
+def test_decisiva_sin_loop_queda_como_falla():
+    fondo = TareasEnFondo()
+
+    async def nunca() -> None:  # pragma: no cover
+        raise AssertionError
+
+    contexto = contextvars.copy_context()
+    contexto.run(fondo.programar, nunca(), "compra", decisiva=True)
+    assert fondo.descartadas == 1
+
+    async def barrera() -> tuple[str, ...]:
+        try:
+            await fondo.barrera(0.1)
+        except EscrituraDecisivaFallida as e:
+            return e.fallas
+        return ()
+
+    # El ámbito vive en el contexto donde se programó.
+    assert contexto.run(asyncio.run, barrera()) == ("compra (sin loop)",)
+
+
+async def test_decisiva_cancelada_al_cerrar():
+    fondo = TareasEnFondo()
+
+    async def colgada() -> None:
+        await asyncio.sleep(3600)
+
+    fondo.programar(colgada(), "compra", decisiva=True)
+    await asyncio.sleep(0)
+    await fondo.cerrar(timeout_s=0.01)
+    with pytest.raises(EscrituraDecisivaFallida) as e:
+        await fondo.barrera(0.1)
+    assert e.value.fallas == ("compra (cancelada)",)
