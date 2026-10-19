@@ -5,8 +5,16 @@ Usa el mismo cliente A2A del sample que el Shopping Agent
 levantados el comercio (:8001, con GOOGLE_API_KEY: `create_checkout` pasa
 por el LLM del sample), el catálogo (:8011) y el proxy (:8010).
 
+Los casos son de los escenarios fijos y esperan su ficha: el proxy tiene que
+correr con `PROXY_FICHA_DEMO=1` (el default es 0: manda la ficha que
+confirmó el usuario, y sin compra todo escala) y con `INTENCION_ACTIVA=0`
+(no hay un humano que conteste el porqué). El script lo lee en
+`/guard/state` y, si el proxy no usa las fichas de la demo, no sigue.
+
 Desde la raíz del repo:
 
+    PROXY_FICHA_DEMO=1 INTENCION_ACTIVA=0 PYTHONUTF8=1 PYTHONPATH=. \\
+        world/ap2/.venv/Scripts/python -m proxy      # en otra terminal
     PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python \\
         -m proxy.scripts.smoke_checkout --escenario B --cart cart_4 --esperado failed
 
@@ -102,6 +110,37 @@ def _base(merchant_url: str) -> str:
     return f"{partes.scheme}://{partes.netloc}"
 
 
+def falta_ficha_demo(estado: Any) -> str | None:
+    """Por qué este proxy no sirve para el smoke (None si sirve).
+
+    Los casos esperan la ficha del escenario fijo: con `PROXY_FICHA_DEMO=0`
+    (el default desde la etapa 3) el Guard evalúa sin parámetros autorizados
+    y todo escala. Un proxy viejo, sin `ficha_demo` en `/guard/state`,
+    usaba la ficha de la demo por defecto.
+    """
+    if not isinstance(estado, dict):
+        return "no se pudo leer /guard/state del proxy"
+    if estado.get("ficha_demo", True) is not True:
+        return (
+            "el proxy corre sin las fichas de la demo (PROXY_FICHA_DEMO=0): estos casos "
+            "esperan la del escenario. Levantalo con PROXY_FICHA_DEMO=1 INTENCION_ACTIVA=0."
+        )
+    return None
+
+
+async def _exigir_ficha_demo(base: str, fallas: list[str]) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as http:
+            estado = (await http.get(f"{base}/guard/state")).json()
+    except (httpx.HTTPError, ValueError):
+        estado = None
+    falla = falta_ficha_demo(estado)
+    if falla:
+        fallas.append(falla)
+        return False
+    return True
+
+
 async def _checkout(client: Any, contexto: str, cart: str) -> Any:
     from common.a2a_message_builder import A2aMessageBuilder
 
@@ -141,6 +180,8 @@ async def correr(args: argparse.Namespace) -> int:
     from common.payment_remote_a2a_client import PaymentRemoteA2aClient
 
     fallas: list[str] = []
+    if not await _exigir_ficha_demo(_base(args.merchant_url), fallas):
+        return _fin(fallas)
     client = PaymentRemoteA2aClient(
         name="merchant_agent",
         base_url=args.merchant_url,
