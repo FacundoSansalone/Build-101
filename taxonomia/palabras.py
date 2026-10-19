@@ -112,6 +112,98 @@ def _aparece(frase: str, texto: str) -> bool:
     return f" {frase} " in f" {texto} "
 
 
+_DETERMINANTE = (
+    r"(?: (?:el|la|los|las|mi|mis|tu|tus|su|sus|un|una|unos|unas|nuestro|nuestra|nuestros"
+    r"|nuestras|este|esta|estos|estas|ese|esa|esos|esas|the|my|a|an|our|your|his|her|their"
+    r"|this|that|these|those))?"
+)
+# Una frase después de estas palabras es un complemento, no lo que se compra:
+# "una mochila para la notebook" es una mochila, "a backpack for my laptop" también.
+_COMPLEMENTO = re.compile(r"(?:^| )(?:para|pa|for|con|with)" + _DETERMINANTE + r" $")
+# Con "de" (u "of"), depende de lo que va antes: "un cargador de notebook" es un
+# cargador, pero "un par de zapatillas", "una docena de notebooks" y "20 de las
+# computadoras" nombran lo que se compra.
+_DE = re.compile(r"(?:^| )(\S+) (?:de|del|of)" + _DETERMINANTE + r" $")
+_CANTIDADES = frozenset(
+    "par pares docena docenas caja cajas lote lotes set sets pack packs paquete paquetes "
+    "unidad unidades monton cantidad total pair pairs dozen dozens box boxes lot lots bunch "
+    "couple unit units piece pieces pieza piezas "
+    "un uno una dos tres cuatro cinco seis siete ocho nueve diez once doce quince veinte "
+    "treinta cuarenta cincuenta cien ciento mil one two three four five six seven eight nine "
+    "ten eleven twelve fifteen twenty thirty forty fifty hundred thousand".split()
+)
+# Una frase justo antes de otro producto o de un accesorio lo modifica (en
+# inglés el sustantivo va al final): "a laptop charger", "a computer desk".
+_ACCESORIOS = frozenset(
+    "bag bags case cases charger chargers stand stands sleeve sleeves cover covers cable cables "
+    "adapter adapters mount mounts holder holders dock docks battery batteries skin skins "
+    "protector protectors accessory accessories part parts lock locks cooler coolers pad pads "
+    "bracket brackets mat mats".split()
+)
+_CORTE = "|"  # la puntuación: ninguna frase la cruza, y separa una lista de un modificador
+
+
+def _palabras_con_puntuacion(texto: str) -> str:
+    """Como `normalizar`, pero la puntuación queda como `_CORTE`: "computadoras,
+    notebooks" es una lista y no "computadoras" modificando a "notebooks"."""
+    sin_tildes = "".join(
+        c for c in unicodedata.normalize("NFKD", texto or "") if not unicodedata.combining(c)
+    )
+    return " ".join(re.findall(r"[a-z0-9]+|[,;.:!?/()]", sin_tildes.lower())).translate(
+        str.maketrans({c: _CORTE for c in ",;.:!?/()"})
+    )
+
+
+def _es_complemento(antes: str) -> bool:
+    """¿La frase que sigue a `antes` (el texto hasta ella, con el espacio) es un complemento?"""
+    if _COMPLEMENTO.search(antes):
+        return True
+    de = _DE.search(antes)
+    return de is not None and not (de.group(1).isdigit() or de.group(1) in _CANTIDADES)
+
+
+def nombradas(texto: str, taxonomia: Taxonomia | None = None) -> list[tuple[str, str]]:
+    """Las categorías que el texto nombra como lo que se compra: (ID, frase de
+    la tabla), de la mejor a la peor, una vez cada una.
+
+    Como `categoria_por_palabras` (mismo orden: frase más larga, después la
+    categoría más profunda), con estas diferencias: devuelve todas, y no
+    cuenta una frase que está dentro de otra más larga ("computadora" dentro
+    de "computadora de escritorio"), que es complemento ("para la notebook",
+    "for my laptop", "con mouse", "un cargador de notebook") o que modifica a
+    lo que sigue ("a laptop charger", "a computer desk"). `categoria_por_palabras`
+    no cambia: la usan el proxy (la ficha) y el comercio general.
+    """
+    limpio = _palabras_con_puntuacion(texto)
+    if not limpio.replace(_CORTE, "").strip():
+        return []
+    relleno = f" {limpio} "
+    apariciones: list[tuple[int, int, str, str, int]] = []  # (inicio, fin, id, frase, orden)
+    for orden, (id_categoria, frases) in enumerate(FRASES.items()):
+        for frase in frases:
+            buscado = f" {frase} "
+            inicio = relleno.find(buscado)
+            while inicio != -1:
+                apariciones.append((inicio, inicio + len(buscado), id_categoria, frase, orden))
+                inicio = relleno.find(buscado, inicio + 1)
+    comienzos = {a for a, *_ in apariciones}
+    mejores: dict[str, tuple[tuple[int, int, int], str]] = {}
+    for inicio, fin, id_categoria, frase, orden in apariciones:
+        dentro = any(
+            a <= inicio and fin <= b and (b - a) > (fin - inicio) for a, b, *_ in apariciones
+        )
+        siguiente = relleno[fin:].split(" ", 1)[0]
+        modifica = (fin - 1) in comienzos or siguiente in _ACCESORIOS
+        if dentro or modifica or _es_complemento(relleno[: inicio + 1]):
+            continue
+        categoria = taxonomia.get(id_categoria) if taxonomia is not None else None
+        clave = (len(frase), categoria.nivel if categoria else 0, -orden)
+        if id_categoria not in mejores or clave > mejores[id_categoria][0]:
+            mejores[id_categoria] = (clave, frase)
+    orden_final = sorted(mejores.items(), key=lambda kv: kv[1][0], reverse=True)
+    return [(id_categoria, frase) for id_categoria, (_, frase) in orden_final]
+
+
 def categoria_por_palabras(texto: str, taxonomia: Taxonomia | None = None) -> str | None:
     """El ID de la categoría que nombra el texto, o None si no nombra ninguna.
 

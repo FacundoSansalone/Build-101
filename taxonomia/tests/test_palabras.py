@@ -3,7 +3,7 @@
 import pytest
 
 from taxonomia import cargar_subconjunto
-from taxonomia.palabras import FRASES, categoria_por_palabras, normalizar
+from taxonomia.palabras import FRASES, categoria_por_palabras, nombradas, normalizar
 
 
 @pytest.fixture(scope="module")
@@ -70,3 +70,67 @@ def test_el_resultado_siempre_es_una_categoria_del_arbol(arbol):
     for frases in FRASES.values():
         for frase in frases:
             assert categoria_por_palabras(frase, arbol) in arbol
+
+
+# -- nombradas: lo que se compra, sin los complementos ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("Comprame 20 computadoras para el lunes, hasta 20000 USD.", ["278"]),
+        # El complemento ("para la notebook") no es lo que se compra.
+        ("una mochila para la notebook", ["100"]),
+        ("un mouse para mi notebook", ["304"]),
+        ("a backpack for my laptop", ["100"]),
+        ("un monitor para la pc", ["305"]),
+        ("notebook con mouse", ["328"]),
+        # Una frase dentro de otra más larga no cuenta aparte.
+        ("una computadora de escritorio para la oficina", ["325"]),
+        ("auriculares con micrófono para llamadas", ["543627"]),
+        # Varias: de la mejor a la peor (la frase más larga primero).
+        ("20 computadoras, notebooks si puede ser", ["278", "328"]),
+    ],
+)
+def test_nombradas_sin_complementos(arbol, texto, esperado):
+    assert [i for i, _ in nombradas(texto, arbol)] == esperado
+
+
+def test_nombradas_devuelve_la_frase_de_la_tabla(arbol):
+    assert nombradas("Comprame 20 Computadoras", arbol) == [("278", "computadoras")]
+
+
+def test_nombradas_sin_lo_que_se_compra_queda_vacia(arbol):
+    # Solo un complemento: no dice qué se compra.
+    assert nombradas("algo para mi computadora", arbol) == []
+    assert nombradas("un cargador para la notebook", arbol) == []
+    assert nombradas("", arbol) == []
+    assert nombradas("pantalla", arbol) == []
+
+
+def test_categoria_por_palabras_no_cambia(arbol):
+    """`nombradas` es aparte: el proxy y el comercio siguen igual."""
+    assert categoria_por_palabras("una mochila para la notebook", arbol) == "328"
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        # "de": complemento, salvo después de un número o una palabra de cantidad.
+        ("Comprame un cargador de notebook", []),
+        ("una funda de computadora", []),
+        ("un teclado de notebook", ["303"]),
+        ("una mochila de notebook", ["100"]),
+        ("un par de zapatillas", ["187"]),
+        ("una docena de notebooks", ["328"]),
+        ("20 de las computadoras", ["278"]),
+        ("10 unidades de pc", ["278"]),
+        # En inglés, lo que va antes de otro producto o de un accesorio lo modifica.
+        ("a laptop charger", []),
+        ("a computer desk", ["4191"]),
+        ("laptop backpack", ["100"]),
+        ("Buy me 5 computers by Friday", ["278"]),
+    ],
+)
+def test_nombradas_con_de_y_modificadores(arbol, texto, esperado):
+    assert [i for i, _ in nombradas(texto, arbol)] == esperado
