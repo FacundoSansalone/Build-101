@@ -353,6 +353,15 @@ function lineasVeredicto(item, d) {
 const CATEGORIAS = {
   basketball_shoes: "zapatillas de básquet", lifestyle_sneakers: "zapatillas urbanas",
   laptops: "notebooks", headphones: "auriculares",
+  // Comercio general (demo_world/data/productos.json → categorias).
+  desktops: "computadoras de escritorio", tablets: "tablets", monitors: "monitores",
+  televisions: "televisores", projectors: "proyectores", keyboards: "teclados",
+  mice: "mouses", hard_drives: "discos", usb_drives: "pendrives", printers: "impresoras",
+  mobile_phones: "celulares", game_consoles: "consolas", routers: "routers",
+  headsets: "auriculares con micrófono", speakers: "parlantes", webcams: "cámaras web",
+  digital_cameras: "cámaras de fotos", office_chairs: "sillas de oficina",
+  desks: "escritorios", backpacks: "mochilas", coffee_makers: "cafeteras",
+  shoes: "calzado",
   fuera_de_catalogo: "el que pediste (no figura en el catálogo público)", dicha: "el que pediste",
 };
 

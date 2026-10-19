@@ -516,3 +516,9 @@ test("al cerrar la ficha, la línea dice la categoría si la trae", () => {
     categoria_ruta: "Calzado > Zapatillas" })])),
   ["Ficha lista: con eso negocia tu agente (categoría: Calzado › Zapatillas)"]);
 });
+
+test("filasFicha: las categorías del comercio general se leen en castellano", () => {
+  const p = (valor) => ({ parametro: "categoria", estado: "resuelto", valor, origen: "dicho", texto: "x", necesario: true });
+  assert.deepEqual(filasFicha([p("monitors"), p("office_chairs"), p("coffee_makers")]).map((f) => f.valor),
+    ["monitores", "sillas de oficina", "cafeteras"]);
+});
