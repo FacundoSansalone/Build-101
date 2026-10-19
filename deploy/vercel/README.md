@@ -104,6 +104,15 @@ psql "<connection string>" -f proxy/sql/003_gateway.sql
 psql "<connection string>" -f proxy/sql/004_serverless.sql
 ```
 
+O con un token de acceso personal (supabase.com/dashboard/account/tokens) en
+el `.env` como `SUPABASE_ACCESS_TOKEN=sbp_…`, por la API de administración
+(la clave secreta del proyecto no alcanza: no crea tablas). No imprime el
+token y se puede correr otra vez:
+
+```sh
+$PY deploy/vercel/aplicar_migraciones.py        # 003 y después 004
+```
+
 Después verificá (solo lectura; lee `SUPABASE_URL` y
 `SUPABASE_SERVICE_ROLE_KEY` del entorno y nunca muestra la clave):
 
