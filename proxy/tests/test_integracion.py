@@ -335,7 +335,7 @@ def test_intent_ap2_sale_de_la_ficha_de_la_compra():
 
 
 def test_sin_intent_no_se_corre_ap2():
-    from proxy.fuentes import violaciones_ap2
+    from proxy.demo_local import violaciones_ap2
 
     assert violaciones_ap2({"cart_id": "c", "amount": 10.0, "currency": "USD"}, None) is None
 

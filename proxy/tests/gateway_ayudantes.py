@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from proxy.app import create_app
 from proxy.claves import RegistroIntegradores, generar_clave
 from proxy.comercios import RegistroComercios
+from proxy.demo_local import FuentesDemo
 from proxy.seguridad import HEADER_TOKEN
 from proxy.tests.fake_world import (
     CATALOG_HOST,
@@ -201,6 +202,9 @@ def armar_gateway(
         MERCHANT_B_HOST: merchant_b.app,
     })
     kwargs.setdefault("comercios", registro_comercios())
+    # Como `python -m proxy`: con la demo local (el tráfico del comercio por
+    # defecto puede usar la ficha del escenario).
+    kwargs.setdefault("demo", FuentesDemo())
     if con_webhooks:
         kwargs.setdefault("despachador", despachador(integradores, receptor))
     app = create_app(

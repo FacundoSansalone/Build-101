@@ -1,0 +1,71 @@
+# El motor de KaiAI: lo que se despliega (Vercel), separado de la simulación
+# de la demo (world/, dashboard/, fixtures de escenarios, benchmark).
+#
+# No es un paquete instalable (`[tool.uv] package = false`): Vercel instala
+# las dependencias y sirve el código desde la raíz del repo. La demo local no
+# usa este archivo: corre con el entorno de `world/ap2` (que tiene su propio
+# pyproject y su propio workspace de uv) y la raíz en el path (`pytest.ini`).
+#
+# Las versiones son las mismas que tiene instaladas `world/ap2/.venv`.
+
+[project]
+name = "kaiai-motor"
+version = "0.1.0"
+description = "KaiAI: el filtro, la intención y el Guard antes de la firma, sin la simulación de la demo"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx==0.28.1",
+    "pydantic==2.12.5",
+    "starlette==0.52.1",
+    "cryptography==46.0.5",
+    # Perezosa: solo la importan el agente de intención (Gemini) y la ficha
+    # con LLM; sin GOOGLE_API_KEY no se usa.
+    "google-genai==1.66.0",
+]
+
+[project.optional-dependencies]
+# `python -m proxy` (servidor local con sockets propios). En Vercel no hace falta.
+local = ["uvicorn==0.54.0"]
+
+[tool.uv]
+package = false
+
+# La frontera del motor (la verifica `proxy/tests/test_frontera_motor.py`):
+# - `paquetes`: las carpetas del motor;
+# - `excluidos`: lo que vive ahí pero no es del motor (tests, scripts,
+#   benchmark, casos de evaluación y la demo local); patrones relativos a la
+#   raíz, por archivo o por carpeta (`**` = cualquier carpeta);
+# - `prohibidos`: módulos que el motor nunca importa (la simulación y el
+#   sample de AP2), ni arriba del archivo ni dentro de una función.
+[tool.kaiai.motor]
+paquetes = [
+    "contracts",
+    "guard",
+    "filtro",
+    "intencion",
+    "decisiones",
+    "taxonomia",
+    "fabricante",
+    "proxy",
+]
+excluidos = [
+    "proxy/tests",
+    "**/tests",
+    "proxy/scripts",
+    "proxy/subir_benchmark.py",
+    "guard/benchmark_hook.py",
+    "filtro/casos.py",
+    "filtro/evaluar.py",
+    "intencion/evaluar_*.py",
+    "proxy/demo_local.py",
+]
+prohibidos = [
+    "demo_world",
+    "world",
+    "dashboard",
+    "google.adk",
+    "a2a",
+    "ap2",
+    "roles",
+    "common",
+]

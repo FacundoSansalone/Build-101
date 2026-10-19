@@ -186,7 +186,9 @@ De dónde salen las entradas de `evaluar()`:
   la ficha es vacía y sin confirmar, y el Guard escala. Con
   `PROXY_FICHA_DEMO=1` (grabaciones, benchmark por el proxy,
   `smoke_checkout.py`) manda la ficha confirmada **del escenario de esa
-  compra** (`fuentes.intent_del_escenario`): su `intent` propio o, solo para
+  compra** (`demo_local.intent_del_escenario`, que inyecta `python -m proxy`
+  con `create_app(..., demo=FuentesDemo())`; sin `demo`, como el motor
+  desplegado, no hay ficha de la demo aunque se pida): su `intent` propio o, solo para
   los de zapatillas (`baseline`, `A`, `B`, `B2`, `C`, que no tienen uno), el
   global de scenarios.json; si `demo_world` no se puede importar, el
   `intent` de `fixtures/scenario_<nombre>.json` o `fixtures/etapa2/`.
@@ -845,7 +847,8 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo` |
 | `guard_stub.py` | Stub con la firma de `contracts.Evaluador`: bloquea si el elegido es el último cart |
 | `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta `PROXY_MAX_SUSCRIPTORES_SSE`) y JSONL (los de compras de integrador, en el privado) |
-| `fuentes.py` | Intent y ficha de la demo (`intent_del_escenario`, `ficha_del_intent`, con atributos), categoría de la taxonomía de la ficha (`categoria_de_la_ficha`, `ruta_categoria`, `categorias_para_el_pedido`), catálogo público por SKU o entero (con su fuente), `intent_ap2(ficha)` y `ap2_check` con el tope de la compra |
+| `fuentes.py` | Ficha de un intent (`ficha_del_intent`, con atributos), categoría de la taxonomía de la ficha (`categoria_de_la_ficha`, `ruta_categoria`, `categorias_para_el_pedido`), catálogo público por SKU o entero (con su fuente), `intent_ap2(ficha)` y el protocolo `FuentesDemoProtocolo` (lo que el proxy le pide a la demo). Es del motor: no importa `demo_world` |
+| `demo_local.py` | Lo único del proxy que lee `demo_world` (fuera del motor y del despliegue): `FuentesDemo` con `intent_del_escenario` (ficha de los escenarios fijos) y `violaciones_ap2` (`ap2_check` con el tope de la compra), y `cargar_intent`. La pasa `python -m proxy` (`create_app(..., demo=FuentesDemo())`); sin `demo`, `ap2_violaciones` va en null |
 | `config.py` | Variables de entorno (también las `GATEWAY_*`), chequeo de loopback y `verificar_gateway` |
 | `persistencia.py` | Registro opcional en Supabase (veredictos y aprobaciones), en segundo plano y sin cortar el flujo si falla |
 | `compras.py` | Etapa 2: registro de compras en memoria (pedido, parámetros autorizados, contexto, oportunidad, decisión) y las dos esperas (`Compra.nueva_espera()` abre otra para cada repregunta). Las compras de integrador (`origen="api"`) además se guardan en el almacén del gateway y se restauran con `Compra.desde_fila` (el comentario de cabecera "todo vive en memoria" vale para la demo) |
