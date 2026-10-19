@@ -38,7 +38,7 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 import httpx
@@ -83,7 +83,6 @@ from proxy.comercios import (
     url_publica_comercio,
 )
 from proxy.compras import (
-    ESTADOS_COMPRA,
     ESTADOS_ESPERANDO,
     ESTADOS_TERMINALES_API,
     LARGO_MAXIMO_RESPUESTA,
@@ -92,6 +91,8 @@ from proxy.compras import (
     CompraDesconocida,
     EstadoInvalido,
     RegistroCompras,
+    fusionar_filas,
+    misma_fila,
 )
 from proxy.config import Config
 from proxy.esperas import Apertura, EsperaCompartida, EsperaLocal, Esperas
@@ -264,6 +265,9 @@ _MOTIVO_SIN_ESTADO = "el estado del gateway no quedó guardado"
 _MOTIVO_SIN_ESPERA = (
     "No se pudo guardar la espera en el almacén: la alternativa no se autoriza."
 )
+# Escrituras fusionadas de una compra (varias instancias): si otra instancia
+# la escribe en el medio tantas veces, no se sabe qué quedó (ErrorAlmacen).
+_INTENTOS_FUSION = 3
 # Una repregunta del intake solo si queda al menos esto de la llamada (si
 # no, sigue con lo que tiene: la consulta de una oportunidad también espera).
 _MINIMO_REPREGUNTA_S = 30.0
@@ -900,48 +904,99 @@ class ProxyGuard:
     async def _escribir_varias(self, compra: Compra) -> bool:
         """La escritura de la compra con varias instancias (dentro del candado).
 
-        Con una espera abierta, la fila de la compra solo la escribe la
-        instancia que la retiene: las demás no la pisan (ni con su copia, que
-        puede ser de antes de abrirla). Por eso:
+        - El paso a un estado terminal se escribe siempre (el trigger de 004
+          lo deja entrar y no deja salir) y se relee: si la fila no quedó
+          terminal, `ErrorAlmacen` (la escritura es decisiva: 503 o bloqueo).
+        - Con una espera abierta, la fila solo la escribe la instancia que la
+          retiene: si la retiene otra, no se escribe (queda en el log).
+        - Si no, se escribe fusionada (`_escribir_fusionada`): solo lo que
+          cambió este pedido, sobre la fila de la base y condicionado a que
+          siga como se la leyó. Una copia vieja no pisa lo que decidió otra
+          instancia.
 
-        - el paso a un estado terminal se escribe siempre (el trigger de 004
-          no deja salir de `bloqueada` ni de `vencida`);
-        - si la compra tiene una espera que retiene otra instancia, no se
-          escribe (queda en el log);
-        - si no, se escribe condicionada a que la fila tenga el `espera_id`
-          que esta instancia sabe que tiene (`espera_guardada`): una espera
-          que se abrió en otra instancia mientras tanto no se pisa.
-
-        True si la fila quedó escrita."""
-        fila = compra.a_fila(espera=True)
+        True si la fila quedó con el cambio."""
+        nuestra = compra.a_fila(espera=True)
         if compra.estado in ESTADOS_TERMINALES_API:
-            await self.almacen.guardar_compra(fila)
-            compra.espera_guardada = compra.espera_id
+            await self.almacen.guardar_compra(nuestra)
+            fila = await self.almacen.cargar_compra(compra.id)
+            if fila is None or fila.get("estado") not in ESTADOS_TERMINALES_API:
+                raise ErrorAlmacen("el paso a un estado terminal no quedó en la base")
+            compra.sincronizar(nuestra, Compra.fila_normalizada(fila))
             return True
         if compra.espera_id is not None and not self._retenida_aca(compra):
             logger.warning(
                 "Compra %s: no se escribe, la espera la retiene otra instancia", compra.id
             )
             return False
-        escrita = await self.almacen.guardar_compra_condicionada(
-            fila, estado_esperado=ESTADOS_COMPRA, espera_id_esperado=compra.espera_guardada
-        )
-        if escrita:
-            compra.espera_guardada = compra.espera_id
-        else:
-            logger.warning(
-                "Compra %s: la fila cambió en otra instancia (otra espera o un estado "
-                "terminal): esta escritura no se aplica", compra.id,
+        return await self._escribir_fusionada(compra, nuestra)
+
+    async def _escribir_fusionada(
+        self,
+        compra: Compra,
+        nuestra: dict[str, Any],
+        *,
+        exigir: tuple[Any, str | None] | None = None,
+    ) -> bool:
+        """Escribe lo que cambió este pedido (de `compra.fila_base` a
+        `nuestra`) sobre la fila de la base (`compra.fila_db`), con un PATCH
+        condicionado a que la base siga así (estado, `espera_id` y
+        `actualizada`). Si otra instancia escribió en el medio, se relee y se
+        vuelve a fusionar (`compras.fusionar_filas`).
+
+        - Si los dos cambiaron lo mismo de forma distinta (otra instancia
+          decidió, cerró una espera o cortó la compra), el cambio de este
+          pedido ya no aplica: no se pisa, queda la fila de la base, False.
+        - `exigir` (`estado_esperado`, `espera_esperada`): la transición
+          solo vale desde ahí (abrir una espera, cerrar una huérfana); si la
+          base ya no está así, False sin escribir.
+        - Si después de `_INTENTOS_FUSION` sigue cambiando (o no se puede
+          leer), `ErrorAlmacen`: no se sabe qué quedó."""
+        base = compra.fila_base
+        suya = compra.fila_db
+        for _ in range(_INTENTOS_FUSION):
+            if suya is None:
+                suya = await self._fila_de_la_base(compra.id)
+            if exigir is not None and not _fila_cumple(suya, *exigir):
+                compra.fila_db = suya
+                return False
+            fusion = fusionar_filas(base if base is not None else suya, nuestra, suya)
+            if fusion is None:
+                logger.warning(
+                    "Compra %s: otra instancia la cambió (%s); este cambio ya no aplica y "
+                    "queda la fila de la base", compra.id, suya.get("estado"),
+                )
+                compra.sincronizar(nuestra, suya)
+                return False
+            if misma_fila(fusion, suya):
+                compra.sincronizar(nuestra, suya)  # no había nada nuevo que escribir
+                return True
+            fusion["actualizada"] = _marca_posterior(nuestra["actualizada"], suya["actualizada"])
+            escrita = await self.almacen.guardar_compra_condicionada(
+                fusion,
+                estado_esperado=suya["estado"],
+                espera_id_esperado=suya.get("espera_id"),
+                actualizada_esperada=suya["actualizada"],
             )
-        return escrita
+            if escrita:
+                compra.sincronizar(nuestra, fusion)
+                return True
+            suya = await self._fila_de_la_base(compra.id)  # otra instancia escribió en el medio
+        raise ErrorAlmacen("la compra cambió en otra instancia en cada intento")
+
+    async def _fila_de_la_base(self, compra_id: str) -> dict[str, Any]:
+        fila = await self.almacen.cargar_compra(compra_id)
+        if fila is None:
+            raise ErrorAlmacen("la compra no está en el almacén")
+        return Compra.fila_normalizada(fila)
 
     async def _escribir_condicionada(
         self, compra: Compra, estado_esperado: Any, espera_esperada: str | None
     ) -> bool:
-        """Escritura con await de la compra, condicionada a que la fila siga en
-        `estado_esperado` y con `espera_esperada` (abrir una espera o cerrar
-        una huérfana: `proxy/esperas.py`). Marca el cambio. En el mismo
-        candado que las de segundo plano, así van en orden."""
+        """Escritura con await de la compra, solo si la fila de la base sigue
+        en `estado_esperado` y con `espera_esperada` (abrir una espera o
+        cerrar una huérfana: `proxy/esperas.py`), fusionada como las demás.
+        Marca el cambio. En el mismo candado que las de segundo plano, así
+        van en orden."""
         # Una vuelta del loop: las escrituras de segundo plano ya programadas
         # de esta compra toman el candado antes (el candado es FIFO por orden
         # de llegada, y una tarea recién creada todavía no llegó).
@@ -950,14 +1005,9 @@ class ProxyGuard:
         par = self._candado_compra(compra.id)
         try:
             async with par[0]:
-                escrita = await self.almacen.guardar_compra_condicionada(
-                    compra.a_fila(espera=True),
-                    estado_esperado=estado_esperado,
-                    espera_id_esperado=espera_esperada,
+                return await self._escribir_fusionada(
+                    compra, compra.a_fila(espera=True), exigir=(estado_esperado, espera_esperada)
                 )
-                if escrita:
-                    compra.espera_guardada = compra.espera_id
-                return escrita
         finally:
             self._soltar_candado(compra.id, par)
 
@@ -3941,6 +3991,13 @@ def _leer_del_comercio(contenido: bytes | str) -> tuple[Any, str | None]:
     return body, error
 
 
+def _fila_cumple(fila: dict[str, Any], estado_esperado: Any, espera_esperada: str | None) -> bool:
+    """¿La fila de la base está en `estado_esperado` (uno o varios) y con esa
+    espera? (la precondición de abrir una espera o cerrar una huérfana)."""
+    estados = {estado_esperado} if isinstance(estado_esperado, str) else set(estado_esperado)
+    return fila.get("estado") in estados and fila.get("espera_id") == espera_esperada
+
+
 def _fecha_o_none(valor: Any) -> datetime | None:
     if not isinstance(valor, str):
         return None
@@ -3949,6 +4006,17 @@ def _fecha_o_none(valor: Any) -> datetime | None:
     except ValueError:
         return None
     return fecha if fecha.tzinfo is not None else fecha.replace(tzinfo=timezone.utc)
+
+
+def _marca_posterior(nuestra: str, suya: str) -> str:
+    """La `actualizada` de una escritura: la de este pedido o, si la base ya
+    tiene una igual o más nueva (otra instancia, otro reloj), justo después
+    (el trigger de 004 descarta una menor)."""
+    nuestra_dt = datetime.fromisoformat(nuestra)
+    suya_dt = datetime.fromisoformat(suya)
+    if nuestra_dt <= suya_dt:
+        nuestra_dt = suya_dt + timedelta(microseconds=1)
+    return nuestra_dt.isoformat()
 
 
 async def _con_plazo(trozos: AsyncIterator[bytes], fin: float) -> AsyncIterator[bytes]:

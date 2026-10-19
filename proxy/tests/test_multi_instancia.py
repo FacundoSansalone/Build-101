@@ -752,3 +752,270 @@ async def test_la_fila_de_una_instancia_no_lleva_espera_id():
     assert compra.a_fila(espera=True)["espera_id"] is None
     compra.espera_id = "esp-0123456789abcdef"
     assert json.loads(json.dumps(compra.a_fila(espera=True)))["espera_id"] == compra.espera_id
+
+
+# -- revisión adversarial: el corte entra, nada queda trabado, nada se pisa ---------------
+
+
+def _filtro_que_corta(objetivo: Any) -> Any:
+    from contracts import ResultadoFiltro
+
+    return ResultadoFiltro(pasa=False, senales=["inyeccion"])
+
+
+async def test_el_corte_entra_aunque_una_copia_vieja_haya_llegado_antes(config_varias):
+    """Otra instancia (con el reloj adelantado) escribió una copia de la
+    compra: el corte del filtro llega con una `actualizada` menor y el
+    trigger igual lo deja entrar. La conversación queda cortada."""
+    base, merchant = BaseFalsa(), FakeMerchant()
+    adelantada = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+
+    def copia_vieja_y_corte(objetivo: Any) -> Any:
+        # Justo antes del corte, otra instancia escribe su copia (reloj adelantado).
+        (fila,) = base.tablas["gw_compras"].filas
+        fila["actualizada"] = adelantada
+        return _filtro_que_corta(objetivo)
+
+    a = _instancia(config_varias, base, merchant, filtro=copia_vieja_y_corte)
+    b = _instancia(config_varias, base, merchant)
+    async with cliente_publico(a.app) as ca, cliente_publico(b.app) as cb:
+        compra_id = (await crear_compra(ca))["compra_id"]
+        task = (await buscar(ca, compra_id)).json()["result"]
+        assert task["status"]["state"] == "failed"  # cortada por el filtro
+        (fila,) = base.filas("gw_compras")
+        assert fila["estado"] == "bloqueada"
+        # `actualizada` no retrocede (el corte traía una marca menor).
+        assert datetime.fromisoformat(fila["actualizada"]) >= datetime.fromisoformat(adelantada)
+        otra = await buscar(cb, compra_id)
+        assert otra.status_code == 409
+        assert otra.json()["error"]["data"]["codigo"] == "compra_bloqueada"
+
+
+async def test_si_el_corte_no_queda_en_la_base_el_pedido_falla_cerrado(config_varias):
+    """El upsert del corte responde bien pero la fila no quedó terminal: se
+    relee, es una escritura decisiva fallida y no se entrega nada (503)."""
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant, filtro=_filtro_que_corta)
+    async with cliente_publico(a.app) as ca:
+        compra_id = (await crear_compra(ca))["compra_id"]
+
+        def sin_aplicar(request: httpx.Request) -> httpx.Response | None:
+            es_upsert = request.method == "POST" and request.url.path.endswith("/gw_compras")
+            if es_upsert and json.loads(request.content).get("estado") == "bloqueada":
+                return httpx.Response(201)  # "bien", pero no quedó
+            return None
+
+        base.interceptar = sin_aplicar
+        resp = await buscar(ca, compra_id)
+    assert resp.status_code == 503
+    assert resp.json()["error"]["data"]["codigo"] == "estado_no_disponible"
+    assert "cart_1" not in resp.text
+
+
+async def _espera_huerfana(base: BaseFalsa, compra_id: str, *, vence_hace_s: float) -> str:
+    """Una espera abierta que nadie retiene (la instancia que la abrió murió
+    antes de escribir la compra): la compra no la menciona."""
+    from proxy.estado import fila_espera
+
+    ahora = datetime.now(timezone.utc)
+    fila = fila_espera(
+        compra_id, "porque", ahora - timedelta(seconds=vence_hace_s),
+        creada=ahora - timedelta(seconds=abs(vence_hace_s) + 60),
+    )
+    assert await _almacen(base).abrir_espera(fila) is not None
+    return fila["id"]
+
+
+async def test_una_espera_huerfana_no_traba_la_compra(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant, agente=AgenteFalso(cart_id=None))
+    b = _instancia(config_varias, base, merchant, agente=AgenteFalso(cart_id=None))
+    async with cliente_publico(a.app) as ca, cliente_publico(b.app) as cb:
+        compra_id = await _compra_computadoras(ca, preguntar=True)
+        huerfana = await _espera_huerfana(base, compra_id, vence_hace_s=5)
+        busqueda = asyncio.create_task(buscar(ca, compra_id, escenario="computadoras"))
+        vista = await _compra_en(cb, compra_id, "esperando_contexto")  # se abrió la nueva
+        assert vista["pendiente"]["tipo"] == "porque"
+        resp = await cb.post(
+            f"/v1/compras/{compra_id}/respuesta", json={"respuesta": RESPUESTA_USUARIO}
+        )
+        assert resp.status_code == 200, resp.text
+        assert (await busqueda).json()["result"]["status"]["state"] == "completed"
+    esperas = {e["id"]: e for e in base.filas("gw_esperas")}
+    assert esperas[huerfana]["estado"] == "vencida"
+    assert sorted(e["estado"] for e in esperas.values()) == ["respondida", "vencida"]
+
+
+async def test_si_el_insert_de_la_espera_queda_pero_falla_la_respuesta_se_cierra(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    agente = AgenteFalso(cart_id=None)
+    a = _instancia(config_varias, base, merchant, agente=agente)
+    async with cliente_publico(a.app) as ca:
+        compra_id = await _compra_computadoras(ca, preguntar=True)
+
+        def aplica_y_falla(request: httpx.Request) -> httpx.Response | None:
+            if request.method == "POST" and request.url.path.endswith("/gw_esperas"):
+                base.interceptar = None
+                try:
+                    base(request)  # el insert queda en la base...
+                finally:
+                    base.interceptar = aplica_y_falla
+                return httpx.Response(504)  # ...pero la respuesta no llega
+            return None
+
+        base.interceptar = aplica_y_falla
+        task = (await buscar(ca, compra_id, escenario="computadoras")).json()["result"]
+    assert task["status"]["state"] == "completed"  # el porqué sigue literal
+    assert agente.respuestas == []
+    (espera,) = base.filas("gw_esperas")
+    assert espera["estado"] == "vencida"  # no quedó una abierta que nadie retiene
+
+
+async def test_otra_busqueda_no_espera_el_presupuesto_por_una_espera_huerfana(
+    config_varias, monkeypatch
+):
+    """La fila de la compra no está esperando pero hay una espera abierta:
+    se acota con el `vence` de esa espera y, pasada la gracia, se cierra."""
+    import proxy.app as app_mod
+    from proxy import a2a
+
+    monkeypatch.setattr(app_mod, "_MARGEN_ESPERA_SECUNDARIA_S", 0.05)
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant)
+    async with cliente_publico(a.app) as ca:
+        compra_id = (await crear_compra(ca))["compra_id"]
+        huerfana = await _espera_huerfana(base, compra_id, vence_hace_s=-0.2)  # vence en 0,2 s
+        compra = await a.proxy.hidratar_compra(compra_id)
+        llamada = app_mod.Llamada(pedido=a2a.Pedido(), guard_activo=True, compra=compra)
+        inicio = asyncio.get_running_loop().time()
+        assert await asyncio.wait_for(a.proxy._esperar_otra_instancia(llamada, compra), 5)
+        assert asyncio.get_running_loop().time() - inicio < 3
+    (espera,) = [e for e in base.filas("gw_esperas") if e["id"] == huerfana]
+    assert espera["estado"] == "vencida"
+
+
+async def _decidida_en_a(a, base: BaseFalsa, compra_id: str) -> dict[str, Any]:
+    """A acepta una oportunidad (la ficha cambia, la espera se cierra)."""
+    compra = await a.proxy.hidratar_compra(compra_id)
+    compra.estado = "esperando_decision"
+    compra.oportunidad = _oportunidad()
+    compra.aplicar_decision("aceptar")
+    a.proxy.guardar_compra(compra)
+    await a.proxy.en_fondo.esperar()
+    (fila,) = base.filas("gw_compras")
+    assert fila["estado"] == "aceptada"
+    return fila
+
+
+async def test_una_copia_vieja_no_pisa_lo_que_decidio_otra_instancia(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant)
+    b = _instancia(config_varias, base, merchant)
+    async with cliente_publico(a.app) as ca:
+        compra_id = (await crear_compra(ca))["compra_id"]
+    copia = await b.proxy.hidratar_compra(compra_id)  # B la lee antes de la decisión
+    aceptada = await _decidida_en_a(a, base, compra_id)
+
+    # B termina su análisis con la copia vieja: sin oportunidad. No pisa.
+    copia.estado = "sin_oportunidad"
+    b.proxy.guardar_compra(copia)
+    await b.proxy.en_fondo.esperar()
+    (fila,) = base.filas("gw_compras")
+    assert fila["estado"] == "aceptada"
+    assert fila["datos"]["ficha"] == aceptada["datos"]["ficha"]
+    assert fila["datos"]["requisitos_autorizados"] == aceptada["datos"]["requisitos_autorizados"]
+    assert b.proxy.en_fondo.fallas_decisivas == 0  # no es una falla: ya no aplicaba
+
+    # Lo que B agrega sin chocar (un veredicto) sí entra, sobre la fila de A.
+    copia.registrar_veredicto({"status": "aprobado", "cart_id": "cart_1"})
+    b.proxy.guardar_compra(copia)
+    await b.proxy.en_fondo.esperar()
+    (fila,) = base.filas("gw_compras")
+    assert fila["estado"] == "aceptada"
+    assert fila["datos"]["ficha"] == aceptada["datos"]["ficha"]
+    assert fila["datos"]["veredictos"] == [{"status": "aprobado", "cart_id": "cart_1"}]
+
+
+async def test_una_copia_vieja_no_revive_una_aprobacion_pendiente(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant)
+    b = _instancia(config_varias, base, merchant)
+    async with cliente_publico(a.app) as ca:
+        compra_id = (await crear_compra(ca))["compra_id"]
+    compra = await a.proxy.hidratar_compra(compra_id)
+    compra.estado = "sin_oportunidad"
+    compra.aprobacion_pendiente = {"contexto_id": "ctx-1", "cart_id": "cart_1"}
+    a.proxy.guardar_compra(compra)
+    await a.proxy.en_fondo.esperar()
+
+    copia = await b.proxy.hidratar_compra(compra_id)  # con la pendiente
+    compra.aprobacion_pendiente = None  # A la aprueba
+    a.proxy.guardar_compra(compra)
+    await a.proxy.en_fondo.esperar()
+
+    copia.registrar_veredicto({"status": "escalar", "cart_id": "cart_2"})
+    b.proxy.guardar_compra(copia)
+    await b.proxy.en_fondo.esperar()
+    (fila,) = base.filas("gw_compras")
+    assert fila["estado"] == "sin_oportunidad"
+    assert fila["datos"]["aprobacion_pendiente"] is None
+    assert fila["datos"]["veredictos"] == [{"status": "escalar", "cart_id": "cart_2"}]
+
+
+async def test_una_instancia_que_escribe_seguido_no_se_pisa_a_si_misma(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant)
+    async with cliente_publico(a.app) as ca:
+        compra_id = (await crear_compra(ca))["compra_id"]
+    compra = await a.proxy.hidratar_compra(compra_id)
+    for estado in ("negociando", "sin_oportunidad"):
+        compra.estado = estado
+        compra.registrar_veredicto({"status": "aprobado", "estado": estado})
+        a.proxy.guardar_compra(compra)
+    await a.proxy.en_fondo.esperar()
+    assert a.proxy.en_fondo.fallas_decisivas == 0
+    (fila,) = base.filas("gw_compras")
+    assert fila["estado"] == "sin_oportunidad"
+    assert [v["estado"] for v in fila["datos"]["veredictos"]] == ["negociando", "sin_oportunidad"]
+
+
+async def test_si_la_compra_cambia_en_cada_intento_el_checkout_se_bloquea(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant)
+    async with cliente_publico(a.app) as ca:
+        compra_id = (await crear_compra(ca))["compra_id"]
+        contexto = (await buscar(ca, compra_id)).json()["result"]["contextId"]
+
+        def nunca_coincide(request: httpx.Request) -> httpx.Response | None:
+            if request.method == "PATCH" and request.url.path.endswith("/gw_compras"):
+                return httpx.Response(200, json=[])  # "otra instancia escribió en el medio"
+            return None
+
+        base.interceptar = nunca_coincide
+        task = (await checkout(ca, compra_id, contexto, "cart_1")).json()["result"]
+    assert not checkouts(task)  # no se sabe qué quedó: no llega a la firma
+    assert veredictos(task)[0]["status"] == "bloqueado"
+
+
+def test_fusionar_filas_cambio_por_cambio():
+    from proxy.compras import fusionar_filas
+
+    def fila(estado: str, **datos: Any) -> dict[str, Any]:
+        datos = {"veredictos": [], "contexto": None, "aprobacion_pendiente": None, **datos}
+        return {"id": "cmp-x", "estado": estado, "espera_id": None, "referencia": None,
+                "actualizada": "t", "creada": "t", "datos": datos}
+
+    base = fila("negociando")
+    # Solo cambió este pedido: entra.
+    assert fusionar_filas(base, fila("sin_oportunidad"), base)["estado"] == "sin_oportunidad"
+    # Solo cambió la base: queda la de la base.
+    suya = fila("aceptada", contexto={"x": 1})
+    assert fusionar_filas(base, base, suya) == suya
+    # Los dos cambiaron el estado distinto: ya no aplica.
+    assert fusionar_filas(base, fila("sin_oportunidad"), suya) is None
+    # Los veredictos se juntan.
+    nuestra = fila("negociando", veredictos=[{"status": "aprobado"}])
+    suya = fila("negociando", veredictos=[{"status": "escalar"}])
+    assert fusionar_filas(base, nuestra, suya)["datos"]["veredictos"] == [
+        {"status": "escalar"}, {"status": "aprobado"},
+    ]

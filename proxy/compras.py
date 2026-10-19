@@ -161,6 +161,14 @@ class Compra:
     # instancia sabe que tiene la fila (la condición de la próxima escritura).
     espera_id: str | None = None
     espera_guardada: str | None = None
+    # Las dos fotos de la fila para escribir con varias instancias sin pisar
+    # cambios de otras (`ProxyGuard._escribir_fusionada`), las dos en el
+    # formato de `a_fila(espera=True)`: `fila_base`, cómo era esta compra en
+    # memoria la última vez que se sincronizó con la base (lo que cambió
+    # desde ahí es de este pedido), y `fila_db`, la última fila de la base
+    # que se conoce (la condición de la próxima escritura).
+    fila_base: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    fila_db: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
     @property
     def requisitos(self) -> list[Requisito]:
@@ -309,13 +317,9 @@ class Compra:
         el núcleo la trata como estado no disponible (503), nunca como una
         compra vacía.
         """
-        try:
-            compra = cls._desde_fila(fila)
-        except ErrorAlmacen:
-            raise
-        except (KeyError, TypeError, ValueError, ValidationError) as e:
-            # Sin el contenido de la fila en el mensaje: puede traer texto del pedido.
-            raise ErrorAlmacen(f"fila de compra inválida ({type(e).__name__})") from None
+        compra = cls._leer(fila)
+        # La fila tal cual (antes de cerrar nada): lo que tiene la base.
+        compra.fila_base = compra.fila_db = compra.a_fila(espera=True)
         viva = (
             viva_hasta is not None
             and compra.estado in ESTADOS_ESPERANDO
@@ -329,6 +333,30 @@ class Compra:
             return compra
         compra.cerrar_espera_al_leer()
         return compra
+
+    @classmethod
+    def fila_normalizada(cls, fila: dict[str, Any]) -> dict[str, Any]:
+        """Una fila de la base en el formato de `a_fila(espera=True)` (las
+        fechas y los modelos como los escribe este módulo), sin cerrar nada:
+        para compararla campo a campo con la de memoria. `ErrorAlmacen` si no
+        valida."""
+        return cls._leer(fila).a_fila(espera=True)
+
+    def sincronizar(self, base: dict[str, Any], db: dict[str, Any]) -> None:
+        """Después de escribir (o de ver que no hacía falta): `base` es cómo
+        estaba esta compra en memoria y `db`, la fila que quedó en la base."""
+        self.fila_base, self.fila_db = base, db
+        self.espera_guardada = db.get("espera_id")
+
+    @classmethod
+    def _leer(cls, fila: dict[str, Any]) -> Compra:
+        try:
+            return cls._desde_fila(fila)
+        except ErrorAlmacen:
+            raise
+        except (KeyError, TypeError, ValueError, ValidationError) as e:
+            # Sin el contenido de la fila en el mensaje: puede traer texto del pedido.
+            raise ErrorAlmacen(f"fila de compra inválida ({type(e).__name__})") from None
 
     def cerrar_espera_al_leer(self) -> None:
         """Cierra del lado seguro la espera de una compra que nadie retiene
@@ -562,6 +590,66 @@ def _texto_o_none(valor: Any) -> str | None:
 
 def _modelo(tipo: Any, valor: Any) -> Any:
     return tipo.model_validate(valor) if valor is not None else None
+
+
+# -- fusión de filas (varias instancias) ---------------------------------------
+
+_CONFLICTO = object()
+# Las columnas que pueden cambiar (el resto, como el id o `creada`, no) y
+# `actualizada`, que la pone quien escribe.
+_COLUMNAS_FUSION = ("estado", "espera_id", "referencia")
+
+
+def _fusionar_valor(base: Any, nuestro: Any, suyo: Any) -> Any:
+    if nuestro == base:
+        return suyo  # este pedido no lo cambió: lo de la base
+    if suyo == base or suyo == nuestro:
+        return nuestro  # solo lo cambió este pedido
+    return _CONFLICTO  # lo cambiaron los dos, distinto
+
+
+def _fusionar_veredictos(base: Any, nuestros: Any, suyos: Any) -> list[Any]:
+    """Los veredictos se agregan: los de la base más los nuevos de este pedido."""
+    base, nuestros, suyos = base or [], nuestros or [], suyos or []
+    nuevos = [v for v in nuestros if v not in base and v not in suyos]
+    return [*suyos, *nuevos][-MAX_VEREDICTOS_POR_COMPRA:]
+
+
+def fusionar_filas(
+    base: dict[str, Any], nuestra: dict[str, Any], suya: dict[str, Any]
+) -> dict[str, Any] | None:
+    """La fila a escribir con varias instancias: la de la base (`suya`) con lo
+    que cambió este pedido (de `base` a `nuestra`), campo a campo.
+
+    None si los dos cambiaron el mismo campo de forma distinta (otra
+    instancia ya movió la compra: decidió, se bloqueó, cerró una espera): el
+    cambio de este pedido ya no aplica y no se pisa lo de la base. Los
+    veredictos no chocan: se juntan. Las tres filas, en el formato de
+    `Compra.a_fila(espera=True)`; `actualizada` y `creada` quedan las de la
+    base (quien escribe pone su marca)."""
+    resultado = copy.deepcopy(suya)
+    for columna in _COLUMNAS_FUSION:
+        valor = _fusionar_valor(base.get(columna), nuestra.get(columna), suya.get(columna))
+        if valor is _CONFLICTO:
+            return None
+        resultado[columna] = copy.deepcopy(valor)
+    datos_base, datos_nuestros, datos_suyos = base["datos"], nuestra["datos"], suya["datos"]
+    datos = resultado["datos"]
+    for clave in {*datos_base, *datos_nuestros, *datos_suyos}:
+        b, n, s = datos_base.get(clave), datos_nuestros.get(clave), datos_suyos.get(clave)
+        if clave == "veredictos":
+            datos[clave] = copy.deepcopy(_fusionar_veredictos(b, n, s))
+            continue
+        valor = _fusionar_valor(b, n, s)
+        if valor is _CONFLICTO:
+            return None
+        datos[clave] = copy.deepcopy(valor)
+    return resultado
+
+
+def misma_fila(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """¿Las dos filas tienen lo mismo, sin mirar `actualizada`?"""
+    return {**a, "actualizada": None} == {**b, "actualizada": None}
 
 
 class RegistroCompras:
