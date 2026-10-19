@@ -19,8 +19,11 @@ toca acá.
   `escalar`).
 - **ficha**: sin tope de precio o moneda obligatorios, o sin confirmar,
   `escalar` (`chequeos_ficha`).
+- **cantidad**: una oferta de varias unidades frente a una ficha que no dice
+  cuántas, `escalar` (`chequeos_cantidad`): el usuario autorizó una.
 
-La integridad de la elección (ranking propio) está en `guard.ranking`.
+La integridad de la elección (ranking propio) está en `guard.ranking`; la
+categoría de la taxonomía de Google, en `guard.categorias`.
 
 Textos: ningún `detalle` interpola lo que escribe el comercio (ver
 `guard.textos`): solo nombres de campo, valores de la ficha y del catálogo
@@ -269,6 +272,45 @@ def chequeos_cumplimiento(
     ]
 
 
+def pide_cantidad(ficha: Ficha) -> bool:
+    """La ficha dice cuántas unidades (obligatorio o preferido)."""
+    return any(r.campo == "cantidad" for r in ficha.requisitos)
+
+
+def cantidad_sin_autorizar(ficha: Ficha, oferta: Oferta) -> bool:
+    """Varias unidades y una ficha que no dice cuántas: el usuario autorizó una.
+
+    Sin `cantidad` declarada la oferta es de una unidad (el checkout del
+    sample siempre firma `quantity: 1`).
+    """
+    return (oferta.cantidad or 1) > 1 and not pide_cantidad(ficha)
+
+
+def chequeos_cantidad(ficha: Ficha, oferta: Oferta) -> list[Chequeo]:
+    """Una oferta de varias unidades frente a una ficha sin cantidad → escalar.
+
+    No bloquea: puede ser lo que el usuario quería sin decirlo, pero los
+    parámetros explícitos mandan hasta que él acepte cambiarlos.
+    """
+    if not cantidad_sin_autorizar(ficha, oferta):
+        return []
+    cantidad = int(oferta.cantidad or 1)  # entero > 1, validado por el extractor
+    return [
+        Chequeo(
+            tipo="cumplimiento",
+            resultado="escalar",
+            detalle=(
+                f"Cantidad: la oferta es por {cantidad} unidades y el pedido no dice "
+                "cuántas; comprar más de una no está autorizado."
+            ),
+            campo="cantidad",
+            esperado=1,
+            observado=cantidad,
+            origen="declarado",
+        )
+    ]
+
+
 def respaldado(requisito: Requisito, oferta: Oferta) -> bool:
     """False si el dato que usa el chequeo es solo lo que declara el comercio.
 
@@ -395,7 +437,8 @@ def chequeos_evidencia(oferta: Oferta, fixtures: frozenset[str] = frozenset()) -
                 tipo="evidencia",
                 resultado=resultado,
                 detalle=_detalle_evidencia(
-                    evidencia, oferta.moneda, fixture=evidencia.campo in fixtures
+                    evidencia, oferta.moneda, fixture=evidencia.campo in fixtures,
+                    cantidad=oferta.cantidad,
                 ),
                 campo=evidencia.campo,
                 esperado=evidencia.publico,
@@ -406,12 +449,20 @@ def chequeos_evidencia(oferta: Oferta, fixtures: frozenset[str] = frozenset()) -
     return chequeos
 
 
-def _detalle_evidencia(evidencia: Evidencia, moneda: str, fixture: bool = False) -> str:
-    """Sin lo que declara el comercio: solo el nombre, el dato de la fuente y montos."""
+def _detalle_evidencia(
+    evidencia: Evidencia, moneda: str, fixture: bool = False, cantidad: int | None = None
+) -> str:
+    """Sin lo que declara el comercio: solo el nombre, el dato de la fuente y montos.
+
+    `cantidad` > 1: el precio público es el del catálogo por la cantidad
+    (`guard.verificador`) y el texto lo dice por unidad.
+    """
     nombre = nombre_campo(evidencia.campo)
     if evidencia.campo == "precio":
         cobrado = monto(evidencia.declarado, moneda)
         publico = monto(evidencia.publico, moneda)
+        if cantidad is not None and cantidad > 1:
+            return _detalle_precio_por_unidad(evidencia, moneda, cantidad, cobrado, publico)
         if evidencia.estado == "contradicho":
             return f"Precio: se cobra {cobrado} pero el catálogo público dice {publico}."
         if evidencia.estado == "solo_declarado":
@@ -436,6 +487,23 @@ def _detalle_evidencia(evidencia: Evidencia, moneda: str, fixture: bool = False)
             "para verificarlo."
         )
     return f"{nombre} {publico}: coincide con {fuente}."
+
+
+def _detalle_precio_por_unidad(
+    evidencia: Evidencia, moneda: str, cantidad: int, cobrado: str, publico: str
+) -> str:
+    """"se cobra USD 17000.00 por 20 unidades; el catálogo público dice USD 850.00 c/u"."""
+    por = f"por {int(cantidad)} unidades"
+    if evidencia.estado == "solo_declarado":
+        return f"Precio {cobrado} {por}: no está en el catálogo público para compararlo."
+    total = numero(evidencia.publico)
+    unitario = monto(total / cantidad if total is not None else None, moneda)
+    if evidencia.estado == "contradicho":
+        return (
+            f"Precio: se cobra {cobrado} {por} pero el catálogo público dice {unitario} "
+            f"c/u ({publico} por {int(cantidad)})."
+        )
+    return f"Precio: se cobra {cobrado} {por}; el catálogo público dice {unitario} c/u."
 
 
 # ---------------------------------------------------------------------------

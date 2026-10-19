@@ -6,8 +6,9 @@ devuelve un `Veredicto`.
 
 Pasos: extractor (solo campos tipados; lo descartado escala) → verificador
 (catálogo público) → ranking propio → chequeos de la ficha (mandato y
-confirmación) y de la elegida (mandato, cumplimiento, evidencia, integridad
-y política) → si llegó, el ap2.checkout firmado → veredicto.
+confirmación) y de la elegida (mandato, cumplimiento, categoría de la
+taxonomía, cantidad, evidencia, integridad y política) → si llegó, el
+ap2.checkout firmado → veredicto.
 
 Agregación de los chequeos: alguno `bloquea` → `bloqueado`; si no, alguno
 `escalar` → `escalar`; si no, alguno `aviso` → `con_avisos`; si no,
@@ -31,8 +32,10 @@ from contracts import (
     Status,
     Veredicto,
 )
+from guard.categorias import chequeos_categoria
 from guard.checkout import chequeos_checkout
 from guard.chequeos import (
+    chequeos_cantidad,
     chequeos_cumplimiento,
     chequeos_evidencia,
     chequeos_ficha,
@@ -144,12 +147,15 @@ def evaluar(
     puntajes = rankear(ficha, ofertas, comercio_id)
     ranking = [p.cart_id for p in puntajes]
     elegida = next((o for o in ofertas if o.cart_id == cart_id_elegido), None)
-    # Mandato y cumplimiento de cada oferta, una sola vez: los de la elegida
-    # deciden el veredicto y los de todas arman `recibo.filtradas`.
+    # Mandato y cumplimiento de cada oferta (con la categoría de la taxonomía
+    # y la cantidad sin autorizar), una sola vez: los de la elegida deciden el
+    # veredicto y los de todas arman `recibo.filtradas`.
     requisitos_por_oferta = {
         o.cart_id: [
             *chequeos_mandato(ficha, o, comercio_id),
             *chequeos_cumplimiento(ficha, o, comercio_id),
+            *chequeos_categoria(ficha, o, fixtures[o.cart_id]),
+            *chequeos_cantidad(ficha, o),
         ]
         for o in ofertas
     }

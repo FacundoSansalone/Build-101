@@ -6,6 +6,10 @@ es mejor). Los empates respetan el orden en que llegaron las ofertas.
 
 Se usa la oferta ya verificada: los campos tienen el dato público cuando el
 catálogo lo tiene, y el precio es el `amount` del ap2.cart (lo que se cobra).
+
+La categoría de la ficha y, si alguna oferta trae varias unidades sin que
+la ficha diga cuántas, "una unidad" cuentan como obligatorios (ver
+`puntuar`).
 """
 
 from __future__ import annotations
@@ -14,7 +18,8 @@ import math
 from dataclasses import dataclass
 
 from contracts import Chequeo, Ficha, Oferta
-from guard.chequeos import cumple, cumple_respaldado, monto
+from guard.categorias import cumple_categoria, exige_categoria
+from guard.chequeos import cantidad_sin_autorizar, cumple, cumple_respaldado, monto
 from guard.normalizar import EPSILON_MONTO
 from guard.textos import acotar
 from guard.verificador import sku_publico
@@ -49,18 +54,36 @@ class Puntaje:
 
 
 def puntuar(
-    ficha: Ficha, oferta: Oferta, posicion: int, comercio_id: str | None = None
+    ficha: Ficha,
+    oferta: Oferta,
+    posicion: int,
+    comercio_id: str | None = None,
+    cantidad_implicita: bool = False,
 ) -> Puntaje:
     """Un obligatorio cuenta solo si se cumple con un dato que no es solo
     declarado: una oferta inverificable no puede desplazar (ni "dominar") a
-    una verificada. Un preferido solo declarado cuenta (es un aviso)."""
+    una verificada. Un preferido solo declarado cuenta (es un aviso).
+
+    Dos obligatorios implícitos, iguales para todas las ofertas del ranking:
+    la categoría de la ficha (cumplida solo dentro de la rama con fuente
+    independiente, `guard.categorias`) y, con `cantidad_implicita`, "una
+    unidad" (lo que autorizó una ficha que no dice cuántas).
+    """
     obligatorios = [r for r in ficha.requisitos if r.obligatorio]
     preferidos = [r for r in ficha.requisitos if not r.obligatorio]
+    cumplidos = sum(cumple_respaldado(r, oferta, comercio_id) for r in obligatorios)
+    total = len(obligatorios)
+    if exige_categoria(ficha):
+        total += 1
+        cumplidos += cumple_categoria(ficha, oferta)
+    if cantidad_implicita:
+        total += 1
+        cumplidos += not cantidad_sin_autorizar(ficha, oferta)
     return Puntaje(
         cart_id=oferta.cart_id,
         sku=oferta.sku,
-        obligatorios=sum(cumple_respaldado(r, oferta, comercio_id) for r in obligatorios),
-        total_obligatorios=len(obligatorios),
+        obligatorios=cumplidos,
+        total_obligatorios=total,
         preferidos=sum(cumple(r, oferta, comercio_id) is True for r in preferidos),
         total_preferidos=len(preferidos),
         precio=oferta.precio,
@@ -72,8 +95,17 @@ def puntuar(
 def rankear(
     ficha: Ficha, ofertas: list[Oferta], comercio_id: str | None = None
 ) -> list[Puntaje]:
-    """Puntajes de todas las ofertas, del mejor al peor."""
-    puntajes = [puntuar(ficha, o, i, comercio_id) for i, o in enumerate(ofertas)]
+    """Puntajes de todas las ofertas, del mejor al peor.
+
+    "Una unidad" cuenta solo si alguna oferta trae varias y la ficha no dice
+    cuántas (así un pack más barato no "domina" a la oferta de una unidad);
+    si no, los puntajes quedan como siempre.
+    """
+    implicita = any(cantidad_sin_autorizar(ficha, o) for o in ofertas)
+    puntajes = [
+        puntuar(ficha, o, i, comercio_id, cantidad_implicita=implicita)
+        for i, o in enumerate(ofertas)
+    ]
     return sorted(puntajes, key=Puntaje.clave)
 
 

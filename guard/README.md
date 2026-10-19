@@ -22,8 +22,9 @@ el recibo referencia). **Ningún texto del comercio llega a `motivo` ni a
 | `fuentes.py` | Orden de las fuentes de verdad y `DatoExterno` (fabricante, página pública, comprador) dentro del `catalogo`; `desde_jsonld()` para la página pública |
 | `atributos.py` | Atributos genéricos: nombres canónicos (sinónimos, incluye Icecat), valores `{valor, unidad}` y cumplimiento por tipo con unidades |
 | `ficha.py` | `ficha_desde_intent()`: `Ficha.desde_intent()` + `intent.attributes` + `google_product_category` |
-| `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, evidencia y política. Publica lo que sabe chequear: `CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS` (todo el contrato, con `atributo` y `minimo`); el intake los lee para armar la ficha autorizada |
-| `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección |
+| `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, cantidad sin autorizar, evidencia y política. Publica lo que sabe chequear: `CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS` (todo el contrato, con `atributo` y `minimo`); el intake los lee para armar la ficha autorizada |
+| `categorias.py` | Categoría de la taxonomía de Google con jerarquía: la oferta tiene que caer en la rama de `Ficha.categoria_taxonomia`. El árbol (subconjunto del repo) se carga una vez al importar; sin árbol, escala |
+| `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección. La categoría y "una unidad" cuentan como obligatorios implícitos |
 | `checkout.py` | `ap2.checkout` firmado: decodifica el payload del JWT (sin verificar la firma), recalcula `checkout_hash`, lo ata al cart evaluado y exige que sea coherente consigo mismo (`line_items`, `exp`, `iat`) |
 | `recibo.py` | Arma el `Recibo` (sin I/O) y lo firma/verifica (JWS compacto ES256); clave PEM y JWK |
 | `textos.py` | `acotar()` (sin caracteres de control, 80 caracteres) y `moneda_legible()` para no interpolar texto del comercio |
@@ -55,6 +56,16 @@ evaluate(intent, offers_seen, chosen_cart_id) -> dict  # Veredicto.model_dump(mo
 cargar_catalogo(url=..., timeout=1.0, forzar=False) -> CatalogoPublico  # comercio_id, productos, fuente
 fichas_del_fabricante(offer_details, productos, fuente) -> list[DatoExterno]  # I/O afuera de evaluar()
 
+# guard.categorias (sin I/O después de importar)
+ARBOL -> Taxonomia | None                              # el subconjunto, cargado una vez; None si falló
+chequeos_categoria(ficha, oferta, fixtures=frozenset()) -> list[Chequeo]  # [] si la ficha no pide categoría
+cumple_categoria(ficha, oferta) -> bool                # dentro de la rama con fuente independiente (ranking)
+ubicar(ficha, oferta) -> Ubicacion                     # caso: dentro / fuera / mas_general / sin_dato / ...
+
+# guard.chequeos (cantidad)
+chequeos_cantidad(ficha, oferta) -> list[Chequeo]      # varias unidades y ficha sin cantidad → escalar
+cantidad_sin_autorizar(ficha, oferta) -> bool
+
 # guard.ficha / guard.fuentes
 ficha_desde_intent(intent, confirmada=True) -> Ficha   # + attributes y google_product_category
 con_fuentes(catalogo, externos) -> dict                # el catálogo + las fuentes externas
@@ -77,7 +88,9 @@ Chequeos, en este orden:
 | `integridad` (entrada) | Carts sin `cart_id` válido o `cart_id` repetido en `ap2.cart` o en `demo.offer_details` | `escalar` (y el motivo va a `recibo.filtradas`) |
 | `mandato` | Precio (`amount` del cart, lo que se cobra) ≤ tope y moneda | `bloquea`; monto inválido o tope inválido `escalar` |
 | `cumplimiento` | Resto de la ficha con el dato público si existe | obligatorio `bloquea`, preferido `aviso`; obligatorio sin dato o **respaldado solo por lo que declara el comercio** `escalar` |
-| `evidencia` | SKU y cada campo contra el catálogo (precio: cart vs catálogo) | `contradicho` → `escalar` (nunca bloquea), `solo_declarado` → `aviso` |
+| `cumplimiento` (`categoria_taxonomia`) | Solo si la ficha tiene `categoria_taxonomia`: la categoría de la oferta en la rama pedida (ver [Categoría](#categoría-de-la-taxonomía-de-google)) | fuera de la rama, más general, sin dato, ID desconocido o sin árbol `escalar`; dentro solo declarado `aviso` |
+| `cumplimiento` (`cantidad`) | Oferta de varias unidades (`cantidad` > 1) y una ficha sin requisito de cantidad | `escalar` |
+| `evidencia` | SKU y cada campo contra el catálogo (precio: cart vs catálogo; con `cantidad` > 1, vs precio × cantidad) | `contradicho` → `escalar` (nunca bloquea), `solo_declarado` → `aviso` |
 | `integridad` | ¿Otra oferta es igual o mejor en todo y mejor en algo? | `escalar`, señalando la mejor que la domina |
 | `politica` | Comercio (`ofertas_vistas.comercio_id`) y monto máximo sin aprobación | fuera de la lista `bloquea`, sin identificar `escalar`, monto `escalar` |
 | checkout (origen `checkout_firmado`) | Solo si se pasa `checkout`: ver abajo | `bloquea` o `escalar` |
@@ -185,18 +198,78 @@ solo declarado).
 - Requisito obligatorio sin fuente independiente → `escalar` (regla vigente).
 - Una fuente rotulada como fixture (`fabricante/` por defecto) lo dice en el
   `detalle` y en el `motivo` ("la ficha del fabricante (fixture de prueba)").
-- `Ficha.categoria_taxonomia` se registra (sale de
-  `intent.google_product_category`) y la `categoria_taxonomia` de la oferta
-  se verifica contra las fuentes; todavía no hay un chequeo "la categoría de
-  la oferta está en la rama del pedido" (necesita el árbol como dato).
+- `Ficha.categoria_taxonomia` (sale de `intent.google_product_category`, del
+  intake o de `/v1`) se chequea con el árbol: ver
+  [Categoría](#categoría-de-la-taxonomía-de-google). La `categoria_taxonomia`
+  de la oferta se verifica además contra las fuentes, como cualquier campo.
 
 Escenarios de `world/` (`fixtures/etapa2/`), con la ficha del fabricante y
 sin catálogo público para esos productos: la honesta da `con_avisos` (SKU y
-precio sin catálogo), el ataque `bloqueado` (`memoria_ram 8 GB no cumple el
+precio sin catálogo; la categoría, dentro de la rama pero solo declarada, es
+otro aviso), el ataque `bloqueado` (`memoria_ram 8 GB no cumple el
 obligatorio (mínimo 16 GB)`; `cancelacion_ruido (no) no cumple el
 obligatorio (sí)`). Sin ninguna fuente, lo obligatorio escala.
 `notebook_dato_falso` es el mismo dato falso **sin inyección** (el filtro no
 tiene nada que ver): el Guard no lee texto libre y lo bloquea igual.
+
+### Categoría de la taxonomía de Google
+
+`guard/categorias.py`, sin LLM. El árbol es el subconjunto del repo
+(`taxonomia.cargar.cargar_subconjunto()`, 18 ramas): se carga **una vez, al
+importar el módulo** (`categorias.ARBOL`), nunca dentro de `evaluar()`. Si
+no carga (falta el archivo, falla `taxonomia`), `ARBOL` queda en `None`, el
+Guard igual arranca y toda ficha con categoría escala. Importar el Guard no
+carga `decisiones` (el clasificador con LLM se importa recién cuando se pide).
+
+Con `Ficha.categoria_taxonomia`, cada oferta suma un chequeo `cumplimiento`
+con `campo="categoria_taxonomia"`, sobre la categoría **ya verificada** de la
+oferta (la de la primera fuente independiente si el comercio la declaró; si
+no la declaró, no se completa con el dato público):
+
+| Caso | Resultado |
+|---|---|
+| Ficha sin `categoria_taxonomia` (o vacía) | sin chequeo |
+| Sin árbol; ID de la ficha que no es un ID (dígitos, hasta 12) o que no está en el árbol | `escalar` |
+| La oferta no declara la categoría | `escalar` |
+| ID de la oferta que no está en el árbol | `escalar` |
+| La oferta es más general (un ancestro de la pedida: Computers para Laptops) | `escalar` |
+| Fuera de la rama (Tablet Computers para Laptops) | `escalar` |
+| Dentro de la rama (igual o descendiente: Laptops para Computers) con fuente independiente | `ok` |
+| Dentro de la rama, solo declarado | `aviso` |
+
+Fuera de la rama escala y no bloquea: una clasificación puede discutirse (una
+2 en 1 entre laptops y tablets) y decide una persona. Dentro de la rama solo
+declarado es `aviso` (decisión de la etapa 3, en `CLAUDE.md`), no `escalar`
+como un requisito obligatorio de la ficha sin respaldo; en el ranking ese
+caso no cuenta como cumplido.
+
+**Ranking:** con categoría en la ficha, todas las ofertas suman un
+obligatorio, cumplido solo dentro de la rama con fuente independiente
+(`cumple_categoria`). Sin eso, unas tablets más baratas "dominaban" a la
+laptop correcta y la integridad la escalaba. `recibo.filtradas` lleva las
+ofertas fuera de la rama.
+
+Textos: los nombres salen del árbol (son nuestros: "Tablet Computers
+(4745) fuera de la pedida (Laptops, 328), según el catálogo público") y los
+IDs son dígitos validados; nada de lo que escribe el comercio.
+
+### Precio por unidad y cantidad
+
+El `amount` del ap2.cart es el total que se cobra y el `price` del catálogo
+(o de otra fuente) es por unidad. Con `Oferta.cantidad` > 1, la evidencia del
+precio compara el total con `price × cantidad` (medio centavo de tolerancia)
+y `Evidencia.publico` es ese total; el `detalle` lo dice por unidad: "Precio:
+se cobra USD 17000.00 por 20 unidades; el catálogo público dice USD 850.00
+c/u". Sin `cantidad` o con 1, igual que antes (cobrar el precio de una
+unidad por 20 es `contradicho`).
+
+Una oferta de varias unidades frente a una ficha **sin requisito de
+cantidad** escala (`chequeos_cantidad`): el usuario autorizó una. Con
+requisito, manda el requisito (21 unidades para una ficha de 20 `bloquea`).
+En el ranking, si alguna oferta trae varias unidades sin que la ficha diga
+cuántas, "una unidad" cuenta como obligatorio para todas: un pack más barato
+no "domina" a la oferta de una unidad. Si ninguna trae varias, los puntajes
+no cambian.
 
 ### Textos
 
@@ -272,9 +345,16 @@ veredicto = veredicto.model_copy(update={"recibo": firmar_recibo(veredicto.recib
 
 ## Decisiones de implementación (dentro de los contratos)
 
-- **Precio** en mandato, ranking e integridad = `amount` del `ap2.cart`. Los
-  demás campos usan el dato público cuando el SKU está en el catálogo y el
-  comercio declaró el campo.
+- **Precio** en mandato, ranking e integridad = `amount` del `ap2.cart` (el
+  total). Los demás campos usan el dato público cuando el SKU está en el
+  catálogo y el comercio declaró el campo. Contra el catálogo, el total se
+  compara con `price × cantidad` si la oferta declara `cantidad` > 1 (la
+  cantidad es lo que declara el comercio: si la ficha no la pide, escala; si
+  la pide, tiene que cumplirla).
+- **Categoría de la taxonomía:** el árbol es el subconjunto del repo; un ID
+  válido de Google que no está ahí escala (falla cerrado). La categoría
+  omitida por el comercio no se completa con la de la fuente (escala), como
+  cualquier campo omitido.
 - **Montos inválidos** (`bool`, `<= 0`, NaN, infinito o no numérico) en
   `amount`, en el `price` del catálogo o en el tope de la ficha cuentan como
   faltantes: el chequeo que los necesita **escala** (no bloquea: falta un
