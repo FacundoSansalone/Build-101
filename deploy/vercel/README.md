@@ -26,6 +26,8 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 | `verificar_supabase.py` | Solo lectura: ¿están las tablas y columnas de las migraciones 003 y 004? |
 | `tunel_router.py` | Un solo puerto (:8090) para la simulación: `/a2a/*` al comercio, el resto al catálogo |
 | `local_multi.py` | Vercel en tu máquina: N instancias de `index:app` y un balanceador por pedido en :8040 |
+| `postgrest_local.py` | PostgREST falso por HTTP en :54321 (las tablas `gw_*` en memoria): la prueba local **sin Supabase** |
+| `local_sin_supabase.env.ejemplo` | El entorno de esa prueba (sin secretos) |
 | [`proxy/scripts/smoke_v1_pausas.py`](../../proxy/scripts/smoke_v1_pausas.py) | Prueba de las pausas (porqué y oportunidad) con las respuestas por otras instancias |
 
 Los comandos van desde la raíz del repo, con el venv de `world/ap2`
@@ -34,10 +36,28 @@ Los comandos van desde la raíz del repo, con el venv de `world/ap2`
 
 ## Antes de empezar
 
-- **Lo que ponen los otros lotes:** `index.py` (raíz, `from proxy.vercel import app`),
-  `proxy/vercel.py`, el `pyproject.toml` raíz con las dependencias del motor,
-  `.python-version` (3.12) y `proxy/sql/004_serverless.sql`. Sin `index.py`,
-  el deploy falla (`functions` de `vercel.json` no encuentra la función).
+- **La entrada:** `index.py` (raíz, `from proxy.vercel import app`) y
+  `proxy/vercel.py` (`crear_app_serverless`), el `pyproject.toml` raíz con las
+  dependencias del motor y `[tool.vercel] entrypoint = "index:app"`,
+  `.python-version` (3.12) y `proxy/sql/004_serverless.sql`.
+- **Qué arma `proxy/vercel.py`:** solo `/a2a/m/{comercio}` y `/v1/*` (sin
+  `/guard/*` ni la ruta vieja, todo pedido con clave), la clave del recibo
+  solo del entorno, el estado en Supabase, varias instancias y webhooks en
+  línea, y nada en disco. Si falta algo o algo no sirve, responde **503
+  `{"error": "motor_no_configurado"}` a todo** (también a
+  `/v1/openapi.json`) y el motivo va a los logs, sin secretos. No arranca:
+  sin una clave activa en `GATEWAY_CLAVES_JSON`; sin `GATEWAY_COMERCIOS_JSON`
+  o con un comercio por http fuera de loopback; sin `GATEWAY_ESTADO=supabase`
+  y sus credenciales; sin `GUARD_SIGNING_KEY_PEM_B64` (o `_PEM`); sin
+  `GUARD_FILTRO` o con uno fuera del motor; sin el Guard real; con una
+  variable **prohibida** prendida; con `GATEWAY_PUBLIC_URL` o
+  `SUPABASE_URL` que no son https (http solo contra loopback, para la
+  prueba local); o con un tiempo por encima de su tope (abajo).
+- **Sin credenciales del LLM** (`GOOGLE_API_KEY`, `OPENAI_API_KEY` o
+  `TYPESAFE_API_KEY`) la intención queda apagada: no hay pregunta del porqué
+  ni oportunidades y las compras siguen el pedido literal. El registro de
+  auditoría de la demo (`Persistencia`, tablas de `001_persistencia.sql`) no
+  se usa: el estado del gateway va a las tablas `gw_*`.
 - Una cuenta de Vercel (Hobby alcanza), Node para `npx`, y ngrok (o
   cloudflared) para el túnel.
 - **Límites de Hobby que el motor respeta:** 300 s por pedido (con Fluid
@@ -60,9 +80,10 @@ npx vercel link         # desde la raíz del repo; crea .vercel/ (ignorado por g
 `vercel link` pregunta el scope y el nombre del proyecto. Vercel detecta la
 app por `index.py` en la raíz (con una variable `app` ASGI) y le manda
 **todas** las rutas: no hacen falta `rewrites`. La app es Starlette, que no
-tiene un preset con nombre como FastAPI o Flask: si el build no encontrara la
-entrada, `[tool.vercel] entrypoint = "index:app"` en `pyproject.toml` la fija
-(la clave de `functions` sigue siendo `index.py`). Después del deploy, una
+tiene un preset con nombre como FastAPI o Flask, así que `pyproject.toml`
+fija la entrada con `[tool.vercel] entrypoint = "index:app"` (la clave que
+documenta el [runtime de Python](https://vercel.com/docs/functions/runtimes/python):
+`module:variable`; la clave de `functions` sigue siendo `index.py`). Después del deploy, una
 ruta que no existe tiene que devolver el 404 JSON del motor, no la página
 `NOT_FOUND` de Vercel (paso 7).
 
@@ -161,6 +182,12 @@ npx vercel env ls production                               # nombres, sin valore
   `GATEWAY_WEBHOOKS_INSEGUROS`. Si alguna está prendida, el motor no
   arranca (responde 503 `motor_no_configurado` a todo, con el motivo en los
   logs y sin secretos).
+- **Tiempos:** sin las variables, el presupuesto por llamada es 270 s, la
+  espera del porqué 60 s y la de la decisión 150 s. Se pueden bajar;
+  subirlas por encima de esos topes no arranca. También tiene que valer
+  presupuesto + `GATEWAY_BARRERA_S` (10 s) + 15 ≤ 300. Los cuerpos
+  (`GATEWAY_MAX_CUERPO_BYTES`, `GATEWAY_MAX_CUERPO_A2A_BYTES`) y la
+  respuesta del comercio (`PROXY_MAX_RESPUESTA_BYTES`), hasta 4 MB.
 - Las variables nuevas valen recién en el deploy siguiente.
 
 ### 5. El túnel a la simulación
@@ -288,6 +315,32 @@ curso en ella termina en 500 `FUNCTION_INVOCATION_FAILED` y lo siguiente va a
 las otras. `GET /__balanceador/estado` muestra cuáles siguen vivas. Las rutas
 `/__balanceador/*` y los headers `X-Balanceador-*` son solo del balanceador
 (no llegan al motor) y solo responden desde esta máquina.
+
+### Prueba local sin Supabase
+
+Para probar varias instancias sin tocar el Supabase del equipo,
+`postgrest_local.py` sirve por HTTP en `127.0.0.1:54321` el PostgREST falso
+de los tests (`proxy/tests/postgrest_falso.py`): las tablas `gw_*` de 003 y
+004 en memoria, con sus índices únicos, claves foráneas y el trigger de
+`gw_compras`. Todas las instancias le hablan a ese, como a la base. Al
+cortarlo se pierde todo. Solo escucha en loopback (no tiene autenticación).
+
+```sh
+$PY deploy/vercel/postgrest_local.py                         # terminal 1
+$PY deploy/vercel/generar_secretos.py --carpeta .temp-db/vercel-local
+cp deploy/vercel/local_sin_supabase.env.ejemplo .temp-db/vercel-local/local.env
+$PY deploy/vercel/local_multi.py --instancias 2 \
+    --env .temp-db/vercel-local/vercel.env --env .temp-db/vercel-local/local.env   # terminal 2
+curl -s http://127.0.0.1:8040/v1/public-key                  # el kid de vercel.env
+curl -s http://127.0.0.1:54321/__tablas                      # cuántas filas hay en cada tabla
+```
+
+[`local_sin_supabase.env.ejemplo`](local_sin_supabase.env.ejemplo) trae
+`SUPABASE_URL=http://127.0.0.1:54321` (http solo vale contra loopback), el
+comercio de la simulación por loopback y el filtro solo con heurísticas.
+Sin `GOOGLE_API_KEY` la intención queda apagada (pedido literal): para el
+smoke de las pausas (paso 5) agregala. Con la simulación levantada (paso 1)
+sirve el mismo smoke.
 
 ## Qué se sube y qué no
 

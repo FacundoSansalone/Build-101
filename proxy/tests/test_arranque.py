@@ -10,7 +10,8 @@
   re-exportando los cargadores con los mismos nombres.
 - La clave del recibo (`cargar_clave_recibo`): la del entorno si está; si no,
   la del archivo de hoy, que con `crear_si_falta=False` no se crea. `python
-  -m proxy` valida la del entorno (si está y no sirve, no arranca).
+  -m proxy` firma con la del entorno si está (si no sirve, no arranca) y si
+  no, con el archivo como siempre.
 - `proxy.arranque` se importa (y sus cargadores corren) sin uvicorn, que en
   Vercel no está instalado.
 """
@@ -417,38 +418,83 @@ def test_cargar_clave_recibo_por_defecto_es_la_de_dot_temp_db():
 # -- la clave del recibo en python -m proxy -------------------------------------
 
 
-def test_python_m_proxy_valida_la_clave_del_entorno(pem, caplog):
+def test_python_m_proxy_toma_la_clave_del_entorno_solo_si_esta(tmp_path, clave_p256, pem):
     import proxy.__main__ as principal
 
-    assert principal.avisar_clave_del_entorno({}) is None
-    with caplog.at_level("WARNING", logger="proxy"):
-        clave = principal.avisar_clave_del_entorno({VAR_CLAVE_PEM: pem.decode()})
-    assert clave is not None
-    assert any(VAR_CLAVE_PEM in r.getMessage() for r in caplog.records)
-    assert _cuerpo(pem) not in caplog.text
+    config = Config(guard_key_path=tmp_path / "k.pem")
+    assert principal.clave_recibo_del_entorno(config, {}) is None  # lo de siempre: el archivo
+    assert principal.clave_recibo_del_entorno(config, {VAR_CLAVE_PEM: "  "}) is None
+    clave = principal.clave_recibo_del_entorno(config, {VAR_CLAVE_PEM: pem.decode(), VAR_KID: "k7"})
+    assert clave is not None and _misma(clave.clave, clave_p256) and clave.kid == "k7"
     with pytest.raises(SystemExit, match="no arranca") as e:
-        principal.avisar_clave_del_entorno({VAR_CLAVE_PEM_B64: pem.decode()})
+        principal.clave_recibo_del_entorno(config, {VAR_CLAVE_PEM_B64: pem.decode()})
     assert _cuerpo(pem) not in str(e.value)
+    assert list(tmp_path.iterdir()) == []  # ni la crea ni la mira
 
 
-def test_python_m_proxy_con_clave_invalida_no_arranca(monkeypatch, tmp_path, pem):
+def _entorno_main_clave(monkeypatch, tmp_path) -> list:
     import proxy.__main__ as principal
 
     for nombre in ("GUARD_FILTRO", "PROXY_PERMITIR_SIN_FILTRO", "PROXY_ALLOW_STUB",
                    "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY",
                    "GATEWAY_CLAVES_ARCHIVO", "GATEWAY_COMERCIOS_ARCHIVO", "GATEWAY_CLAVES_JSON",
-                   "GATEWAY_COMERCIOS_JSON", VAR_CLAVE_PEM, VAR_KID):
+                   "GATEWAY_COMERCIOS_JSON", VAR_CLAVE_PEM, VAR_CLAVE_PEM_B64, VAR_KID):
         monkeypatch.delenv(nombre, raising=False)
     monkeypatch.setenv("INTENCION_ACTIVA", "0")
     monkeypatch.setenv("FABRICANTE_FUENTE", "ninguna")
     monkeypatch.setenv("GUARD_EVENTS_JSONL", str(tmp_path / "e.jsonl"))
     monkeypatch.setenv("GUARD_KEY_PATH", str(tmp_path / "k.pem"))
     monkeypatch.setenv("GUARD_API_TOKEN_PATH", str(tmp_path / "token"))
-    monkeypatch.setenv(VAR_CLAVE_PEM_B64, pem.decode())  # el PEM, no su base64
     apps: list = []
     monkeypatch.setattr(principal, "sockets_de", lambda app, config, gateway: ["local"])
     monkeypatch.setattr(principal, "servir", lambda app, sockets: apps.append(app))
     monkeypatch.setattr(principal.logging, "basicConfig", lambda **kw: None)
+    return apps
+
+
+def test_python_m_proxy_firma_con_la_clave_del_entorno(monkeypatch, tmp_path, pem):
+    """Con la variable, `create_app` recibe la clave: `/guard/public-key`
+    publica esa (con su kid) y no se crea el archivo de `GUARD_KEY_PATH`."""
+    import httpx
+
+    import proxy.__main__ as principal
+
+    apps = _entorno_main_clave(monkeypatch, tmp_path)
+    monkeypatch.setenv(VAR_CLAVE_PEM_B64, base64.b64encode(pem).decode())
+    monkeypatch.setenv(VAR_KID, "kaiai-local-2")
+    principal.main()
+    (app,) = apps
+    proxy = app.state.proxy
+    assert proxy.clave_recibo is not None and proxy.clave_recibo.kid == "kaiai-local-2"
+    assert proxy.datos_clave_publica() == proxy.clave_recibo.clave_publica()
+    assert not (tmp_path / "k.pem").exists()
+
+    async def pedir() -> httpx.Response:
+        transporte = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transporte, base_url="http://localhost:8010") as c:
+            return await c.get("/guard/public-key")
+
+    import asyncio
+
+    respuesta = asyncio.run(pedir())
+    assert respuesta.status_code == 200 and respuesta.json()["kid"] == "kaiai-local-2"
+
+
+def test_python_m_proxy_sin_la_variable_usa_el_archivo_como_siempre(monkeypatch, tmp_path):
+    import proxy.__main__ as principal
+
+    apps = _entorno_main_clave(monkeypatch, tmp_path)
+    principal.main()
+    (app,) = apps
+    assert app.state.proxy.clave_recibo is None
+    assert (tmp_path / "k.pem").is_file()  # `create_app` la crea al arrancar, como siempre
+
+
+def test_python_m_proxy_con_clave_invalida_no_arranca(monkeypatch, tmp_path, pem):
+    import proxy.__main__ as principal
+
+    apps = _entorno_main_clave(monkeypatch, tmp_path)
+    monkeypatch.setenv(VAR_CLAVE_PEM_B64, pem.decode())  # el PEM, no su base64
     with pytest.raises(SystemExit, match=VAR_CLAVE_PEM_B64) as e:
         principal.main()
     assert apps == [] and _cuerpo(pem) not in str(e.value)

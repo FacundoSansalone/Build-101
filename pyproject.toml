@@ -30,14 +30,26 @@ local = ["uvicorn==0.54.0"]
 [tool.uv]
 package = false
 
+# La entrada de la función de Vercel (`module:variable`, según la doc del
+# runtime de Python: https://vercel.com/docs/functions/runtimes/python).
+# `index.py` con `app` en la raíz ya se detecta solo, pero Starlette no es un
+# preset con nombre: así queda fija. Es la función `index.py` de vercel.json.
+[tool.vercel]
+entrypoint = "index:app"
+
 # La frontera del motor (la verifica `proxy/tests/test_frontera_motor.py`):
 # - `paquetes`: las carpetas del motor;
 # - `excluidos`: lo que vive ahí pero no es del motor (tests, scripts,
 #   benchmark, casos de evaluación y la demo local); patrones relativos a la
 #   raíz, por archivo o por carpeta (`**` = cualquier carpeta);
 # - `prohibidos`: módulos que el motor nunca importa (la simulación y el
-#   sample de AP2), ni arriba del archivo ni dentro de una función.
+#   sample de AP2), ni arriba del archivo ni dentro de una función;
+# - `entradas`: archivos del motor fuera de los paquetes (la entrada de
+#   Vercel), con las mismas reglas.
+# `proxy/vercel.py` repite `paquetes` y `excluidos` (no lee este archivo en
+# runtime) y un test verifica que coinciden.
 [tool.kaiai.motor]
+entradas = ["index.py"]
 paquetes = [
     "contracts",
     "guard",

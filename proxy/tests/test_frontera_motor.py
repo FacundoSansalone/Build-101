@@ -58,6 +58,8 @@ def excluido(ruta: str, patrones: list[str]) -> bool:
 
 
 def archivos_del_motor(datos: dict[str, list[str]] | None = None) -> list[str]:
+    """Los `.py` de los paquetes del motor (sin lo excluido) y sus `entradas`
+    fuera de los paquetes (`index.py`, la de Vercel)."""
     datos = datos or frontera()
     archivos = []
     for paquete in datos["paquetes"]:
@@ -65,6 +67,7 @@ def archivos_del_motor(datos: dict[str, list[str]] | None = None) -> list[str]:
             ruta = archivo.relative_to(RAIZ).as_posix()
             if "__pycache__" not in ruta and not excluido(ruta, datos["excluidos"]):
                 archivos.append(ruta)
+    archivos += [e for e in datos.get("entradas", []) if (RAIZ / e).is_file()]
     return archivos
 
 
@@ -148,6 +151,8 @@ def test_la_frontera_esta_declarada_en_el_pyproject():
     motor = frontera()
     for paquete in motor["paquetes"]:
         assert (RAIZ / paquete / "__init__.py").is_file(), paquete
+    for entrada in motor.get("entradas", []):
+        assert (RAIZ / entrada).is_file(), entrada
     # Cada exclusión apunta a algo que existe: si se renombra un archivo, la
     # lista (y la del despliegue) se actualiza a la vez.
     todos = [p.relative_to(RAIZ).as_posix() for q in motor["paquetes"] for p in (RAIZ / q).rglob("*")]
@@ -160,6 +165,8 @@ def test_la_frontera_esta_declarada_en_el_pyproject():
 def test_lo_excluido_no_es_del_motor():
     archivos = set(archivos_del_motor())
     assert "proxy/app.py" in archivos and "guard/__init__.py" in archivos
+    # La entrada de Vercel y su módulo, también.
+    assert {"index.py", "proxy/vercel.py", "proxy/arranque.py"} <= archivos
     for fuera in ("proxy/demo_local.py", "proxy/tests/conftest.py", "guard/benchmark_hook.py",
                   "filtro/casos.py", "filtro/evaluar.py", "intencion/evaluar_intake.py",
                   "proxy/scripts/smoke_v1_general.py", "guard/tests/test_fuentes.py"):

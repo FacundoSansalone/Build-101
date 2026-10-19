@@ -47,6 +47,8 @@ from proxy.arranque import (
 )
 from proxy.config import Config, verificar_gateway, verificar_host_local
 from proxy.evaluador import (
+    VAR_CLAVE_PEM,
+    VAR_CLAVE_PEM_B64,
     ClaveRecibo,
     ClaveReciboInvalida,
     EvaluadorNoDisponible,
@@ -176,27 +178,23 @@ def servir(app: Any, sockets: list[socket.socket]) -> None:
         pass
 
 
-def avisar_clave_del_entorno(env: dict[str, str] | None = None) -> ClaveRecibo | None:
-    """La clave del recibo de `GUARD_SIGNING_KEY_PEM_B64` / `_PEM`, validada.
+def clave_recibo_del_entorno(
+    config: Config, env: dict[str, str] | None = None
+) -> ClaveRecibo | None:
+    """La clave del recibo de `GUARD_SIGNING_KEY_PEM_B64` / `_PEM` (con
+    `GUARD_SIGNING_KID`), para inyectarla en `create_app`; None si no está
+    ninguna de las dos variables, y entonces todo queda como siempre (la del
+    archivo `GUARD_KEY_PATH`, que `create_app` crea si falta).
 
-    Si está y no sirve, no arranca (fail-closed). El servidor local todavía
-    firma con la del archivo (`GUARD_KEY_PATH`): `create_app` no recibe la
-    clave. Hasta que la reciba (`proxy.arranque.cargar_clave_recibo` ya elige
-    entre las dos), se avisa en el log para que nadie crea que firma con la
-    del entorno. Sin las variables no cambia nada.
+    Si está y no sirve, no arranca (fail-closed), sin la clave en el mensaje.
     """
     env = dict(os.environ) if env is None else env
+    if not any((env.get(nombre) or "").strip() for nombre in (VAR_CLAVE_PEM_B64, VAR_CLAVE_PEM)):
+        return None
     try:
-        clave = ClaveRecibo.desde_entorno(env)
+        return cargar_clave_recibo(config, env)  # con las variables: la del entorno
     except ClaveReciboInvalida as e:
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from None
-    if clave is not None:
-        logger.warning(
-            "%s es válida (kid %s), pero el servidor local firma los recibos con la clave "
-            "de GUARD_KEY_PATH: la del entorno es para el despliegue serverless.",
-            clave.origen, clave.kid,
-        )
-    return clave
 
 
 def main() -> None:
@@ -224,7 +222,7 @@ def main() -> None:
         validar_evaluador(evaluador, config.permitir_stub)
     except EvaluadorNoDisponible as e:
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
-    avisar_clave_del_entorno()
+    clave_recibo = clave_recibo_del_entorno(config)
     # Supabase es opcional: sin SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY, nada.
     persistencia = Persistencia.desde_entorno()
     agente = cargar_agente()
@@ -240,6 +238,7 @@ def main() -> None:
             config, evaluador=evaluador, persistencia=persistencia, agente=agente, filtro=filtro,
             filtro_modo=filtro_modo, fabricante=fabricante, integradores=integradores,
             comercios=comercios, almacen=almacen, demo=FuentesDemo(),
+            clave_recibo=clave_recibo,
         )
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
