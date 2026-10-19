@@ -461,9 +461,12 @@ async def test_los_atributos_confirmados_llegan_al_guard_y_bloquea_la_ram_falsa(
     assert modelo.taxonomia == 3 and modelo.llamadas == 6  # 3 turnos + 3 niveles
 
 
-async def test_sin_cliente_de_decisiones_la_taxonomia_queda_vacia(armar_proxy, config_rapida):
-    """Un agente sin `clasificar_taxonomia` (Gemini, o sin cliente): la ficha
-    queda sin categoría de la taxonomía y la compra sigue igual."""
+async def test_sin_cliente_de_decisiones_la_categoria_sale_de_las_palabras(
+    armar_proxy, config_rapida
+):
+    """Un agente sin `clasificar_taxonomia` (Gemini, o sin cliente): la
+    categoría de la taxonomía sale de las palabras del pedido (etapa 3:
+    `taxonomia.palabras`) y la compra sigue igual."""
     evaluador, llamadas = evaluador_espia()
     app = armar_proxy(
         config=replace(config_rapida, ficha_demo=False), agente=AgenteMinimo(
@@ -480,7 +483,8 @@ async def test_sin_cliente_de_decisiones_la_taxonomia_queda_vacia(armar_proxy, c
         contexto = (await busqueda).json()["result"]["contextId"]
         await checkout(c, contexto, "cart_1")
     (llamada,) = llamadas
-    assert llamada["ficha"].categoria_taxonomia is None
+    # "Nike basketball shoes …": Apparel & Accessories > Shoes.
+    assert llamada["ficha"].categoria_taxonomia == "187"
     assert [r.campo for r in llamada["ficha"].requisitos] == ["precio"]
 
 
@@ -546,7 +550,9 @@ async def test_la_consulta_lleva_el_titulo_publico(armar_proxy, config_rapida, e
 def test_python_m_proxy_lee_proxy_ficha_demo():
     from proxy.config import Config
 
-    assert Config.desde_entorno({}).ficha_demo is True
+    # Etapa 3: por defecto manda la ficha del usuario; la de la demo, a pedido.
+    assert Config.desde_entorno({}).ficha_demo is False
+    assert Config.desde_entorno({"PROXY_FICHA_DEMO": "1"}).ficha_demo is True
     assert Config.desde_entorno({"PROXY_FICHA_DEMO": "0"}).ficha_demo is False
 
 

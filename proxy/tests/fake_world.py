@@ -419,21 +419,42 @@ def _artefacto(data: dict[str, Any]) -> Artifact:
     )
 
 
-def app_catalogo(merchant_id: str | None = None) -> Starlette:
+def app_catalogo(
+    merchant_id: str | None = None,
+    *,
+    por_sku: bool = False,
+    registro: list[str] | None = None,
+) -> Starlette:
     """Catálogo público falso: sirve fixtures/public_catalog.json.
 
     Con `merchant_id`, el catálogo dice ser de ese comercio (otro distinto del
-    que firma el checkout del FakeMerchant, "merchant_1").
+    que firma el checkout del FakeMerchant, "merchant_1"). Con `por_sku`,
+    también `/products/<sku>` (el producto con el `merchant`, o 404). En
+    `registro` quedan las rutas pedidas.
     """
     catalogo = json.loads((FIXTURES / "public_catalog.json").read_text("utf-8"))
     merchant = dict(catalogo["merchant"])
     if merchant_id is not None:
         merchant["id"] = merchant_id
+    productos = {p["sku"]: p for p in catalogo["products"]}
 
     async def products(request: Request) -> Response:
+        if registro is not None:
+            registro.append(request.url.path)
         return JSONResponse({"merchant": merchant, "products": catalogo["products"]})
 
-    return Starlette(routes=[Route("/products", products, methods=["GET"])])
+    async def producto(request: Request) -> Response:
+        if registro is not None:
+            registro.append(request.url.path)
+        encontrado = productos.get(request.path_params["sku"])
+        if encontrado is None:
+            return JSONResponse({"error": "Producto no encontrado"}, status_code=404)
+        return JSONResponse({**encontrado, "merchant": merchant})
+
+    rutas = [Route("/products", products, methods=["GET"])]
+    if por_sku:
+        rutas.append(Route("/products/{sku}", producto, methods=["GET"]))
+    return Starlette(routes=rutas)
 
 
 class RuteoPorHost(httpx.AsyncBaseTransport):

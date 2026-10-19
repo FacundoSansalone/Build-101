@@ -123,7 +123,7 @@ class Compra:
     creada: datetime
     pedido: str
     pregunta: str
-    ficha_llm: Ficha | None              # los parámetros que armó el agente con el pedido
+    ficha_llm: Ficha | None              # la del usuario: la que armó el intake (o el agente)
     ficha: Ficha | None = None           # parámetros autorizados vigentes (ver resolver)
     contexto_id: str | None = None
     estado: EstadoCompra = "esperando_contexto"
@@ -156,9 +156,15 @@ class Compra:
         return list(ficha.requisitos) if ficha else []
 
     def resolver_ficha(self, confirmada: Ficha | None) -> Ficha | None:
-        """Una sola vez: la ficha confirmada de la demo, si hay, manda sobre
-        la del agente (el LLM puede extraer de más o de menos: CLAUDE.md →
-        "Ficha en vivo"). Después de aceptar una oportunidad no se toca."""
+        """Una sola vez, los parámetros autorizados de la compra: los del
+        usuario (`ficha_llm`, lo que confirmó en el intake o, sin intake, lo
+        que armó el agente sin confirmar, con lo que el Guard escala).
+
+        `confirmada` es la ficha de un escenario fijo de la demo: quien llama
+        solo la pasa con `PROXY_FICHA_DEMO=1` (grabaciones, benchmark por el
+        proxy) y entonces manda sobre la del usuario. Por defecto (etapa 3)
+        llega None y manda la del usuario. Después de aceptar una oportunidad
+        no se toca."""
         if not self.ficha_resuelta:
             self.ficha = confirmada if confirmada is not None else self.ficha_llm
             self.ficha_resuelta = True

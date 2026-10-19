@@ -46,6 +46,10 @@ def config(tmp_path) -> Config:
         guard_key_path=tmp_path / "guard_signing_key.pem",
         permitir_stub=True,  # los tests usan el stub explícitamente (N1)
         api_token_path=tmp_path / "guard_api_token",
+        # El default es 0 (manda la ficha del usuario, etapa 3). Los tests de
+        # siempre prueban con la ficha del escenario de la demo: la piden; los
+        # del comportamiento por defecto usan `replace(config, ficha_demo=False)`.
+        ficha_demo=True,
     )
 
 
