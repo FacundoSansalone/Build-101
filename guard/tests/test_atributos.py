@@ -211,3 +211,11 @@ def test_formatear_atributo():
 def test_requisito_de_atributo_necesita_nombre():
     with pytest.raises(ValueError):
         Requisito(campo="atributo", operador="minimo", valor=16, obligatorio=True)
+
+
+def test_wireless_es_inalambrico():
+    # Icecat dice "Wireless"; el dataset y el intake, "inalambrico".
+    from guard.atributos import clave_atributo
+
+    assert clave_atributo("Wireless") == "inalambrico"
+    assert clave_atributo("Inalámbrica") == "inalambrico"

@@ -39,3 +39,14 @@ def test_iguales_con_listas_de_no_hasheables_no_lanza():
     assert iguales([[1]], [[2]]) is False
     assert iguales({"a": 1}, {"a": 1}) is True
     assert iguales(["Nike"], "Nike") is False
+
+
+def test_texto_sin_tildes_y_colores_en_ingles_valen_lo_mismo():
+    # Comercio general: el dataset dice "Negro" y un pedido en inglés, "black".
+    from guard.normalizar import iguales
+
+    assert iguales("Negro", "black")
+    assert iguales("Marrón", "brown")
+    assert iguales("Ergonómica", "ergonomica")
+    assert not iguales("negro", "blanco")
+    assert not iguales("black", "white")

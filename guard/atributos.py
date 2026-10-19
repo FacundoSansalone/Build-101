@@ -70,6 +70,8 @@ ALIAS: dict[str, str] = {
     "duracion_de_bateria": "autonomia_bateria",
     "connectivity_technology": "conectividad",
     "connectivity": "conectividad",
+    "wireless": "inalambrico",
+    "inalambrica": "inalambrico",
     # identificadores (schema.org)
     "gtin8": "gtin",
     "gtin12": "gtin",

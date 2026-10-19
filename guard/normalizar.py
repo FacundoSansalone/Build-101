@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from datetime import date, datetime
 from typing import Any
 
@@ -74,13 +75,27 @@ def monto_valido(valor: Any) -> float | None:
     return como_numero if como_numero is not None and como_numero > 0 else None
 
 
+# Valores de texto que significan lo mismo en inglés y en castellano (colores
+# del comercio general frente a un pedido en inglés). Se aplica a los dos
+# lados de toda comparación, así que no puede hacer pasar algo distinto.
+_EQUIVALENTES = {
+    "black": "negro", "white": "blanco", "gray": "gris", "grey": "gris",
+    "silver": "plateado", "blue": "azul", "red": "rojo", "green": "verde",
+    "pink": "rosa", "gold": "dorado", "yellow": "amarillo", "brown": "marron",
+}
+
+
 def normalizar(valor: Any) -> Any:
-    """Sin importar mayúsculas, espacios ni "42" frente a 42."""
+    """Sin importar mayúsculas, tildes, espacios ni "42" frente a 42."""
     como_numero = numero(valor)
     if como_numero is not None:
         return como_numero
     if isinstance(valor, str):
-        return valor.strip().casefold()
+        texto = "".join(
+            c for c in unicodedata.normalize("NFKD", valor.strip().casefold())
+            if not unicodedata.combining(c)
+        )
+        return _EQUIVALENTES.get(texto, texto)
     return valor
 
 

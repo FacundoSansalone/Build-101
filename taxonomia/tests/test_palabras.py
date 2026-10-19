@@ -41,6 +41,7 @@ def test_las_frases_ya_estan_normalizadas_y_no_se_repiten():
         ("Tablet de 10 pulgadas", "4745"),
         ("una cámara web para videollamadas", "312"),
         ("cafetera espresso", "736"),
+        ("una silla de escritorio cómoda", "2045"),  # no "escritorio" (4191)
     ],
 )
 def test_pedidos_comunes(arbol, pedido, esperado):
@@ -57,6 +58,7 @@ def test_sin_categoria_conocida_devuelve_none(arbol):
     assert categoria_por_palabras("algo lindo para regalar", arbol) is None
     assert categoria_por_palabras("", arbol) is None
     assert categoria_por_palabras("pantalla", arbol) is None  # ambigua: tele o monitor
+    assert categoria_por_palabras("una silla", arbol) is None  # ambigua: comedor u oficina
 
 
 def test_palabras_sueltas_no_matchean_dentro_de_otras(arbol):

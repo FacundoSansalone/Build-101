@@ -79,11 +79,13 @@ FRASES: dict[str, tuple[str, ...]] = {
             "digital camera"),
     "142": ("camara", "camaras", "camera", "cameras"),
     # Furniture
+    # "silla" sola es ambigua (comedor u oficina) y las de oficina no cuelgan
+    # de Chairs (443) sino de Office Furniture: sin frase, sin categoría.
     "2045": (
         "silla de oficina", "sillas de oficina", "silla ergonomica", "sillas ergonomicas",
         "office chair", "office chairs", "silla gamer", "sillas gamer",
+        "silla de escritorio", "sillas de escritorio", "desk chair", "desk chairs",
     ),
-    "443": ("silla", "sillas", "chair", "chairs"),
     "4191": ("escritorio", "escritorios", "desk", "desks", "mesa de trabajo"),
     # Otros
     "100": ("mochila", "mochilas", "backpack", "backpacks"),
