@@ -9,6 +9,12 @@ Los escenarios de otras categorías (notebooks, auriculares) y el de
 computadoras de la etapa 2 traen su propio `intent` (con `attributes` y
 `google_product_category`); los de zapatillas usan el global.
 
+Etapa 3: un preset con `"tipo": "general"` no tiene ofertas fijas ni pedido:
+responde a lo que pide `catalog_search` con el dataset de
+data/productos.json y su `comportamiento` (ver `demo_world.general`). Los
+productos publicados de ese dataset se suman al catálogo público y sus fichas
+del fabricante, a las de data/manufacturers.json: una sola fuente de verdad.
+
 El comercio responde dos cosas:
 - Carts de AP2 (ap2.models.cart.Cart): es lo único que ve el Shopping Agent
   del sample. El texto libre (y la inyección) viaja en `item_label`.
@@ -22,9 +28,12 @@ from __future__ import annotations
 import copy
 import json
 import os
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from demo_world import general
 
 DATA_DIR = Path(__file__).parent / "data"
 OFFER_DETAILS_KEY = "demo.offer_details"
@@ -46,8 +55,11 @@ def load_unlisted() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def load_manufacturers() -> dict[str, Any]:
-  """Fichas de los fabricantes por GTIN (otra fuente de verdad)."""
-  return json.loads((DATA_DIR / "manufacturers.json").read_text(encoding="utf-8"))
+  """Fichas de los fabricantes por GTIN (otra fuente de verdad): las de
+  data/manufacturers.json y las del comercio general (data/productos.json)."""
+  data = json.loads((DATA_DIR / "manufacturers.json").read_text(encoding="utf-8"))
+  data["products"].update(general.fichas_fabricante())
+  return data
 
 
 @lru_cache(maxsize=1)
@@ -67,15 +79,27 @@ def load_scenarios() -> dict[str, Any]:
   return data
 
 
+def public_catalog() -> dict[str, Any]:
+  """El catálogo PÚBLICO entero (lo que sirve :8011 en /products): el de
+  data/catalog.json más los productos publicados del comercio general."""
+  data = copy.deepcopy(load_catalog())
+  data["products"] = [*data["products"], *general.publicados()]
+  return data
+
+
 def products_by_sku() -> dict[str, dict[str, Any]]:
   """Los productos del catálogo PÚBLICO (lo que sirve :8011)."""
-  return {p["sku"]: p for p in load_catalog()["products"]}
+  return {p["sku"]: p for p in public_catalog()["products"]}
 
 
 def all_products_by_sku() -> dict[str, dict[str, Any]]:
   """La verdad de todo lo que vende el comercio: el catálogo público más lo
   que no publica. Sirve para armar las ofertas y para el benchmark."""
-  return {**{p["sku"]: p for p in load_unlisted()["products"]}, **products_by_sku()}
+  return {
+      **{p["sku"]: p for p in load_unlisted()["products"]},
+      **{p["sku"]: general.publico(p) for p in general.productos()},
+      **products_by_sku(),
+  }
 
 
 def manufacturer_attributes(gtin: str) -> dict[str, dict[str, Any]]:
@@ -97,13 +121,32 @@ def intent() -> dict[str, Any]:
   return load_scenarios()["intent"]
 
 
-def intent_for(name: str) -> dict[str, Any]:
-  """El pedido de un escenario: el suyo (otras categorías) o el global."""
-  return get_scenario(name).get("intent") or intent()
+def intent_for(name: str) -> dict[str, Any] | None:
+  """El pedido de un escenario: el suyo (otras categorías) o el global. Un
+  preset general no tiene pedido fijo (responde a la búsqueda): None."""
+  info = get_scenario(name)
+  if is_general(name):
+    return None
+  return info.get("intent") or intent()
 
 
 def scenario_names() -> list[str]:
   return list(load_scenarios()["scenarios"].keys())
+
+
+def is_general(name: str) -> bool:
+  """¿Es un preset del comercio general (`"tipo": "general"`)?"""
+  return get_scenario(name).get("tipo") == "general"
+
+
+def fixed_names() -> list[str]:
+  """Los escenarios fijos: ofertas y pedido propios (benchmark, tests, fixtures)."""
+  return [name for name in scenario_names() if not is_general(name)]
+
+
+def general_names() -> list[str]:
+  """Los presets del comercio general."""
+  return [name for name in scenario_names() if is_general(name)]
 
 
 def benchmark_names() -> list[str]:
@@ -156,15 +199,32 @@ def active_scenario(data_parts: list[dict[str, Any]] | None = None) -> str:
   return os.environ.get("DEMO_SCENARIO", DEFAULT_SCENARIO)
 
 
-def build_offers(name: str) -> list[dict[str, Any]]:
+def build_offers(
+    name: str,
+    catalog_search: Any = None,
+    *,
+    contexto_id: str | None = None,
+    hoy: date | None = None,
+) -> list[dict[str, Any]]:
   """Devuelve las ofertas del escenario, en el orden en que responde el comercio.
 
   Cada oferta trae:
     cart_id, sku, item_label (texto que ve el agente), amount, currency,
     declared (campos estructurados tal como los declara el comercio),
     truth (el producto del catálogo público), injected (bool).
+
+  Un escenario fijo devuelve siempre lo mismo (no lee la búsqueda, el
+  contexto ni la fecha; `cart_1..N`). Un preset general busca
+  `catalog_search` en el dataset con su `comportamiento`, con fechas
+  relativas a `hoy` (por defecto, hoy o `DEMO_HOY`) y un `cart_id` único por
+  `contexto_id`.
   """
   scenario = get_scenario(name)
+  if scenario.get("tipo") == "general":
+    return general.ofertas(
+        scenario.get("comportamiento", ["honesto"]), catalog_search,
+        contexto_id=contexto_id, hoy=hoy,
+    )
   catalog = all_products_by_sku()
   injections = load_scenarios()["injections"]
 

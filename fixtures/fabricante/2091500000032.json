@@ -1,0 +1,117 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Sonora Studio Wired",
+      "Brand": "Sonora",
+      "ProductName": "Studio Wired",
+      "GTIN": [
+        "2091500000032"
+      ],
+      "Category": {
+        "CategoryID": "fixture-headphones",
+        "Name": {
+          "Value": "Headphones",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Audio",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "y_n",
+            "Value": "N",
+            "PresentationValue": "N",
+            "Feature": {
+              "Name": {
+                "Value": "Active Noise Cancelling (ANC)",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Ports & interfaces",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "multi_dropdown",
+            "Value": "3.5 mm",
+            "PresentationValue": "3.5 mm",
+            "Feature": {
+              "Name": {
+                "Value": "Connectivity technology",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          },
+          {
+            "Type": "y_n",
+            "Value": "N",
+            "PresentationValue": "N",
+            "Feature": {
+              "Name": {
+                "Value": "Inalámbrico",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "280",
+            "PresentationValue": "280 g",
+            "Feature": {
+              "Name": {
+                "Value": "Weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "g"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

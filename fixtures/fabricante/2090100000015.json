@@ -1,0 +1,127 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Lumen Notebook 14",
+      "Brand": "Lumen",
+      "ProductName": "Notebook 14",
+      "GTIN": [
+        "2090100000015"
+      ],
+      "Category": {
+        "CategoryID": "fixture-laptops",
+        "Name": {
+          "Value": "Notebooks",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Memory",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "16",
+            "PresentationValue": "16 GB",
+            "Feature": {
+              "Name": {
+                "Value": "Internal memory",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "GB"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Storage",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "512",
+            "PresentationValue": "512 GB",
+            "Feature": {
+              "Name": {
+                "Value": "Total storage capacity",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "GB"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Display",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "35.6",
+            "PresentationValue": "35.6 cm",
+            "Feature": {
+              "Name": {
+                "Value": "Display diagonal",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "cm"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "1400",
+            "PresentationValue": "1400 g",
+            "Feature": {
+              "Name": {
+                "Value": "Weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "g"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

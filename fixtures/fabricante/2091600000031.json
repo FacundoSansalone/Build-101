@@ -1,0 +1,91 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Kraton Comms Free",
+      "Brand": "Kraton",
+      "ProductName": "Comms Free",
+      "GTIN": [
+        "2091600000031"
+      ],
+      "Category": {
+        "CategoryID": "fixture-headsets",
+        "Name": {
+          "Value": "Headsets",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Ports & interfaces",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "y_n",
+            "Value": "Y",
+            "PresentationValue": "Y",
+            "Feature": {
+              "Name": {
+                "Value": "Inalámbrico",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          },
+          {
+            "Type": "multi_dropdown",
+            "Value": "bluetooth, usb",
+            "PresentationValue": "bluetooth, usb",
+            "Feature": {
+              "Name": {
+                "Value": "Connectivity technology",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "290",
+            "PresentationValue": "290 g",
+            "Feature": {
+              "Name": {
+                "Value": "Weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "g"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

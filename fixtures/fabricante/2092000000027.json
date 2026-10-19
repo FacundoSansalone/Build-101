@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Ergon Mesh",
+      "Brand": "Ergon",
+      "ProductName": "Mesh",
+      "GTIN": [
+        "2092000000027"
+      ],
+      "Category": {
+        "CategoryID": "fixture-office_chairs",
+        "Name": {
+          "Value": "Office chairs",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "120",
+            "PresentationValue": "120 kg",
+            "Feature": {
+              "Name": {
+                "Value": "Maximum user weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "kg"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Design",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "gris",
+            "PresentationValue": "gris",
+            "Feature": {
+              "Name": {
+                "Value": "Product colour",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

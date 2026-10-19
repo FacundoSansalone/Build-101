@@ -1,7 +1,8 @@
 """Catálogo público del comercio (la "web" del comercio).
 
 Es una fuente independiente del agente del comercio: sirve siempre los datos
-verdaderos de data/catalog.json, sin importar qué escenario esté activo.
+verdaderos de data/catalog.json, más los productos publicados del comercio
+general (data/productos.json), sin importar qué escenario esté activo.
 El Guard lo consulta para verificar lo que el agente del comercio declara.
 
   uv run --package ap2-samples python -m demo_world.public_catalog
@@ -9,7 +10,9 @@ El Guard lo consulta para verificar lo que el agente del comercio declara.
 Endpoints:
   GET /health
   GET /products            -> {"merchant": {...}, "products": [...]}
-  GET /products/<sku>      -> producto o 404
+  GET /products/<sku>      -> {...producto, "merchant": {...}} o 404 (el mismo
+                              merchant que /products: quien lo pide sabe de
+                              qué comercio es el dato)
 """
 
 import os
@@ -30,15 +33,16 @@ def health():
 
 @app.get("/products")
 def list_products():
-  return jsonify(scenario.load_catalog())
+  return jsonify(scenario.public_catalog())
 
 
 @app.get("/products/<sku>")
 def get_product(sku: str):
-  product = scenario.products_by_sku().get(sku)
+  catalog = scenario.public_catalog()
+  product = next((p for p in catalog["products"] if p["sku"] == sku), None)
   if product is None:
     return jsonify({"error": f"Producto {sku} no encontrado"}), 404
-  return jsonify(product)
+  return jsonify({**product, "merchant": catalog["merchant"]})
 
 
 def main() -> None:

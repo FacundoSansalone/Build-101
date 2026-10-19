@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Fokal Snap",
+      "Brand": "Fokal",
+      "ProductName": "Snap",
+      "GTIN": [
+        "2091900000014"
+      ],
+      "Category": {
+        "CategoryID": "fixture-digital_cameras",
+        "Name": {
+          "Value": "Digital cameras",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Image sensor",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "20",
+            "PresentationValue": "20 MP",
+            "Feature": {
+              "Name": {
+                "Value": "Megapixel",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "MP"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "220",
+            "PresentationValue": "220 g",
+            "Feature": {
+              "Name": {
+                "Value": "Weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "g"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

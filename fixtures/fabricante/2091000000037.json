@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Stora Dual",
+      "Brand": "Stora",
+      "ProductName": "Dual",
+      "GTIN": [
+        "2091000000037"
+      ],
+      "Category": {
+        "CategoryID": "fixture-usb_drives",
+        "Name": {
+          "Value": "USB flash drives",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Storage",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "256",
+            "PresentationValue": "256 GB",
+            "Feature": {
+              "Name": {
+                "Value": "Total storage capacity",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "GB"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Ports & interfaces",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "multi_dropdown",
+            "Value": "usb, usb-c",
+            "PresentationValue": "usb, usb-c",
+            "Feature": {
+              "Name": {
+                "Value": "Connectivity technology",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

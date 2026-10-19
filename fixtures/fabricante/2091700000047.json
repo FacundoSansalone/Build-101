@@ -1,0 +1,101 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Auralis Party",
+      "Brand": "Auralis",
+      "ProductName": "Party",
+      "GTIN": [
+        "2091700000047"
+      ],
+      "Category": {
+        "CategoryID": "fixture-speakers",
+        "Name": {
+          "Value": "Portable speakers",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Ports & interfaces",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "y_n",
+            "Value": "Y",
+            "PresentationValue": "Y",
+            "Feature": {
+              "Name": {
+                "Value": "Inalámbrico",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Battery",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "15",
+            "PresentationValue": "15 h",
+            "Feature": {
+              "Name": {
+                "Value": "Battery life",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "h"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Power",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "80",
+            "PresentationValue": "80 W",
+            "Feature": {
+              "Name": {
+                "Value": "Power",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "W"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Kraton Arena QHD",
+      "Brand": "Kraton",
+      "ProductName": "Arena QHD",
+      "GTIN": [
+        "2090400000043"
+      ],
+      "Category": {
+        "CategoryID": "fixture-monitors",
+        "Name": {
+          "Value": "Computer monitors",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Display",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "68.6",
+            "PresentationValue": "68.6 cm",
+            "Feature": {
+              "Name": {
+                "Value": "Display diagonal",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "cm"
+                }
+              }
+            }
+          },
+          {
+            "Type": "dropdown",
+            "Value": "2560x1440",
+            "PresentationValue": "2560x1440",
+            "Feature": {
+              "Name": {
+                "Value": "Display resolution",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

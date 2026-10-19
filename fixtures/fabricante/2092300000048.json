@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Kafeto Barista Pro",
+      "Brand": "Kafeto",
+      "ProductName": "Barista Pro",
+      "GTIN": [
+        "2092300000048"
+      ],
+      "Category": {
+        "CategoryID": "fixture-coffee_makers",
+        "Name": {
+          "Value": "Coffee makers",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Features",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "2",
+            "PresentationValue": "2 l",
+            "Feature": {
+              "Name": {
+                "Value": "Capacity",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "l"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Power",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "1600",
+            "PresentationValue": "1600 W",
+            "Feature": {
+              "Name": {
+                "Value": "Power",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "W"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

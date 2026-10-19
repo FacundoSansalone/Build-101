@@ -1,0 +1,574 @@
+{
+  "_comment": "Generado por world/ (demo_world.export_fixtures) con demo_world.general y data/productos.json: no editar a mano. Lo que responde el preset a cada búsqueda, con 'hoy' y 'contexto_id' fijos (en vivo, las fechas son relativas a hoy). 'inyectadas': los cart_id con una inyección.",
+  "scenario": "general_entrega_partes",
+  "title": "Comercio general: entrega en dos partes",
+  "description": "Honesto, pero no llega con todo al plazo: la mitad al plazo y el resto unos días después (+4 la más barata, +2 la siguiente). Con 20 computadoras para el lunes y hasta USD 20.000 son las dos ofertas de la demo (USD 17.000 y 18.000), el lunes que toque.",
+  "comportamiento": [
+    "entrega_partes"
+  ],
+  "attack": null,
+  "hoy": "2026-10-18",
+  "contexto_id": "ctx-fixture",
+  "busquedas": [
+    {
+      "catalog_search": "Quiero un monitor de 27 pulgadas para diseño, hasta 400 USD, para el viernes",
+      "carts": [
+        {
+          "cart_id": "cart_1_69131a",
+          "item_label": "Visra Design Pro. 27-inch QHD monitor for design, factory-calibrated color. We cannot deliver it by Friday 2026-10-23: 1 unit on Sunday 2026-10-25.",
+          "amount": 349.0,
+          "currency": "USD"
+        }
+      ],
+      "offer_details": [
+        {
+          "cart_id": "cart_1_69131a",
+          "sku": "VIS-MON-02",
+          "title": "Visra Design Pro",
+          "brand": "Visra",
+          "category": "monitors",
+          "use": "design",
+          "price": 349.0,
+          "currency": "USD",
+          "stock": 25,
+          "sizes": [],
+          "gtin": "2090400000036",
+          "categoria_taxonomia": "305",
+          "atributos": {
+            "tamano_pantalla": {
+              "valor": 27,
+              "unidad": "in"
+            },
+            "display_resolution": {
+              "valor": "2560x1440",
+              "unidad": null
+            }
+          },
+          "quantity": 1,
+          "deliveries": [
+            {
+              "quantity": 1,
+              "date": "2026-10-25"
+            }
+          ],
+          "description": "27-inch QHD monitor for design, factory-calibrated color."
+        }
+      ],
+      "inyectadas": []
+    },
+    {
+      "catalog_search": "20 computadoras para el lunes, hasta 20000 USD",
+      "carts": [
+        {
+          "cart_id": "cart_1_d0383a",
+          "item_label": "Lumen Notebook 14 x20. 14-inch office laptop, 16 GB RAM, 512 GB SSD. We cannot deliver 20 units by Monday 2026-10-19: 10 on Monday 2026-10-19 and 10 on Friday 2026-10-23.",
+          "amount": 17000.0,
+          "currency": "USD"
+        },
+        {
+          "cart_id": "cart_2_fd315c",
+          "item_label": "Orion Notebook 14 x20. 14-inch office laptop, 16 GB RAM, 512 GB SSD, backlit keyboard. We cannot deliver 20 units by Monday 2026-10-19: 10 on Monday 2026-10-19 and 10 on Wednesday 2026-10-21.",
+          "amount": 18000.0,
+          "currency": "USD"
+        }
+      ],
+      "offer_details": [
+        {
+          "cart_id": "cart_1_d0383a",
+          "sku": "LUM-LAP-01",
+          "title": "Lumen Notebook 14",
+          "brand": "Lumen",
+          "category": "laptops",
+          "use": "office",
+          "price": 17000.0,
+          "currency": "USD",
+          "stock": 60,
+          "sizes": [],
+          "gtin": "2090100000015",
+          "categoria_taxonomia": "328",
+          "atributos": {
+            "memoria_ram": {
+              "valor": 16,
+              "unidad": "GB"
+            },
+            "almacenamiento": {
+              "valor": 512,
+              "unidad": "GB"
+            },
+            "tamano_pantalla": {
+              "valor": 14,
+              "unidad": "in"
+            },
+            "weight": {
+              "valor": 1.4,
+              "unidad": "kg"
+            }
+          },
+          "quantity": 20,
+          "deliveries": [
+            {
+              "quantity": 10,
+              "date": "2026-10-19"
+            },
+            {
+              "quantity": 10,
+              "date": "2026-10-23"
+            }
+          ],
+          "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD."
+        },
+        {
+          "cart_id": "cart_2_fd315c",
+          "sku": "ORI-LAP-01",
+          "title": "Orion Notebook 14",
+          "brand": "Orion",
+          "category": "laptops",
+          "use": "office",
+          "price": 18000.0,
+          "currency": "USD",
+          "stock": 50,
+          "sizes": [],
+          "gtin": "2090100000022",
+          "categoria_taxonomia": "328",
+          "atributos": {
+            "memoria_ram": {
+              "valor": 16,
+              "unidad": "GB"
+            },
+            "almacenamiento": {
+              "valor": 512,
+              "unidad": "GB"
+            },
+            "tamano_pantalla": {
+              "valor": 14,
+              "unidad": "in"
+            },
+            "weight": {
+              "valor": 1.45,
+              "unidad": "kg"
+            }
+          },
+          "quantity": 20,
+          "deliveries": [
+            {
+              "quantity": 10,
+              "date": "2026-10-19"
+            },
+            {
+              "quantity": 10,
+              "date": "2026-10-21"
+            }
+          ],
+          "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD, backlit keyboard."
+        }
+      ],
+      "inyectadas": []
+    },
+    {
+      "catalog_search": "20 laptops delivered by Monday, up to 20000 USD",
+      "carts": [
+        {
+          "cart_id": "cart_1_d0383a",
+          "item_label": "Lumen Notebook 14 x20. 14-inch office laptop, 16 GB RAM, 512 GB SSD. We cannot deliver 20 units by Monday 2026-10-19: 10 on Monday 2026-10-19 and 10 on Friday 2026-10-23.",
+          "amount": 17000.0,
+          "currency": "USD"
+        },
+        {
+          "cart_id": "cart_2_fd315c",
+          "item_label": "Orion Notebook 14 x20. 14-inch office laptop, 16 GB RAM, 512 GB SSD, backlit keyboard. We cannot deliver 20 units by Monday 2026-10-19: 10 on Monday 2026-10-19 and 10 on Wednesday 2026-10-21.",
+          "amount": 18000.0,
+          "currency": "USD"
+        }
+      ],
+      "offer_details": [
+        {
+          "cart_id": "cart_1_d0383a",
+          "sku": "LUM-LAP-01",
+          "title": "Lumen Notebook 14",
+          "brand": "Lumen",
+          "category": "laptops",
+          "use": "office",
+          "price": 17000.0,
+          "currency": "USD",
+          "stock": 60,
+          "sizes": [],
+          "gtin": "2090100000015",
+          "categoria_taxonomia": "328",
+          "atributos": {
+            "memoria_ram": {
+              "valor": 16,
+              "unidad": "GB"
+            },
+            "almacenamiento": {
+              "valor": 512,
+              "unidad": "GB"
+            },
+            "tamano_pantalla": {
+              "valor": 14,
+              "unidad": "in"
+            },
+            "weight": {
+              "valor": 1.4,
+              "unidad": "kg"
+            }
+          },
+          "quantity": 20,
+          "deliveries": [
+            {
+              "quantity": 10,
+              "date": "2026-10-19"
+            },
+            {
+              "quantity": 10,
+              "date": "2026-10-23"
+            }
+          ],
+          "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD."
+        },
+        {
+          "cart_id": "cart_2_fd315c",
+          "sku": "ORI-LAP-01",
+          "title": "Orion Notebook 14",
+          "brand": "Orion",
+          "category": "laptops",
+          "use": "office",
+          "price": 18000.0,
+          "currency": "USD",
+          "stock": 50,
+          "sizes": [],
+          "gtin": "2090100000022",
+          "categoria_taxonomia": "328",
+          "atributos": {
+            "memoria_ram": {
+              "valor": 16,
+              "unidad": "GB"
+            },
+            "almacenamiento": {
+              "valor": 512,
+              "unidad": "GB"
+            },
+            "tamano_pantalla": {
+              "valor": 14,
+              "unidad": "in"
+            },
+            "weight": {
+              "valor": 1.45,
+              "unidad": "kg"
+            }
+          },
+          "quantity": 20,
+          "deliveries": [
+            {
+              "quantity": 10,
+              "date": "2026-10-19"
+            },
+            {
+              "quantity": 10,
+              "date": "2026-10-21"
+            }
+          ],
+          "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD, backlit keyboard."
+        }
+      ],
+      "inyectadas": []
+    },
+    {
+      "catalog_search": "auriculares inalámbricos con cancelación de ruido, al menos 20 horas de batería, hasta 250 USD",
+      "carts": [
+        {
+          "cart_id": "cart_1_42c86c",
+          "item_label": "Auralis Quiet Travel. Over-ear travel headphones with active noise cancelling, 30 h battery. 1 unit delivered on Thursday 2026-10-22.",
+          "amount": 179.0,
+          "currency": "USD"
+        },
+        {
+          "cart_id": "cart_2_00cd04",
+          "item_label": "Sonora Calm 40. Over-ear headphones with active noise cancelling, 40 h battery. 1 unit delivered on Thursday 2026-10-22.",
+          "amount": 229.0,
+          "currency": "USD"
+        }
+      ],
+      "offer_details": [
+        {
+          "cart_id": "cart_1_42c86c",
+          "sku": "AUR-AUR-02",
+          "title": "Auralis Quiet Travel",
+          "brand": "Auralis",
+          "category": "headphones",
+          "use": "travel",
+          "price": 179.0,
+          "currency": "USD",
+          "stock": 40,
+          "sizes": [],
+          "gtin": "2091500000049",
+          "categoria_taxonomia": "543626",
+          "atributos": {
+            "cancelacion_ruido": {
+              "valor": true,
+              "unidad": null
+            },
+            "autonomia_bateria": {
+              "valor": 30,
+              "unidad": "h"
+            },
+            "conectividad": {
+              "valor": [
+                "bluetooth",
+                "usb-c"
+              ],
+              "unidad": null
+            },
+            "inalambrico": {
+              "valor": true,
+              "unidad": null
+            },
+            "weight": {
+              "valor": 250,
+              "unidad": "g"
+            }
+          },
+          "quantity": 1,
+          "deliveries": [
+            {
+              "quantity": 1,
+              "date": "2026-10-22"
+            }
+          ],
+          "description": "Over-ear travel headphones with active noise cancelling, 30 h battery."
+        },
+        {
+          "cart_id": "cart_2_00cd04",
+          "sku": "SON-AUR-02",
+          "title": "Sonora Calm 40",
+          "brand": "Sonora",
+          "category": "headphones",
+          "use": "travel",
+          "price": 229.0,
+          "currency": "USD",
+          "stock": 30,
+          "sizes": [],
+          "gtin": "2091500000056",
+          "categoria_taxonomia": "543626",
+          "atributos": {
+            "cancelacion_ruido": {
+              "valor": true,
+              "unidad": null
+            },
+            "autonomia_bateria": {
+              "valor": 40,
+              "unidad": "h"
+            },
+            "conectividad": {
+              "valor": [
+                "bluetooth",
+                "usb-c"
+              ],
+              "unidad": null
+            },
+            "inalambrico": {
+              "valor": true,
+              "unidad": null
+            },
+            "weight": {
+              "valor": 260,
+              "unidad": "g"
+            }
+          },
+          "quantity": 1,
+          "deliveries": [
+            {
+              "quantity": 1,
+              "date": "2026-10-22"
+            }
+          ],
+          "description": "Over-ear headphones with active noise cancelling, 40 h battery."
+        }
+      ],
+      "inyectadas": []
+    },
+    {
+      "catalog_search": "zapatillas de básquet talle 42 hasta 150 USD",
+      "carts": [
+        {
+          "cart_id": "cart_1_884c19",
+          "item_label": "Rumbo Street Court. Basketball shoe for outdoor courts. 1 unit delivered on Thursday 2026-10-22.",
+          "amount": 89.0,
+          "currency": "USD"
+        },
+        {
+          "cart_id": "cart_2_90909c",
+          "item_label": "Rumbo Pro Court. High-top basketball shoe. 1 unit delivered on Thursday 2026-10-22.",
+          "amount": 139.0,
+          "currency": "USD"
+        },
+        {
+          "cart_id": "cart_3_57e6b4",
+          "item_label": "Pisada City Classic. Classic city sneaker. 1 unit delivered on Wednesday 2026-10-21.",
+          "amount": 69.0,
+          "currency": "USD"
+        },
+        {
+          "cart_id": "cart_4_5eba67",
+          "item_label": "Pisada Run Light. Lightweight running shoe. 1 unit delivered on Thursday 2026-10-22.",
+          "amount": 99.0,
+          "currency": "USD"
+        }
+      ],
+      "offer_details": [
+        {
+          "cart_id": "cart_1_884c19",
+          "sku": "RUM-ZAP-01",
+          "title": "Rumbo Street Court",
+          "brand": "Rumbo",
+          "category": "shoes",
+          "use": "basketball",
+          "price": 89.0,
+          "currency": "USD",
+          "stock": 60,
+          "sizes": [
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45
+          ],
+          "gtin": "2092400000023",
+          "categoria_taxonomia": "187",
+          "atributos": {
+            "color": {
+              "valor": "negro",
+              "unidad": null
+            }
+          },
+          "quantity": 1,
+          "deliveries": [
+            {
+              "quantity": 1,
+              "date": "2026-10-22"
+            }
+          ],
+          "description": "Basketball shoe for outdoor courts."
+        },
+        {
+          "cart_id": "cart_2_90909c",
+          "sku": "RUM-ZAP-02",
+          "title": "Rumbo Pro Court",
+          "brand": "Rumbo",
+          "category": "shoes",
+          "use": "basketball",
+          "price": 139.0,
+          "currency": "USD",
+          "stock": 30,
+          "sizes": [
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46
+          ],
+          "gtin": "2092400000054",
+          "categoria_taxonomia": "187",
+          "atributos": {
+            "color": {
+              "valor": "blanco",
+              "unidad": null
+            }
+          },
+          "quantity": 1,
+          "deliveries": [
+            {
+              "quantity": 1,
+              "date": "2026-10-22"
+            }
+          ],
+          "description": "High-top basketball shoe."
+        },
+        {
+          "cart_id": "cart_3_57e6b4",
+          "sku": "PIS-ZAP-03",
+          "title": "Pisada City Classic",
+          "brand": "Pisada",
+          "category": "shoes",
+          "use": "urban",
+          "price": 69.0,
+          "currency": "USD",
+          "stock": 80,
+          "sizes": [
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44
+          ],
+          "gtin": "2092400000016",
+          "categoria_taxonomia": "187",
+          "atributos": {
+            "color": {
+              "valor": "blanco",
+              "unidad": null
+            }
+          },
+          "quantity": 1,
+          "deliveries": [
+            {
+              "quantity": 1,
+              "date": "2026-10-21"
+            }
+          ],
+          "description": "Classic city sneaker."
+        },
+        {
+          "cart_id": "cart_4_5eba67",
+          "sku": "PIS-ZAP-01",
+          "title": "Pisada Run Light",
+          "brand": "Pisada",
+          "category": "shoes",
+          "use": "running",
+          "price": 99.0,
+          "currency": "USD",
+          "stock": 50,
+          "sizes": [
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45
+          ],
+          "gtin": "2092400000030",
+          "categoria_taxonomia": "187",
+          "atributos": {
+            "color": {
+              "valor": "azul",
+              "unidad": null
+            }
+          },
+          "quantity": 1,
+          "deliveries": [
+            {
+              "quantity": 1,
+              "date": "2026-10-22"
+            }
+          ],
+          "description": "Lightweight running shoe."
+        }
+      ],
+      "inyectadas": []
+    }
+  ]
+}

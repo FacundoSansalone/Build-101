@@ -1,0 +1,91 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Teclix Slim Air",
+      "Brand": "Teclix",
+      "ProductName": "Slim Air",
+      "GTIN": [
+        "2090700000026"
+      ],
+      "Category": {
+        "CategoryID": "fixture-keyboards",
+        "Name": {
+          "Value": "Keyboards",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Ports & interfaces",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "y_n",
+            "Value": "Y",
+            "PresentationValue": "Y",
+            "Feature": {
+              "Name": {
+                "Value": "Inalámbrico",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          },
+          {
+            "Type": "multi_dropdown",
+            "Value": "bluetooth",
+            "PresentationValue": "bluetooth",
+            "Feature": {
+              "Name": {
+                "Value": "Connectivity technology",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Design",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "blanco",
+            "PresentationValue": "blanco",
+            "Feature": {
+              "Name": {
+                "Value": "Product colour",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

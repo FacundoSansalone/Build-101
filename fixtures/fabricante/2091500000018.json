@@ -1,0 +1,143 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Sonora Lite",
+      "Brand": "Sonora",
+      "ProductName": "Lite",
+      "GTIN": [
+        "2091500000018"
+      ],
+      "Category": {
+        "CategoryID": "fixture-headphones",
+        "Name": {
+          "Value": "Headphones",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Audio",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "y_n",
+            "Value": "N",
+            "PresentationValue": "N",
+            "Feature": {
+              "Name": {
+                "Value": "Active Noise Cancelling (ANC)",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Battery",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "20",
+            "PresentationValue": "20 h",
+            "Feature": {
+              "Name": {
+                "Value": "Battery life",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "h"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Ports & interfaces",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "multi_dropdown",
+            "Value": "bluetooth",
+            "PresentationValue": "bluetooth",
+            "Feature": {
+              "Name": {
+                "Value": "Connectivity technology",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          },
+          {
+            "Type": "y_n",
+            "Value": "Y",
+            "PresentationValue": "Y",
+            "Feature": {
+              "Name": {
+                "Value": "Inalámbrico",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "160",
+            "PresentationValue": "160 g",
+            "Feature": {
+              "Name": {
+                "Value": "Weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "g"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

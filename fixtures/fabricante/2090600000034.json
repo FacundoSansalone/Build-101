@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Pixen Office XGA",
+      "Brand": "Pixen",
+      "ProductName": "Office XGA",
+      "GTIN": [
+        "2090600000034"
+      ],
+      "Category": {
+        "CategoryID": "fixture-projectors",
+        "Name": {
+          "Value": "Data projectors",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Display",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "1024x768",
+            "PresentationValue": "1024x768",
+            "Feature": {
+              "Name": {
+                "Value": "Display resolution",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Projector",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "4000",
+            "PresentationValue": "4000 lm",
+            "Feature": {
+              "Name": {
+                "Value": "Brightness",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "lm"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

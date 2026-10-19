@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Luxen Home FHD",
+      "Brand": "Luxen",
+      "ProductName": "Home FHD",
+      "GTIN": [
+        "2090600000027"
+      ],
+      "Category": {
+        "CategoryID": "fixture-projectors",
+        "Name": {
+          "Value": "Data projectors",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Display",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "1920x1080",
+            "PresentationValue": "1920x1080",
+            "Feature": {
+              "Name": {
+                "Value": "Display resolution",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Projector",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "3500",
+            "PresentationValue": "3500 lm",
+            "Feature": {
+              "Name": {
+                "Value": "Brightness",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "lm"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

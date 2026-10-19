@@ -332,6 +332,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
   guard = _load_guard(args.guard)
   llm_decide = make_llm_decider(args.model) if args.decider == "llm" else None
   names = args.scenarios.split(",") if args.scenarios else scenario.benchmark_names()
+  generales = [name for name in names if scenario.is_general(name)]
+  if generales:  # responden a la búsqueda: no hay un pedido ni un objetivo fijos que medir
+    raise ValueError(
+        f"Los presets del comercio general no entran al benchmark: {', '.join(generales)}"
+    )
 
   results: dict[str, Any] = {
       "meta": {

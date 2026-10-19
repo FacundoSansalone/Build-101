@@ -1,0 +1,49 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Visra Cam HD",
+      "Brand": "Visra",
+      "ProductName": "Cam HD",
+      "GTIN": [
+        "2091800000015"
+      ],
+      "Category": {
+        "CategoryID": "fixture-webcams",
+        "Name": {
+          "Value": "Webcams",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Video",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "1280x720",
+            "PresentationValue": "1280x720",
+            "Feature": {
+              "Name": {
+                "Value": "Maximum video resolution",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

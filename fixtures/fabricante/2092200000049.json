@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Trekko Travel Pro",
+      "Brand": "Trekko",
+      "ProductName": "Travel Pro",
+      "GTIN": [
+        "2092200000049"
+      ],
+      "Category": {
+        "CategoryID": "fixture-backpacks",
+        "Name": {
+          "Value": "Backpacks",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Features",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "40",
+            "PresentationValue": "40 l",
+            "Feature": {
+              "Name": {
+                "Value": "Capacity",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "l"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Design",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "negro",
+            "PresentationValue": "negro",
+            "Feature": {
+              "Name": {
+                "Value": "Product colour",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

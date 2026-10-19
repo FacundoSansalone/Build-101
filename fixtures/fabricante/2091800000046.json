@@ -1,0 +1,49 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Pixen Stream Ultra",
+      "Brand": "Pixen",
+      "ProductName": "Stream Ultra",
+      "GTIN": [
+        "2091800000046"
+      ],
+      "Category": {
+        "CategoryID": "fixture-webcams",
+        "Name": {
+          "Value": "Webcams",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Video",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "3840x2160",
+            "PresentationValue": "3840x2160",
+            "Feature": {
+              "Name": {
+                "Value": "Maximum video resolution",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Pisada Trail Grip",
+      "Brand": "Pisada",
+      "ProductName": "Trail Grip",
+      "GTIN": [
+        "2092400000047"
+      ],
+      "Category": {
+        "CategoryID": "fixture-shoes",
+        "Name": {
+          "Value": "Footwear",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Design",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "gris",
+            "PresentationValue": "gris",
+            "Feature": {
+              "Name": {
+                "Value": "Product colour",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
