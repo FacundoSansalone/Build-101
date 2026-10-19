@@ -1,7 +1,7 @@
 # Google_Product_Taxonomy_Version: 2021-09-21
 # Subconjunto de la taxonomía de productos de Google para la demo de Pre-Sign Guard.
 # Fuente: https://www.google.com/basepages/producttype/taxonomy-with-ids.en-US.txt
-# Regenerar: python -m taxonomia subconjunto --ids 187,278,223
+# Regenerar: python -m taxonomia subconjunto --ids 187,278,223,305,404,396,1928,2414,500106,267,1294,1350,312,152,6362,443,100,736
 1 - Animals & Pet Supplies
 166 - Apparel & Accessories
 1604 - Apparel & Accessories > Clothing
@@ -16,6 +16,18 @@
 537 - Baby & Toddler
 111 - Business & Industrial
 141 - Cameras & Optics
+2096 - Cameras & Optics > Camera & Optic Accessories
+142 - Cameras & Optics > Cameras
+499976 - Cameras & Optics > Cameras > Borescopes
+152 - Cameras & Optics > Cameras > Digital Cameras
+4024 - Cameras & Optics > Cameras > Disposable Cameras
+154 - Cameras & Optics > Cameras > Film Cameras
+362 - Cameras & Optics > Cameras > Surveillance Cameras
+5402 - Cameras & Optics > Cameras > Trail Cameras
+155 - Cameras & Optics > Cameras > Video Cameras
+312 - Cameras & Optics > Cameras > Webcams
+156 - Cameras & Optics > Optics
+39 - Cameras & Optics > Photography
 222 - Electronics
 3356 - Electronics > Arcade Equipment
 223 - Electronics > Audio
@@ -87,6 +99,25 @@
 3242 - Electronics > Audio > Stage Equipment > Wireless Transmitters
 3702 - Electronics > Circuit Boards & Components
 262 - Electronics > Communications
+266 - Electronics > Communications > Answering Machines
+5275 - Electronics > Communications > Caller IDs
+263 - Electronics > Communications > Communication Radio Accessories
+2471 - Electronics > Communications > Communication Radios
+5404 - Electronics > Communications > Intercom Accessories
+360 - Electronics > Communications > Intercoms
+268 - Electronics > Communications > Pagers
+270 - Electronics > Communications > Telephony
+4666 - Electronics > Communications > Telephony > Conference Phones
+271 - Electronics > Communications > Telephony > Corded Phones
+272 - Electronics > Communications > Telephony > Cordless Phones
+264 - Electronics > Communications > Telephony > Mobile Phone Accessories
+267 - Electronics > Communications > Telephony > Mobile Phones
+543513 - Electronics > Communications > Telephony > Mobile Phones > Contract Mobile Phones
+543512 - Electronics > Communications > Telephony > Mobile Phones > Pre-paid Mobile Phones
+543514 - Electronics > Communications > Telephony > Mobile Phones > Unlocked Mobile Phones
+1924 - Electronics > Communications > Telephony > Satellite Phones
+265 - Electronics > Communications > Telephony > Telephone Accessories
+274 - Electronics > Communications > Video Conferencing
 1801 - Electronics > Components
 278 - Electronics > Computers
 5254 - Electronics > Computers > Barebone Computers
@@ -105,24 +136,270 @@
 543669 - Electronics > Computers > Thin & Zero Clients > Zero Client Computers
 502995 - Electronics > Computers > Touch Table Computers
 2082 - Electronics > Electronics Accessories
+258 - Electronics > Electronics Accessories > Adapters
+5476 - Electronics > Electronics Accessories > Antenna Accessories
+1718 - Electronics > Electronics Accessories > Antennas
+8156 - Electronics > Electronics Accessories > Audio & Video Splitters & Switches
+367 - Electronics > Electronics Accessories > Blank Media
+3328 - Electronics > Electronics Accessories > Cable Management
+259 - Electronics > Electronics Accessories > Cables
+279 - Electronics > Electronics Accessories > Computer Accessories
+285 - Electronics > Electronics Accessories > Computer Components
+6932 - Electronics > Electronics Accessories > Computer Components > Blade Server Enclosures
+8158 - Electronics > Electronics Accessories > Computer Components > Computer Backplates & I/O Shields
+291 - Electronics > Electronics Accessories > Computer Components > Computer Power Supplies
+292 - Electronics > Electronics Accessories > Computer Components > Computer Processors
+293 - Electronics > Electronics Accessories > Computer Components > Computer Racks & Mounts
+294 - Electronics > Electronics Accessories > Computer Components > Computer Starter Kits
+295 - Electronics > Electronics Accessories > Computer Components > Computer System Cooling Parts
+296 - Electronics > Electronics Accessories > Computer Components > Desktop Computer & Server Cases
+8162 - Electronics > Electronics Accessories > Computer Components > E-Book Reader Parts
+287 - Electronics > Electronics Accessories > Computer Components > I/O Cards & Adapters
+6475 - Electronics > Electronics Accessories > Computer Components > Input Device Accessories
+1928 - Electronics > Electronics Accessories > Computer Components > Input Devices
+139 - Electronics > Electronics Accessories > Computer Components > Input Devices > Barcode Scanners
+5309 - Electronics > Electronics Accessories > Computer Components > Input Devices > Digital Note Taking Pens
+505801 - Electronics > Electronics Accessories > Computer Components > Input Devices > Electronic Card Readers
+5366 - Electronics > Electronics Accessories > Computer Components > Input Devices > Fingerprint Readers
+301 - Electronics > Electronics Accessories > Computer Components > Input Devices > Game Controllers
+543591 - Electronics > Electronics Accessories > Computer Components > Input Devices > Game Controllers > Game Racing Wheels
+543590 - Electronics > Electronics Accessories > Computer Components > Input Devices > Game Controllers > Game Remotes
+543589 - Electronics > Electronics Accessories > Computer Components > Input Devices > Game Controllers > Gaming Pads
+543588 - Electronics > Electronics Accessories > Computer Components > Input Devices > Game Controllers > Joystick Controllers
+543593 - Electronics > Electronics Accessories > Computer Components > Input Devices > Game Controllers > Musical Instrument Game Controllers
+499950 - Electronics > Electronics Accessories > Computer Components > Input Devices > Gesture Control Input Devices
+302 - Electronics > Electronics Accessories > Computer Components > Input Devices > Graphics Tablets
+1562 - Electronics > Electronics Accessories > Computer Components > Input Devices > KVM Switches
+303 - Electronics > Electronics Accessories > Computer Components > Input Devices > Keyboards
+3580 - Electronics > Electronics Accessories > Computer Components > Input Devices > Memory Card Readers
+304 - Electronics > Electronics Accessories > Computer Components > Input Devices > Mice & Trackballs
+4512 - Electronics > Electronics Accessories > Computer Components > Input Devices > Numeric Keypads
+308 - Electronics > Electronics Accessories > Computer Components > Input Devices > Touchpads
+4224 - Electronics > Electronics Accessories > Computer Components > Laptop Parts
+2414 - Electronics > Electronics Accessories > Computer Components > Storage Devices
+5268 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Disk Duplicators
+376 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Disk Duplicators > CD/DVD Duplicators
+5271 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Disk Duplicators > Hard Drive Duplicators
+5112 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Disk Duplicators > USB Drive Duplicators
+1301 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Floppy Drives
+1623 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Hard Drive Accessories
+381 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Hard Drive Accessories > Hard Drive Carrying Cases
+4417 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Hard Drive Accessories > Hard Drive Docks
+505767 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Hard Drive Accessories > Hard Drive Enclosures & Mounts
+5272 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Hard Drive Arrays
+380 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Hard Drives
+5269 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Network Storage Systems
+377 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Optical Drives
+385 - Electronics > Electronics Accessories > Computer Components > Storage Devices > Tape Drives
+3712 - Electronics > Electronics Accessories > Computer Components > Storage Devices > USB Flash Drives
+7349 - Electronics > Electronics Accessories > Computer Components > Tablet Computer Parts
+311 - Electronics > Electronics Accessories > Computer Components > USB & FireWire Hubs
+4617 - Electronics > Electronics Accessories > Electronics Cleaners
+5466 - Electronics > Electronics Accessories > Electronics Films & Shields
+288 - Electronics > Electronics Accessories > Memory
+3422 - Electronics > Electronics Accessories > Memory Accessories
+499878 - Electronics > Electronics Accessories > Mobile Phone & Tablet Tripods & Monopods
+275 - Electronics > Electronics Accessories > Power
+341 - Electronics > Electronics Accessories > Remote Controls
+5473 - Electronics > Electronics Accessories > Signal Boosters
+5695 - Electronics > Electronics Accessories > Signal Jammers
 3895 - Electronics > GPS Accessories
 339 - Electronics > GPS Navigation Systems
 6544 - Electronics > GPS Tracking Devices
 340 - Electronics > Marine Electronics
 342 - Electronics > Networking
+1350 - Electronics > Networking > Bridges & Routers
+5659 - Electronics > Networking > Bridges & Routers > Network Bridges
+2358 - Electronics > Networking > Bridges & Routers > VoIP Gateways & Routers
+5496 - Electronics > Networking > Bridges & Routers > Wireless Access Points
+5497 - Electronics > Networking > Bridges & Routers > Wireless Routers
+2479 - Electronics > Networking > Concentrators & Multiplexers
+2455 - Electronics > Networking > Hubs & Switches
+5576 - Electronics > Networking > Modem Accessories
+343 - Electronics > Networking > Modems
+290 - Electronics > Networking > Network Cards & Adapters
+3742 - Electronics > Networking > Network Security & Firewall Devices
+6508 - Electronics > Networking > Power Over Ethernet Adapters
+3425 - Electronics > Networking > Print Servers
+2121 - Electronics > Networking > Repeaters & Transceivers
 345 - Electronics > Print, Copy, Scan & Fax
+499682 - Electronics > Print, Copy, Scan & Fax > 3D Printer Accessories
+6865 - Electronics > Print, Copy, Scan & Fax > 3D Printers
+502990 - Electronics > Print, Copy, Scan & Fax > Printer, Copier & Fax Machine Accessories
+500106 - Electronics > Print, Copy, Scan & Fax > Printers, Copiers & Fax Machines
+284 - Electronics > Print, Copy, Scan & Fax > Scanner Accessories
+306 - Electronics > Print, Copy, Scan & Fax > Scanners
 912 - Electronics > Radar Detectors
 500091 - Electronics > Speed Radars
 4488 - Electronics > Toll Collection Devices
 386 - Electronics > Video
+305 - Electronics > Video > Computer Monitors
+396 - Electronics > Video > Projectors
+397 - Electronics > Video > Projectors > Multimedia Projectors
+398 - Electronics > Video > Projectors > Overhead Projectors
+399 - Electronics > Video > Projectors > Slide Projectors
+5561 - Electronics > Video > Satellite & Cable TV
+404 - Electronics > Video > Televisions
+2027 - Electronics > Video > Video Accessories
+1368 - Electronics > Video > Video Editing Hardware & Production Equipment
+1634 - Electronics > Video > Video Multiplexers
+387 - Electronics > Video > Video Players & Recorders
+5278 - Electronics > Video > Video Servers
+5450 - Electronics > Video > Video Transmitters
 1270 - Electronics > Video Game Console Accessories
 1294 - Electronics > Video Game Consoles
 412 - Food, Beverages & Tobacco
 436 - Furniture
+554 - Furniture > Baby & Toddler Furniture
+6433 - Furniture > Beds & Accessories
+441 - Furniture > Benches
+6356 - Furniture > Cabinets & Storage
+442 - Furniture > Carts & Islands
+7248 - Furniture > Chair Accessories
+443 - Furniture > Chairs
+6499 - Furniture > Chairs > Arm Chairs, Recliners & Sleeper Chairs
+438 - Furniture > Chairs > Bean Bag Chairs
+456 - Furniture > Chairs > Chaises
+2919 - Furniture > Chairs > Electric Massaging Chairs
+500051 - Furniture > Chairs > Floor Chairs
+3358 - Furniture > Chairs > Folding Chairs & Stools
+6800 - Furniture > Chairs > Gaming Chairs
+7197 - Furniture > Chairs > Hanging Chairs
+5886 - Furniture > Chairs > Kitchen & Dining Room Chairs
+2002 - Furniture > Chairs > Rocking Chairs
+6859 - Furniture > Chairs > Slipper Chairs
+1463 - Furniture > Chairs > Table & Bar Stools
+457 - Furniture > Entertainment Centers & TV Stands
+6345 - Furniture > Furniture Sets
+6860 - Furniture > Futon Frames
+2786 - Furniture > Futon Pads
+450 - Furniture > Futons
+6362 - Furniture > Office Furniture
+4191 - Furniture > Office Furniture > Desks
+2045 - Furniture > Office Furniture > Office Chairs
+500061 - Furniture > Office Furniture > Office Furniture Sets
+6363 - Furniture > Office Furniture > Workspace Tables
+2242 - Furniture > Office Furniture > Workspace Tables > Art & Drafting Tables
+4317 - Furniture > Office Furniture > Workspace Tables > Conference Room Tables
+6908 - Furniture > Office Furniture > Workstations & Cubicles
+503765 - Furniture > Office Furniture Accessories
+458 - Furniture > Ottomans
+4299 - Furniture > Outdoor Furniture
+6963 - Furniture > Outdoor Furniture Accessories
+6915 - Furniture > Room Divider Accessories
+4163 - Furniture > Room Dividers
+464 - Furniture > Shelving
+8023 - Furniture > Shelving Accessories
+7212 - Furniture > Sofa Accessories
+460 - Furniture > Sofas
+6913 - Furniture > Table Accessories
+6392 - Furniture > Tables
 632 - Hardware
 469 - Health & Beauty
 536 - Home & Garden
+574 - Home & Garden > Bathroom Accessories
+359 - Home & Garden > Business & Home Security
+696 - Home & Garden > Decor
+5835 - Home & Garden > Emergency Preparedness
+2862 - Home & Garden > Fireplace & Wood Stove Accessories
+6792 - Home & Garden > Fireplaces
+1679 - Home & Garden > Flood, Fire & Gas Safety
+3348 - Home & Garden > Household Appliance Accessories
+604 - Home & Garden > Household Appliances
+630 - Home & Garden > Household Supplies
+638 - Home & Garden > Kitchen & Dining
+649 - Home & Garden > Kitchen & Dining > Barware
+6070 - Home & Garden > Kitchen & Dining > Cookware & Bakeware
+2920 - Home & Garden > Kitchen & Dining > Food & Beverage Carriers
+2626 - Home & Garden > Kitchen & Dining > Food Storage
+6478 - Home & Garden > Kitchen & Dining > Food Storage Accessories
+2901 - Home & Garden > Kitchen & Dining > Kitchen Appliance Accessories
+730 - Home & Garden > Kitchen & Dining > Kitchen Appliances
+5287 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Beverage Warmers
+732 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Breadmakers
+5090 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Chocolate Tempering Machines
+736 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Coffee Makers & Espresso Machines
+1388 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Coffee Makers & Espresso Machines > Drip Coffee Makers
+1647 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Coffee Makers & Espresso Machines > Electric & Stovetop Espresso Pots
+2422 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Coffee Makers & Espresso Machines > Espresso Machines
+1557 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Coffee Makers & Espresso Machines > French Presses
+2247 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Coffee Makers & Espresso Machines > Percolators
+5286 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Coffee Makers & Espresso Machines > Vacuum Coffee Makers
+679 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Cooktops
+3319 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Cotton Candy Machines
+738 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Deep Fryers
+3181 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Deli Slicers
+680 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Dishwashers
+7165 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Electric Griddles & Grills
+751 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Electric Kettles
+4421 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Electric Skillets & Woks
+4720 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Fondue Pots & Sets
+4532 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Food Cookers & Steamers
+743 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Food Dehydrators
+744 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Food Grinders & Mills
+505666 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Food Mixers & Blenders
+687 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Food Smokers
+5103 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Food Warmers
+681 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Freezers
+5156 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Frozen Drink Makers
+610 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Garbage Disposals
+6524 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Gas Griddles
+6543 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Hot Drink Makers
+747 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Hot Plates
+748 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Ice Cream Makers
+749 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Ice Crushers & Shavers
+4161 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Ice Makers
+750 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Juicers
+752 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Knife Sharpeners
+753 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Microwave Ovens
+3526 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Milk Frothers & Steamers
+4482 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Mochi Makers
+2985 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Outdoor Grills
+683 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Ovens
+755 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Pasta Makers
+756 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Popcorn Makers
+1015 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Portable Cooking Stoves
+684 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Range Hoods
+685 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Ranges
+686 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Refrigerators
+4495 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Roaster Ovens & Rotisseries
+5577 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Soda Makers
+5057 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Soy Milk Makers
+4528 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Tea Makers
+5289 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Toasters & Grills
+688 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Trash Compactors
+763 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Vacuum Sealers
+3293 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Water Coolers
+765 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Water Filters
+4539 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Wine Fridges
+766 - Home & Garden > Kitchen & Dining > Kitchen Appliances > Yogurt Makers
+668 - Home & Garden > Kitchen & Dining > Kitchen Tools & Utensils
+8161 - Home & Garden > Kitchen & Dining > Prefabricated Kitchens & Kitchenettes
+672 - Home & Garden > Kitchen & Dining > Tableware
+689 - Home & Garden > Lawn & Garden
+594 - Home & Garden > Lighting
+2956 - Home & Garden > Lighting Accessories
+4171 - Home & Garden > Linens & Bedding
+4358 - Home & Garden > Parasols & Rain Umbrellas
+985 - Home & Garden > Plants
+729 - Home & Garden > Pool & Spa
+600 - Home & Garden > Smoking Accessories
+6173 - Home & Garden > Umbrella Sleeves & Cases
+2639 - Home & Garden > Wood Stoves
 5181 - Luggage & Bags
+100 - Luggage & Bags > Backpacks
+101 - Luggage & Bags > Briefcases
+108 - Luggage & Bags > Cosmetic & Toiletry Bags
+549 - Luggage & Bags > Diaper Bags
+502974 - Luggage & Bags > Dry Boxes
+103 - Luggage & Bags > Duffel Bags
+104 - Luggage & Bags > Fanny Packs
+105 - Luggage & Bags > Garment Bags
+110 - Luggage & Bags > Luggage Accessories
+106 - Luggage & Bags > Messenger Bags
+5608 - Luggage & Bags > Shopping Totes
+107 - Luggage & Bags > Suitcases
+6553 - Luggage & Bags > Train Cases
 772 - Mature
 783 - Media
 922 - Office Supplies
