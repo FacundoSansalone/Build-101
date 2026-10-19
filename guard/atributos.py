@@ -359,6 +359,34 @@ def _numero_legible(valor: float) -> str:
     return str(int(valor)) if float(valor).is_integer() else f"{valor:g}"
 
 
+# Cómo se lee en un texto una unidad que llega como código UN/CEFACT
+# (`unitCode` de schema.org) o con un signo: "E34" → "GB", "CMT" → "cm", '"' → "in".
+_SIMBOLOS: dict[str, str] = {
+    "ad": "B", "2p": "kB", "4l": "MB", "e34": "GB", "e35": "TB",
+    "mmt": "mm", "cmt": "cm", "mtr": "m", "inh": "in", '"': "in", "″": "in",
+    "mgm": "mg", "grm": "g", "kgm": "kg", "lbr": "lb", "onz": "oz",
+    "hur": "h",
+}
+
+# Cifras significativas de un valor convertido para mostrarlo. Con la
+# tolerancia de la conversión (0,5 %), tres cifras alcanzan para que un valor
+# que no cumple nunca se lea igual a lo pedido.
+_CIFRAS_CONVERTIDO = 3
+
+
+def unidad_legible(unidad: str) -> str:
+    """La unidad como se lee: el símbolo de un código UN/CEFACT; si no, tal cual."""
+    return _SIMBOLOS.get(unidad.strip().casefold().rstrip("."), unidad.strip())
+
+
+def _aproximado(valor: float) -> str:
+    """"24" para 24,0157; "0.31" para 0,31; "1000" para 1000,0 (enteros desde 100)."""
+    if valor == 0:
+        return "0"
+    decimales = max(0, _CIFRAS_CONVERTIDO - 1 - math.floor(math.log10(abs(valor))))
+    return _numero_legible(round(valor, decimales))
+
+
 def formatear_atributo(valor: ValorAtributo | dict | None) -> str:
     """"16 GB", "1.5 kg", "sí", "bluetooth, usb-c". Sin caracteres de control."""
     from guard.textos import LARGO_MAXIMO, sin_control  # evita un import circular
@@ -376,7 +404,39 @@ def formatear_atributo(valor: ValorAtributo | dict | None) -> str:
         como_numero = numero(valor.valor)
         texto = _numero_legible(como_numero) if como_numero is not None else str(valor.valor)
     if valor.unidad:
-        texto = f"{texto} {valor.unidad}"
+        texto = f"{texto} {unidad_legible(valor.unidad)}"
+    return sin_control(texto)[:LARGO_MAXIMO]
+
+
+def formatear_en_unidad(valor: ValorAtributo | dict | None, unidad: str | None) -> str:
+    """El valor en la unidad del requisito y, si hubo que convertir, el
+    original entre paréntesis: "24 in (61 cm)", "0.31 kg (310 g)".
+
+    La misma unidad con otro nombre ("E34", "pulgadas") se escribe con la del
+    requisito ("16 GB"). Si no se puede convertir (requisito sin unidad,
+    valor sin unidad, otra dimensión, unidad desconocida distinta, texto que
+    no es número), queda igual que `formatear_atributo`. Solo es texto: la
+    comparación la hace `comparar` con los números sin redondear.
+    """
+    from guard.textos import LARGO_MAXIMO, sin_control  # evita un import circular
+
+    if isinstance(valor, dict):
+        valor = valor_atributo(valor)
+    original = formatear_atributo(valor)
+    if valor is None or unidad is None or not unidad.strip():
+        return original
+    cantidad = _cantidad(valor.valor, valor.unidad)
+    destino = _unidad(unidad)
+    if cantidad is None or cantidad[1] is None or destino is None:
+        return original
+    observado, origen = cantidad
+    if origen[0] != destino[0]:
+        return original  # dimensiones distintas (o dos unidades desconocidas distintas)
+    if origen[1] == destino[1]:
+        texto = f"{_numero_legible(observado)} {unidad_legible(unidad)}"
+    else:
+        convertido = observado * origen[1] / destino[1]
+        texto = f"{_aproximado(convertido)} {unidad_legible(unidad)} ({original})"
     return sin_control(texto)[:LARGO_MAXIMO]
 
 

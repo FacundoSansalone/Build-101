@@ -13,6 +13,7 @@ from guard.atributos import (
     comparar,
     como_booleano,
     formatear_atributo,
+    formatear_en_unidad,
     iguales_atributo,
     valor_atributo,
 )
@@ -206,6 +207,72 @@ def test_formatear_atributo():
     assert formatear_atributo(V(True)) == "sí"
     assert formatear_atributo(V(["bluetooth", "usb-c"])) == "bluetooth, usb-c"
     assert formatear_atributo(None) == "sin dato"
+
+
+def test_formatear_atributo_muestra_los_codigos_un_cefact_como_simbolos():
+    # schema.org trae `unitCode`; en un texto se lee el símbolo.
+    assert formatear_atributo(V(16, "E34")) == "16 GB"
+    assert formatear_atributo(V(61, "CMT")) == "61 cm"
+    assert formatear_atributo(V(1.35, "KGM")) == "1.35 kg"
+    assert formatear_atributo(V(40, "dB")) == "40 dB"  # desconocida: tal cual
+
+
+# -- el valor en la unidad del requisito ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("observado", "unidad", "esperado"),
+    [
+        # otra unidad de la misma dimensión: la del requisito y, entre paréntesis, la original
+        (V(61, "cm"), "in", "24 in (61 cm)"),
+        (V(35.6, "cm"), "in", "14 in (35.6 cm)"),
+        (V(68.6, "CMT"), "in", "27 in (68.6 cm)"),
+        (V(310, "g"), "kg", "0.31 kg (310 g)"),
+        (V(1.8, "kg"), "g", "1800 g (1.8 kg)"),
+        (V(8, "GiB"), "GB", "8.59 GB (8 GiB)"),
+        (V(1, "TB"), "GB", "1000 GB (1 TB)"),
+        (V(512, "GB"), "TB", "0.512 TB (512 GB)"),
+        (V(90, "min"), "h", "1.5 h (90 min)"),
+        (V(1080, "min"), "horas", "18 horas (1080 min)"),
+        (V("61 cm"), "in", "24 in (61 cm)"),       # número y unidad en el texto
+        # misma unidad con otro nombre: solo la del requisito
+        (V(16, "E34"), "GB", "16 GB"),
+        (V(27, "pulgadas"), "in", "27 in"),
+        (V(15.6, '"'), "in", "15.6 in"),
+        # sin conversión: igual que formatear_atributo
+        (V(16, "GB"), "GB", "16 GB"),
+        (V(16, "GB"), None, "16 GB"),               # requisito sin unidad
+        (V(16, "GB"), "in", "16 GB"),               # otra dimensión
+        (V(40, "dB"), "W", "40 dB"),                # unidad desconocida
+        (V(4), "GB", "4"),                          # unidad de un solo lado
+        (V(True), "GB", "sí"),
+        (V(["bluetooth", "usb-c"]), "GB", "bluetooth, usb-c"),
+        (None, "in", "sin dato"),
+    ],
+)
+def test_formatear_en_unidad(observado, unidad, esperado):
+    assert formatear_en_unidad(observado, unidad) == esperado
+
+
+def test_formatear_en_unidad_acepta_un_dict():
+    assert formatear_en_unidad({"valor": 61, "unidad": "cm"}, "in") == "24 in (61 cm)"
+
+
+@pytest.mark.parametrize(
+    ("unidad_observada", "factor", "unidad_pedida", "pedido"),
+    [("cm", 2.54, "in", 27), ("g", 1000, "kg", 1.5), ("MB", 1000, "GB", 16), ("min", 60, "h", 20)],
+)
+def test_lo_que_no_cumple_nunca_se_muestra_igual_a_lo_pedido(
+    unidad_observada, factor, unidad_pedida, pedido
+):
+    """El redondeo para mostrar no puede hacer que un valor que no cumple se
+    lea igual a lo pedido ("27 in (68 cm) no cumple 27 in")."""
+    texto_pedido = formatear_atributo(V(pedido, unidad_pedida))
+    for paso in range(-300, 301):
+        observado = round(pedido * factor * (1 + paso / 10_000), 4)  # ±3 % alrededor
+        if comparar(V(observado, unidad_observada), "igual", pedido, unidad_pedida) is False:
+            mostrado = formatear_en_unidad(V(observado, unidad_observada), unidad_pedida)
+            assert not mostrado.startswith(f"{texto_pedido} ("), (observado, mostrado)
 
 
 def test_requisito_de_atributo_necesita_nombre():
