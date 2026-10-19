@@ -1,0 +1,13 @@
+{
+  "por_defecto": "merchant_1",
+  "comercios": [
+    {
+      "id": "merchant_1",
+      "nombre": "Simulación (comercio general detrás del túnel)",
+      "a2a_url": "https://<tu-dominio>.ngrok-free.app/a2a/merchant_agent",
+      "catalogo_url": "https://<tu-dominio>.ngrok-free.app",
+      "merchant_ids": ["merchant_1"],
+      "respaldo_fixture": false
+    }
+  ]
+}

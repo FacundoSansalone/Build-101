@@ -10,3 +10,4 @@ world/ap2/results/
 node_modules/
 .DS_Store
 .claude/worktrees/
+.vercel/
