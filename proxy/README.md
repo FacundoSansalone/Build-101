@@ -802,6 +802,21 @@ Desde ahí, el ejemplo de punta a punta de
 [INTEGRACION.md](../docs/INTEGRACION.md#5-flujo-completo-paso-a-paso) anda
 igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 
+### Vercel
+
+El gateway también corre en Vercel, **solo el motor** (este paquete y los
+que usa), sin `python -m proxy`: la entrada es `index.py` (raíz) →
+`proxy.vercel:app`. No hay puertos propios ni disco: no existe `/guard/*` ni
+la ruta vieja, todo es como el oyente público (clave obligatoria), la
+configuración llega por variables (`GATEWAY_CLAVES_JSON`,
+`GATEWAY_COMERCIOS_JSON`, `GUARD_SIGNING_KEY_PEM_B64`), el estado vive en
+Supabase (`GATEWAY_ESTADO=supabase`, migraciones 003 y 004) y cada pedido
+puede caer en otra instancia, con 300 s como máximo (esperas de 60 y 150 s,
+presupuesto de 270 s). La simulación queda en la máquina local detrás de un
+túnel. Paso a paso, variables, túnel y la prueba local con varias instancias
+(`deploy/vercel/local_multi.py` y `scripts/smoke_v1_pausas.py`):
+[`deploy/vercel/README.md`](../deploy/vercel/README.md).
+
 ### Riesgos y fuera de alcance
 
 - **Una sola instancia:** las esperas, la caché de decisiones y los candados
@@ -864,6 +879,7 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `sql/003_gateway.sql` | Tablas del estado del gateway (`gw_*`); se aplica a mano |
 | `scripts/smoke_checkout.py` | Prueba real de punta a punta con el cliente A2A del sample (escenarios fijos: exige `PROXY_FICHA_DEMO=1`) |
 | `scripts/smoke_v1_general.py` | Compra de integrador por `/v1` de punta a punta, sin LLM de nuestro lado (gateway de prueba en el proceso o uno levantado) |
+| `scripts/smoke_v1_pausas.py` | Las pausas (porqué y oportunidad) contra un gateway con varias instancias (`deploy/vercel/local_multi.py` o Vercel): las respuestas por `/v1` llegan por otra instancia que la que retiene la búsqueda; casos sin respuesta, sin decisión y con la instancia muerta |
 
 ## Tests
 

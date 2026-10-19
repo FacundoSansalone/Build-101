@@ -13,6 +13,7 @@ para integradores externos. Solo con un archivo de claves: ver
 |---|---|
 | `start_all.sh [escenario]` | Levanta todo en esta máquina con el agente pasando por el proxy, espera a que responda y, si un proceso muere, apaga todo. Logs en `.logs/`. Escenario por defecto `general` (el comercio general: cualquier pedido, cualquier día). Funciona en Linux, macOS y Windows con Git Bash. |
 | `tenki.sh [escenario]` | Crea una VM en Tenki Sandbox, sube el código y el `.env`, instala dependencias, publica el :8020 (y el :8030 si hay archivo de claves) y corre `start_all.sh` adentro. |
+| `vercel/` | El **motor solo** (gateway, filtro, intención y Guard) en Vercel, con el estado en Supabase; la simulación queda en tu máquina detrás de un túnel. Ver [Vercel](#vercel-solo-el-motor). |
 
 ## Local
 
@@ -174,6 +175,22 @@ GATEWAY_CLAVES_ARCHIVO=.temp-db/gateway_claves.json bash deploy/tenki.sh
 Para rotar una clave o cambiar comercios: editá el archivo y volvé a correr
 `tenki.sh` con `TENKI_SESSION` (el proxy relee la configuración solo al
 arrancar).
+
+## Vercel (solo el motor)
+
+Otra forma de publicar el gateway: **solo el motor** en Vercel (plan Hobby:
+300 s por pedido, varias instancias sin memoria compartida), con el estado en
+Supabase (migraciones 003 y 004). La simulación (`world/`, `dashboard/`)
+sigue en tu máquina y el motor le habla por un túnel (`vercel/tunel_router.py`
+y ngrok); los agentes de compras son externos y entran como integradores por
+`/v1` y `/a2a/m/{comercio}`. No reemplaza a `start_all.sh` ni a `tenki.sh`:
+la demo de `/demo` sigue igual.
+
+Todo el paso a paso (login, Supabase, secretos, variables, túnel, deploy y
+smoke) y la prueba local con varias instancias (`vercel/local_multi.py`)
+están en [`vercel/README.md`](vercel/README.md). Lo que no se sube lo fija
+[`.vercelignore`](../.vercelignore) y lo verifica
+`proxy/tests/test_despliegue_vercel.py`.
 
 ## A tener en cuenta
 

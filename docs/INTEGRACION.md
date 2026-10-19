@@ -67,6 +67,27 @@ El operador te da:
 La especificación completa está en `GET /v1/openapi.json` (OpenAPI 3.1) y una
 versión legible en `GET /v1/docs`. Los dos son públicos.
 
+### Si el gateway corre en Vercel
+
+El operador puede publicar el gateway en Vercel
+([`deploy/vercel/README.md`](../deploy/vercel/README.md)). La API y las rutas
+son las mismas; cambia esto:
+
+- **La URL base es `https://`**, la del dominio de producción que te da el
+  operador (por ejemplo `https://<proyecto>.vercel.app`). Usá esa: las URLs
+  de cada deploy pueden pedir login de Vercel.
+- **Cada pedido dura como mucho 300 s.** Si se pasa, Vercel responde 504
+  (`FUNCTION_INVOCATION_TIMEOUT`) y no hay nada para firmar. Por eso las
+  esperas son más cortas: la pregunta del porqué hasta **60 s** y una
+  propuesta hasta **150 s**, y una llamada A2A nunca pasa de **270 s**. Tu
+  usuario tiene que contestar dentro de esos plazos (§12).
+- **Cuerpo de hasta 4,5 MB** por pedido y por respuesta (más, 413 de Vercel
+  antes de llegar al gateway).
+- **Varias instancias.** Tus pedidos pueden caer en instancias distintas: la
+  compra y sus esperas viven en la base, así que contestar el porqué, decidir
+  o aprobar funciona desde cualquier pedido, aunque la búsqueda siga abierta
+  en otra.
+
 ## 4. Autenticación
 
 Todo pedido lleva la clave en el header `Authorization`:
@@ -648,14 +669,16 @@ checkout no se puede evaluar), tu agente recibe una tarea `failed` con un
 - **Timeouts largos en tu cliente A2A.** La pregunta del porqué (hasta 2 min)
   y una propuesta (hasta 7 min) retienen la llamada abierta; el total nunca
   pasa de 570 s. Con un timeout más corto, tu cliente corta, la compra queda
-  `vencida` y no se compra nada.
+  `vencida` y no se compra nada. En un gateway en Vercel los plazos son 60 s,
+  150 s y 270 s ([§3](#si-el-gateway-corre-en-vercel)).
 - **Firmá solo lo que pasó.** En el gateway: la tarea trae el `ap2.checkout`
   y el veredicto es `aprobado` o `con_avisos`. En `/v1/evaluar`: 200 y
   `llega_a_firma: true`.
 
 ## 13. Límites conocidos
 
-- **Una sola instancia.** El gateway corre como un proceso. Si se reinicia,
+- **Una sola instancia** (salvo en Vercel, [§3](#si-el-gateway-corre-en-vercel),
+  donde corre en varias con el estado en la base). El gateway corre como un proceso. Si se reinicia,
   las compras guardadas siguen (si el operador configuró almacenamiento
   durable), pero lo que estaba esperando cierra del lado seguro: una pregunta
   del porqué pendiente sigue literal y una propuesta pendiente queda
