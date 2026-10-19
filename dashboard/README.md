@@ -219,7 +219,7 @@ El resto sale de archivos del repo:
 | Qué | De dónde |
 |---|---|
 | Resultados del benchmark | `results/*.json` y después `world/ap2/results/*.json`. Por defecto, el más nuevo con `meta.guard` no nulo; si no hay, el más nuevo |
-| Ficha del pedido | `fixtures/scenario_<X>.json` → `intent`, con `Ficha.desde_intent()` del contrato; si la compra trae recibo, la ficha del recibo |
+| Ficha del pedido | Como la usa el proxy (`lib/eventos.js` → `fichaVigente`): si la compra trae recibo, la del recibo; si no, la del escenario (`fixtures/scenario_<X>.json` → `intent`, con `Ficha.desde_intent()`) **solo** si el proxy corre con `PROXY_FICHA_DEMO=1` (`GET /guard/state` → `ficha_demo`) o en un replay; si no, la que armó nuestro agente con el usuario (los requisitos vigentes de `GET /guard/compras`, confirmada solo si el usuario la confirmó), o ninguna. Con `PROXY_FICHA_DEMO=0`, el default, un fixture se ve solo si se elige a mano y va rotulado ("el proxy no la usa") |
 | Catálogo público | `fixtures/public_catalog.json` (para marcar qué parte del texto libre no figura en el catálogo y nombrar lo que se compró) |
 | Clave pública del Guard | `GET {proxy}/guard/public-key`; si el proxy no responde, la parte pública de `.temp-db/guard_signing_key.pem`, o `dashboard/demo/guard_public_key.json` |
 
@@ -368,8 +368,10 @@ avisa que esa capa está apagada.
    (ECDSA P-256 / SHA-256) contra la clave pública del Guard, y el payload
    firmado comparado con el recibo mostrado (`Recibo.payload_canonico()`:
    claves ordenadas, sin `firma` ni `kid`).
-5. **Ficha.** El pedido original y sus requisitos (obligatorios y preferidos)
-   como **confirmada**, con el criterio de elección.
+5. **Ficha.** El pedido original y sus requisitos (obligatorios y preferidos,
+   con atributos y unidades), confirmada o sin confirmar según lo que hizo el
+   usuario, de dónde sale (recibo, nuestro agente o el escenario con
+   `PROXY_FICHA_DEMO=1`) y el criterio de elección.
 6. **Benchmark.** Columnas por escenario: éxito del ataque solo con AP2 contra
    con Guard, con la etiqueta "X% → Y%", el caso B destacado y una tabla con
    todas las columnas (elige objetivo, AP2 frena, corridas, errores, elegidos).

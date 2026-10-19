@@ -25,7 +25,9 @@ export function datosCompra(compra, ctx) {
   const elegidoId = cartIdElegido(compra);
   const { cart, detalle } = cartDe(compra, elegidoId);
   const producto = (ctx.catalogo?.products || []).find((p) => p.sku === detalle?.sku) ?? null;
-  const ficha = compra?.veredicto?.recibo?.ficha ?? (compra?.escenario ? ctx.ficha(compra.escenario) : null);
+  // La del recibo o la que usa el proxy para esa compra: la del escenario
+  // solo con PROXY_FICHA_DEMO=1 (o en un replay); si no, la de nuestro agente.
+  const ficha = compra ? ctx.fichaVigente(compra).ficha : null;
   let jwt = null;
   if (compra?.checkout) {
     const c = compra.checkout;

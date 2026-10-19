@@ -301,6 +301,39 @@ export function topeDeFicha(ficha) {
   return typeof r?.valor === "number" ? r.valor : null;
 }
 
+const esObjeto = (x) => Boolean(x) && typeof x === "object" && !Array.isArray(x);
+
+/**
+ * La ficha de una compra que muestra el panel, y de dónde sale: {ficha, fuente}.
+ * Sigue el orden del proxy (`proxy.ficha_de`):
+ * - "recibo": la que usó el Guard (`veredicto.recibo.ficha`). Manda siempre.
+ * - "escenario": la del escenario de la demo, solo si el proxy la usa
+ *   (`GET /guard/state` → `ficha_demo`, PROXY_FICHA_DEMO=1).
+ * - "intake": la que armó nuestro agente con el usuario (los requisitos
+ *   vigentes de la compra en GET /guard/compras), confirmada solo si el
+ *   usuario la confirmó.
+ * - null: ninguna todavía. Con `ficha_demo` apagado (el default) o sin dato
+ *   del proxy, la del escenario nunca se muestra como la de la compra.
+ */
+export function fichaVigente({ compra = null, compraAgente = null, fichaDemo = false, fichaEscenario = null } = {}) {
+  const recibo = compra?.veredicto?.recibo?.ficha;
+  if (esObjeto(recibo)) return { ficha: recibo, fuente: "recibo" };
+  if (fichaDemo === true && esObjeto(fichaEscenario)) return { ficha: fichaEscenario, fuente: "escenario" };
+  const requisitos = Array.isArray(compraAgente?.requisitos) ? compraAgente.requisitos : [];
+  if (requisitos.length) {
+    return {
+      ficha: {
+        pedido_original: typeof compraAgente.pedido === "string" ? compraAgente.pedido : "",
+        requisitos,
+        criterio: "lowest_price_among_compliant",
+        confirmada: compraAgente.intake?.confirmada === true,
+      },
+      fuente: "intake",
+    };
+  }
+  return { ficha: null, fuente: null };
+}
+
 /** Monto del checkout firmado (centavos del JWT → unidades), o del evento. */
 export function montoCheckout(checkout) {
   const totales = checkout?.jwt_payload?.totals;

@@ -8,7 +8,7 @@ import {
 } from "./lib/agente.js";
 import { interruptorHabilitado, registrarSondeo, unaALaVez } from "./lib/conexion.js";
 import {
-  aJsonl, agruparCompras, cuerpoAprobacion, estadoAprobacion, fusionarEventos,
+  aJsonl, agruparCompras, cuerpoAprobacion, estadoAprobacion, fichaVigente, fusionarEventos,
 } from "./lib/eventos.js";
 import { decodificarSdJwt, resolverSdJwt, sha256B64url, verificarRecibo } from "./lib/jose.js";
 import { renderAgente } from "./views/agente.js";
@@ -50,7 +50,9 @@ const estado = {
   escenarioFicha: null,
   // conectado: null = consultando; false solo después de varios sondeos
   // fallidos seguidos (lib/conexion.js), no por uno.
-  proxy: { conectado: null, fallos: 0, guard_activo: null, evaluador: null, merchant_url: null, cambiando: false },
+  // ficha_demo: GET /guard/state → ¿el proxy usa las fichas de los escenarios
+  // (PROXY_FICHA_DEMO=1)? null hasta saberlo; solo true las muestra como de la compra.
+  proxy: { conectado: null, fallos: 0, guard_activo: null, evaluador: null, merchant_url: null, ficha_demo: null, cambiando: false },
   // GET /guard/aprobaciones del proxy (solo en vivo).
   aprobaciones: { pendientes: [], usadas: [] },
   // GET /guard/compras del proxy (solo en vivo): las compras de nuestro agente.
@@ -191,6 +193,21 @@ function ctx() {
     esNuevo: (id) => nuevos.has(id),
     fixture: (esc) => cargarPerezoso(cache.fixtures, esc, `/api/fixtures/${encodeURIComponent(esc)}`),
     ficha: (esc) => cargarPerezoso(cache.fichas, esc, `/api/fixtures/${encodeURIComponent(esc)}/ficha`),
+    // La ficha de una compra como la usa el proxy: el recibo; si no, la del
+    // escenario solo con PROXY_FICHA_DEMO=1 y, si no, la de nuestro agente
+    // (lib/eventos.js → fichaVigente). Sin compra, la de la compra más nueva
+    // de nuestro agente. Un replay es de una grabación (los de dashboard/demo/
+    // son de escenarios fijos): ahí no manda el proxy que esté corriendo.
+    fichaVigente(compra) {
+      const fichaDemo = estado.fuente === "replay" || estado.proxy.ficha_demo === true;
+      const esc = compra?.escenario ?? null;
+      const compraAgente = compra?.contextoId
+        ? agente.find((c) => c.contexto_id === compra.contextoId) ?? null
+        : agente[0] ?? null;
+      const fichaEscenario = fichaDemo && esc
+        ? cargarPerezoso(cache.fichas, esc, `/api/fixtures/${encodeURIComponent(esc)}/ficha`) : null;
+      return fichaVigente({ compra, compraAgente, fichaDemo, fichaEscenario });
+    },
     compraActual() {
       if (!estado.seguirUltima && estado.compraSel) {
         const c = compras.find((x) => x.contextoId === estado.compraSel);
@@ -509,14 +526,19 @@ async function refrescarReplays() {
 const refrescarProxy = unaALaVez(async () => {
   try {
     const { datos } = await pedirJson("/api/proxy/guard/state", { timeout: 3500 });
-    // La vista Agente avisa si la capa de intención o el filtro están apagados.
-    if (datos.intencion !== estado.proxy.intencion || datos.filtro !== estado.proxy.filtro) programarRender();
+    const fichaDemo = datos.ficha_demo === true;
+    // La vista Agente avisa si la capa de intención o el filtro están apagados;
+    // la Ficha cambia de fuente con PROXY_FICHA_DEMO.
+    if (datos.intencion !== estado.proxy.intencion || datos.filtro !== estado.proxy.filtro
+      || fichaDemo !== estado.proxy.ficha_demo) programarRender();
     estado.proxy = {
       ...registrarSondeo(estado.proxy, true),
       guard_activo: datos.guard_activo, evaluador: datos.evaluador, merchant_url: datos.merchant_url,
       // Etapa 2 (undefined con un proxy viejo): nombre del agente de intención
       // o null si está apagado, y si hay filtro de seguridad.
       intencion: datos.intencion, filtro: datos.filtro,
+      // Etapa 3: ¿usa la ficha de los escenarios? Sin el dato, como si no.
+      ficha_demo: fichaDemo,
     };
   } catch {
     estado.proxy = registrarSondeo(estado.proxy, false);

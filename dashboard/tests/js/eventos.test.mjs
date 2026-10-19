@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  agruparCompras, cartIdElegido, describirEvento, estadoCompra, fusionarEventos,
+  agruparCompras, cartIdElegido, describirEvento, estadoCompra, fichaVigente, fusionarEventos,
   mandatosDe, montoCheckout, parLadoALado, partirTextoLibre, topeDeFicha, aJsonl,
 } from "../../static/lib/eventos.js";
 
@@ -70,6 +70,32 @@ test("compra bloqueada con Guard: elegido, estado y guard del momento de la deci
   assert.equal(cartIdElegido(c), "cart_1");
   assert.equal(estadoCompra(c).clave, "bloqueado");
   assert.equal(montoCheckout(c.checkout), 149);
+});
+
+test("la ficha que se muestra: el recibo, la del intake o, solo con ficha_demo, la del escenario", () => {
+  const recibo = { pedido_original: "p", requisitos: [{ campo: "precio" }], confirmada: true };
+  const escenario = { pedido_original: "zapatillas", requisitos: [{ campo: "talle" }], confirmada: true };
+  const tope = { campo: "precio", operador: "maximo", valor: 400, obligatorio: true };
+  const delIntake = { compra_id: "cmp-1", pedido: "un monitor de 27", requisitos: [tope],
+    intake: { final: true, confirmada: true } };
+  const conRecibo = { veredicto: { recibo: { ficha: recibo } } };
+
+  // El recibo manda siempre: es la que usó el Guard.
+  assert.deepEqual(fichaVigente({ compra: conRecibo, compraAgente: delIntake, fichaDemo: true, fichaEscenario: escenario }),
+    { ficha: recibo, fuente: "recibo" });
+  // Con PROXY_FICHA_DEMO=0 (por defecto) la del escenario no se muestra: el proxy no la usa.
+  const intake = fichaVigente({ compra: {}, compraAgente: delIntake, fichaDemo: false, fichaEscenario: escenario });
+  assert.equal(intake.fuente, "intake");
+  assert.deepEqual(intake.ficha, { pedido_original: "un monitor de 27", requisitos: [tope],
+    criterio: "lowest_price_among_compliant", confirmada: true });
+  assert.deepEqual(fichaVigente({ compra: {}, fichaDemo: false, fichaEscenario: escenario }), { ficha: null, fuente: null });
+  assert.deepEqual(fichaVigente({ fichaEscenario: escenario }), { ficha: null, fuente: null }); // sin dato del proxy
+  // Con PROXY_FICHA_DEMO=1, la del escenario manda sobre la del intake (como en el proxy).
+  assert.deepEqual(fichaVigente({ compra: {}, compraAgente: delIntake, fichaDemo: true, fichaEscenario: escenario }),
+    { ficha: escenario, fuente: "escenario" });
+  // Sin confirmar en el intake: se muestra como sin confirmar.
+  const sinConfirmar = fichaVigente({ compraAgente: { ...delIntake, intake: { final: false } } });
+  assert.equal(sinConfirmar.ficha.confirmada, false);
 });
 
 test("una búsqueda sin resultados termina la compra (no queda en curso)", () => {
