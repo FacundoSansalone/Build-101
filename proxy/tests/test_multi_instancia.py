@@ -1019,3 +1019,72 @@ def test_fusionar_filas_cambio_por_cambio():
     assert fusionar_filas(base, nuestra, suya)["datos"]["veredictos"] == [
         {"status": "escalar"}, {"status": "aprobado"},
     ]
+
+
+# -- la instancia que retiene la espera también la muestra y la contesta -------------------
+#
+# Prueba de punta a punta con varias instancias: con una sola viva, todo va a
+# la que retiene la búsqueda. Sus GET leen la compra mientras la búsqueda la
+# trabaja; un GET antes de abrir la espera dejaba en memoria otra copia, y
+# después la instancia mostraba esa (sin la pendiente) y no la dejaba contestar.
+
+
+async def test_la_que_retiene_muestra_la_oportunidad_y_la_decide(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant, agente=AgenteFalso())
+    async with cliente_publico(a.app) as ca:
+        compra_id = await _compra_computadoras(ca, porque=RESPUESTA_USUARIO)
+        busqueda = asyncio.create_task(buscar(ca, compra_id, escenario="computadoras"))
+        vista = await _compra_en(ca, compra_id, "esperando_decision")  # GET en A, desde el principio
+        pendiente = vista["pendiente"]
+        assert pendiente["tipo"] == "oportunidad" and pendiente["vence"]
+        assert pendiente["oportunidad"]["cart_id"] == "cart_2"
+        listado = (await ca.get("/v1/compras")).json()["compras"]
+        assert [c["pendiente"]["tipo"] for c in listado] == ["oportunidad"]
+
+        resp = await ca.post(
+            f"/v1/compras/{compra_id}/decision",
+            json={"oportunidad_id": pendiente["oportunidad"]["id"], "decision": "aceptar"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["estado"] == "aceptada"
+        task = (await busqueda).json()["result"]
+        assert any(GUARD_PARAMETROS_KEY in d for d in _datos(task))
+        assert (await ca.get(f"/v1/compras/{compra_id}")).json()["estado"] == "aceptada"
+
+
+async def test_la_que_retiene_muestra_el_porque_y_lo_contesta(config_varias):
+    base, merchant = BaseFalsa(), FakeMerchant()
+    agente = AgenteFalso(cart_id=None)
+    a = _instancia(config_varias, base, merchant, agente=agente)
+    async with cliente_publico(a.app) as ca:
+        compra_id = await _compra_computadoras(ca, preguntar=True)
+        busqueda = asyncio.create_task(buscar(ca, compra_id, escenario="computadoras"))
+        vista = await _compra_en(ca, compra_id, "esperando_contexto")
+        assert vista["pendiente"]["tipo"] == "porque" and vista["pendiente"]["vence"]
+        assert vista["pendiente"]["pregunta"] == "¿Para qué necesitás las 20 computadoras?"
+        listado = (await ca.get("/v1/compras")).json()["compras"]
+        assert [c["pendiente"]["tipo"] for c in listado] == ["porque"]
+        resp = await ca.post(
+            f"/v1/compras/{compra_id}/respuesta", json={"respuesta": RESPUESTA_USUARIO}
+        )
+        assert resp.status_code == 200, resp.text
+        assert (await busqueda).json()["result"]["status"]["state"] == "completed"
+        assert agente.respuestas == [RESPUESTA_USUARIO]
+
+
+async def test_la_que_retiene_aprueba_con_la_compra_al_dia(config_varias):
+    """Las aprobaciones también: un GET en la misma instancia en el medio no
+    deja una copia vieja que tape el `escalar` retenido."""
+    base, merchant = BaseFalsa(), FakeMerchant()
+    a = _instancia(config_varias, base, merchant, evaluador=evaluador_espia(status="escalar")[0])
+    async with cliente_publico(a.app) as ca:
+        compra_id = (await crear_compra(ca))["compra_id"]
+        contexto = (await buscar(ca, compra_id)).json()["result"]["contextId"]
+        assert (await ca.get(f"/v1/compras/{compra_id}")).status_code == 200
+        await checkout(ca, compra_id, contexto, "cart_1")
+        vista = (await ca.get(f"/v1/compras/{compra_id}")).json()
+        assert vista["pendiente"]["tipo"] == "aprobacion"
+        resp = await ca.post(f"/v1/compras/{compra_id}/aprobaciones", json={"cart_id": "cart_1"})
+        assert resp.status_code == 201, resp.text
+        assert checkouts((await checkout(ca, compra_id, contexto, "cart_1")).json()["result"])
