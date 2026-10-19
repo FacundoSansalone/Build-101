@@ -57,6 +57,11 @@ def validar_url_upstream(url: str) -> str:
     logs y en `/guard/state`; fragment y query, porque el proxy arma URLs
     pegando `/{resto}` (Agent Card) y quedarían mal. Devuelve la URL sin la
     `/` final, que es como la usa el resto del proxy.
+
+    Los mensajes nombran a lo sumo el host, nunca la URL entera: la
+    configuración puede venir de una variable de entorno
+    (`GATEWAY_COMERCIOS_JSON`) que termina en el log, y el userinfo o la
+    query pueden traer credenciales.
     """
     if not isinstance(url, str) or not url.strip():
         raise ConfigInvalida("la URL del comercio tiene que ser un texto no vacío")
@@ -65,12 +70,13 @@ def validar_url_upstream(url: str) -> str:
         partes = urlsplit(url)
         host = partes.hostname
         partes.port  # noqa: B018 — valida el puerto (ValueError si no es número)
-    except ValueError as exc:
-        raise ConfigInvalida(f"URL inválida: {url!r}") from exc
+    except ValueError:
+        raise ConfigInvalida("una URL del comercio no es válida (host o puerto)") from None
     if partes.scheme not in ("http", "https"):
-        raise ConfigInvalida(f"la URL {url!r} tiene que ser http(s)")
+        donde = f"de {host!r}" if host else "del comercio"
+        raise ConfigInvalida(f"la URL {donde} tiene que ser http(s)")
     if not host:
-        raise ConfigInvalida(f"la URL {url!r} no tiene host")
+        raise ConfigInvalida("una URL del comercio no tiene host")
     if partes.username is not None or partes.password is not None or "@" in partes.netloc:
         raise ConfigInvalida(f"la URL de {host!r} no puede llevar usuario ni clave")
     if partes.fragment or "#" in url:
