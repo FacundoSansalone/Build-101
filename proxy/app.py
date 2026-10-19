@@ -108,15 +108,14 @@ from proxy.evaluador import (
 )
 from proxy.eventos import CAPACIDAD, BusDeEventos
 from proxy.fuentes import (
+    FuentesDemoProtocolo,
     cargar_catalogo,
     categoria_de_la_ficha,
     categorias_para_el_pedido,
     ficha_del_intent,
     intent_ap2,
-    intent_del_escenario,
     ruta_categoria,
     skus_de,
-    violaciones_ap2,
 )
 from proxy.pedido_usuario import LARGO_MAXIMO as LARGO_MAXIMO_PEDIDO
 from proxy.pedido_usuario import PedidoDelUsuario, pedido_para_intake
@@ -554,6 +553,7 @@ class ProxyGuard:
         almacen: AlmacenEstado | None = None,
         despachador: Despachador | None = None,
         filtro_modo: str | None = None,
+        demo: FuentesDemoProtocolo | None = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -598,6 +598,16 @@ class ProxyGuard:
         # `python -m proxy` (FABRICANTE_FUENTE, por defecto el fixture). Sin
         # fuente, lo obligatorio que solo declara el comercio escala.
         self.fabricante = fabricante
+        # Lo que viene de la simulación (proxy.demo_local.FuentesDemo): la
+        # pasa `python -m proxy`. Sin `demo` (el motor desplegado) no hay
+        # ficha de los escenarios fijos, aunque PROXY_FICHA_DEMO=1, ni
+        # `ap2_violaciones` (va en null). El motor nunca importa demo_world.
+        self.demo = demo
+        if config.ficha_demo and demo is None:
+            logger.warning(
+                "PROXY_FICHA_DEMO=1 sin las fuentes de la demo (demo=None): no hay "
+                "fichas de los escenarios fijos; manda la que confirmó el usuario."
+            )
         # Con el TTL: una compra de integrador viva no sale de memoria.
         self.compras = RegistroCompras(ttl_s=config.compra_ttl_s)
         # Intake (agentes con `evaluar_intake`): estado por compra y las
@@ -887,6 +897,12 @@ class ProxyGuard:
             or self.despachador is not None
         )
 
+    @property
+    def ficha_demo(self) -> bool:
+        """¿Se usan las fichas de los escenarios fijos? Hace falta pedirlas
+        (PROXY_FICHA_DEMO=1) y tener de dónde sacarlas (`demo`)."""
+        return self.config.ficha_demo and self.demo is not None
+
     def estado(self, *, con_token: bool) -> dict[str, Any]:
         datos = {
             "guard_activo": self.guard_activo,
@@ -896,8 +912,9 @@ class ProxyGuard:
             "filtro": self.filtro is not None,
             "filtro_modo": self.filtro_modo,
             # PROXY_FICHA_DEMO: ¿se usan las fichas de los escenarios fijos?
-            # (lo lee `smoke_checkout.py`; solo informa).
-            "ficha_demo": self.config.ficha_demo,
+            # (lo lee `smoke_checkout.py`; solo informa). Sin las fuentes de
+            # la demo no se usan aunque se pidan: dice lo que pasa de verdad.
+            "ficha_demo": self.ficha_demo,
         }
         if self.gateway_configurado:
             # Solo con el gateway configurado: sin configuración nueva, el
@@ -1883,9 +1900,11 @@ class ProxyGuard:
     def _ficha_confirmada(self, escenario: str | None) -> Ficha | None:
         """La ficha confirmada de la demo para ese escenario (si hay), con los
         atributos y la categoría de la taxonomía (`ficha_desde_intent`)."""
-        if not self.config.ficha_demo:
-            return None  # PROXY_FICHA_DEMO=0: como con un comercio real
-        intent = intent_del_escenario(escenario)
+        if not self.ficha_demo or self.demo is None:
+            # PROXY_FICHA_DEMO=0 o sin la demo (el motor desplegado): como con
+            # un comercio real.
+            return None
+        intent = self.demo.intent_del_escenario(escenario)
         if intent is None:
             return None
         try:
@@ -2647,7 +2666,7 @@ class ProxyGuard:
             "checkout_hash": checkout.get("checkout_hash"),
             "jwt_header": header,
             "jwt_payload": payload,
-            "ap2_violaciones": violaciones_ap2(copy.deepcopy(cart), intent_ap2(ficha)),
+            "ap2_violaciones": self._violaciones_ap2(cart, ficha),
         }
         if checkout.get("cart_id") != cart_id:
             datos["cart_id_checkout"] = checkout.get("cart_id")
@@ -2659,6 +2678,18 @@ class ProxyGuard:
             escenario=guardadas.escenario if guardadas else None,
             llamada=llamada,
         )
+
+    def _violaciones_ap2(self, cart: dict[str, Any], ficha: Ficha) -> list[str] | None:
+        """Lo que frenaría el SDK de AP2 con el tope de esta compra, para el
+        dashboard. None sin la demo (el motor no tiene el SDK), sin tope en
+        la ficha o si falla: es solo para mostrar, nunca decide."""
+        if self.demo is None:
+            return None
+        try:
+            return self.demo.violaciones_ap2(copy.deepcopy(cart), intent_ap2(ficha))
+        except Exception:  # noqa: BLE001 - solo para mostrar
+            logger.exception("No se pudo correr el chequeo de AP2 de la demo")
+            return None
 
     async def _con_fabricante(
         self, catalogo: dict[str, dict], offer_details: list[dict[str, Any]]
@@ -3459,6 +3490,7 @@ def create_app(
     almacen: AlmacenEstado | None = None,
     despachador: Despachador | None = None,
     filtro_modo: str | None = None,
+    demo: FuentesDemoProtocolo | None = None,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
@@ -3467,6 +3499,12 @@ def create_app(
     `describir()`) y `fabricante` (fabricante.FuenteFabricante) los arma
     `python -m proxy` desde el entorno; acá no se lee el entorno, así
     los tests nunca escriben en la base real ni llaman a un LLM.
+
+    `demo` (`proxy.fuentes.FuentesDemoProtocolo`): lo que viene de la
+    simulación, la ficha de los escenarios fijos y el chequeo del SDK de AP2.
+    Lo pasa `python -m proxy` (`proxy.demo_local.FuentesDemo`). Sin `demo`
+    (el motor desplegado), como con `PROXY_FICHA_DEMO=0` y sin
+    `ap2_violaciones`: el motor no importa nada de la simulación.
 
     Gateway de producción (todo opcional; sin esto, la app es la de siempre):
     `integradores` (claves de API; con al menos una activa se reconoce el
@@ -3497,7 +3535,7 @@ def create_app(
         config, client, evaluador, ping_segundos,
         persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
         integradores=integradores, comercios=comercios, almacen=almacen,
-        despachador=despachador, filtro_modo=filtro_modo,
+        despachador=despachador, filtro_modo=filtro_modo, demo=demo,
     )
     nucleo = NucleoProxy(proxy)
     # El oyente público solo existe con claves: sin ellas, todo pedido es local.

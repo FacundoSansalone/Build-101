@@ -13,7 +13,7 @@ from contracts import Ficha, OfertasVistas, Recibo, Veredicto
 from proxy import a2a, guard_stub
 from proxy.config import REPO_ROOT, Config
 from proxy.evaluador import cargar_evaluador, clave_publica, firmar_recibo
-from proxy.fuentes import cargar_intent
+from proxy.demo_local import cargar_intent
 from proxy.tests.fake_world import cargar_fixture
 
 # ---------------------------------------------------------------------------

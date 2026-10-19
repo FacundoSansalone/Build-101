@@ -11,6 +11,7 @@ import pytest
 from proxy import guard_stub
 from proxy.app import create_app
 from proxy.config import Config
+from proxy.demo_local import FuentesDemo
 from proxy.evaluador import EvaluadorCargado
 from proxy.seguridad import HEADER_TOKEN
 from proxy.tests.fake_world import (
@@ -71,6 +72,9 @@ def armar_proxy(
         kwargs.setdefault("config", config)
         kwargs.setdefault("transport", transporte_mundo)
         kwargs.setdefault("evaluador", stub)
+        # La demo local, como `python -m proxy`: las fichas de los escenarios
+        # fijos y el chequeo de AP2. Sin demo, `demo=None` explícito.
+        kwargs.setdefault("demo", FuentesDemo())
         return create_app(**kwargs)
 
     return _armar

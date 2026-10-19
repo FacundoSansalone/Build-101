@@ -1,11 +1,15 @@
-"""De dónde saca el proxy la ficha, el catálogo público y el chequeo de AP2.
+"""De dónde saca el proxy la ficha y el catálogo público (y qué le pide a la demo).
 
 El catálogo público no siempre existe: sin él, el Guard evalúa sin catálogo
 (todo queda "solo declarado" y escala). El respaldo en `fixtures/` es solo
 para la demo offline y hay que pedirlo (`CATALOGO_RESPALDO_FIXTURE=1`).
 Para evaluar se piden solo los productos de las ofertas (`/products/<sku>`)
 y, si eso no alcanza, la lista entera (`/products`).
-`demo_world` se importa en solo lectura (no se modifica).
+
+Este módulo es del motor: no importa `demo_world` (ni nada de la
+simulación). La ficha de los escenarios fijos y el chequeo del SDK de AP2
+llegan por inyección (`FuentesDemoProtocolo`; la implementación de la demo
+local es `proxy.demo_local.FuentesDemo`, que pasa `python -m proxy`).
 
 La categoría de la taxonomía de Google de la ficha sale del clasificador del
 agente o, si no hay, de las palabras del pedido (`taxonomia.palabras`): los
@@ -20,7 +24,7 @@ import json
 import logging
 import re
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import quote
 
 import httpx
@@ -33,16 +37,25 @@ logger = logging.getLogger("proxy.fuentes")
 FIXTURES = REPO_ROOT / "fixtures"
 
 
-def cargar_intent() -> dict[str, Any]:
-    """`demo_world.scenario.intent()`; si no se puede, el del fixture baseline."""
-    try:
-        from demo_world import scenario
+class FuentesDemoProtocolo(Protocol):
+    """Lo que el proxy le pide a la demo local (`create_app(..., demo=)`).
 
-        return scenario.intent()
-    except Exception as e:  # noqa: BLE001 - cualquier falla cae al fixture
-        logger.warning("demo_world no disponible (%s); intent desde fixtures/", e)
-        datos = json.loads((FIXTURES / "scenario_baseline.json").read_text("utf-8"))
-        return datos["intent"]
+    Sin `demo` (el motor desplegado) no hay ficha de los escenarios fijos
+    (como `PROXY_FICHA_DEMO=0`) ni `ap2_violaciones` (va en null). La de la
+    demo es `proxy.demo_local.FuentesDemo`. Ninguno de los dos autoriza nada:
+    la ficha de la demo es la que confirmó el usuario de la grabación y AP2
+    es solo para mostrar.
+    """
+
+    def intent_del_escenario(self, nombre: str | None) -> dict[str, Any] | None:
+        """El `intent` confirmado de ese escenario fijo, o None."""
+        ...
+
+    def violaciones_ap2(
+        self, cart: dict[str, Any], intent: dict[str, Any] | None
+    ) -> list[str] | None:
+        """Lo que frena el SDK de AP2 ([] = OK), o None si no se pudo."""
+        ...
 
 
 def ficha_del_intent(intent: dict[str, Any]) -> Ficha:
@@ -56,68 +69,6 @@ def ficha_del_intent(intent: dict[str, Any]) -> Ficha:
     from guard.ficha import ficha_desde_intent
 
     return ficha_desde_intent(intent)
-
-
-_NOMBRE_ESCENARIO = re.compile(r"[A-Za-z0-9_-]{1,40}")
-
-# Los escenarios de zapatillas de la etapa 1: en scenarios.json no tienen
-# `intent` propio y usan el pedido global. Ningún otro escenario cae a ese
-# pedido (un test lo verifica contra scenarios.json).
-ESCENARIOS_DEL_PEDIDO_GLOBAL = frozenset({"baseline", "A", "B", "B2", "C"})
-# El comercio general arma las ofertas con el pedido del usuario: nunca hay
-# ficha de la demo, aunque el preset traiga un `intent`.
-TIPO_GENERAL = "general"
-
-
-def intent_del_escenario(nombre: str | None) -> dict[str, Any] | None:
-    """La ficha confirmada de la demo para ese escenario, o None.
-
-    1. `demo_world`: el `intent` propio del escenario (si world/ lo define)
-       o, solo para los de zapatillas (`ESCENARIOS_DEL_PEDIDO_GLOBAL`), el
-       `intent` global de scenarios.json.
-    2. Si no: `fixtures/scenario_<nombre>.json` y `fixtures/etapa2/<nombre>.json`
-       (cada fixture trae su `intent`).
-
-    None si el escenario no se conoce (con un comercio real no hay
-    `demo_scenario` y manda la ficha que confirmó el usuario), si es del
-    comercio general (`"tipo": "general"`) o si no tiene `intent` propio y no
-    es de zapatillas: nunca se usa el pedido de otro escenario.
-    El nombre viene en datos A2A: solo se acepta un identificador simple.
-    """
-    if not isinstance(nombre, str) or not _NOMBRE_ESCENARIO.fullmatch(nombre):
-        return None
-    try:
-        from demo_world import scenario
-
-        if nombre in scenario.scenario_names():
-            info = scenario.get_scenario(nombre)
-            if nombre in ESCENARIOS_DEL_PEDIDO_GLOBAL and _sin_intent_propio(info):
-                return scenario.intent()
-            return _intent_propio(info)
-    except Exception as e:  # noqa: BLE001 - cualquier falla cae a los fixtures
-        logger.warning("demo_world no disponible (%s); intent desde fixtures/", e)
-    for ruta in (FIXTURES / f"scenario_{nombre}.json", FIXTURES / "etapa2" / f"{nombre}.json"):
-        if ruta.is_file():
-            try:
-                datos = json.loads(ruta.read_text("utf-8"))
-            except (OSError, ValueError):
-                return None
-            return _intent_propio(datos)
-    return None
-
-
-def _sin_intent_propio(info: Any) -> bool:
-    return isinstance(info, dict) and "tipo" not in info and not isinstance(
-        info.get("intent"), dict
-    )
-
-
-def _intent_propio(info: Any) -> dict[str, Any] | None:
-    """El `intent` del escenario (o del fixture), salvo en el comercio general."""
-    if not isinstance(info, dict) or info.get("tipo") == TIPO_GENERAL:
-        return None
-    intent = info.get("intent")
-    return intent if isinstance(intent, dict) else None
 
 
 # -- categoría de la taxonomía de Google ----------------------------------------------
@@ -371,18 +322,3 @@ def intent_ap2(ficha: Ficha) -> dict[str, Any] | None:
     if isinstance(tope, bool) or not isinstance(tope, (int, float)) or not isinstance(moneda, str):
         return None
     return {"hard": {"max_price": float(tope), "currency": moneda}}
-
-
-def violaciones_ap2(cart: dict[str, Any], intent: dict[str, Any] | None) -> list[str] | None:
-    """Lo que frena el SDK de AP2 para este cart con el tope de su compra
-    ([] = OK). None si no se pudo, o si la compra no tiene tope (`intent`
-    None): nunca se usa el tope de otro pedido."""
-    if intent is None:
-        return None
-    try:
-        from demo_world.ap2_check import ap2_violations
-
-        return list(ap2_violations(cart, intent))
-    except Exception as e:  # noqa: BLE001 - es solo para mostrar
-        logger.warning("No se pudo correr ap2_check para %s: %s", cart.get("cart_id"), e)
-        return None

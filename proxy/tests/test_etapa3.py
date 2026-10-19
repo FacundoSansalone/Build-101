@@ -24,13 +24,12 @@ import pytest
 from contracts import Contexto, Requisito
 from intencion import Pregunta
 from proxy.config import Config
+from proxy.demo_local import ESCENARIOS_DEL_PEDIDO_GLOBAL, FuentesDemo, intent_del_escenario
 from proxy.fuentes import (
-    ESCENARIOS_DEL_PEDIDO_GLOBAL,
     MAX_SKUS_POR_PEDIDO,
     cargar_catalogo,
     categoria_de_la_ficha,
     categorias_para_el_pedido,
-    intent_del_escenario,
     ruta_categoria,
     skus_de,
 )
@@ -160,10 +159,10 @@ def test_un_nombre_raro_no_tiene_ficha(nombre):
 @pytest.fixture
 def sin_demo_world(monkeypatch, tmp_path):
     """`demo_world` no se puede importar: quedan los fixtures (en tmp_path)."""
-    import proxy.fuentes as fuentes
+    import proxy.demo_local as demo_local
 
     monkeypatch.setitem(sys.modules, "demo_world", None)  # import → ImportError
-    monkeypatch.setattr(fuentes, "FIXTURES", tmp_path)
+    monkeypatch.setattr(demo_local, "FIXTURES", tmp_path)
     (tmp_path / "etapa2").mkdir()
     return tmp_path
 
@@ -696,7 +695,7 @@ async def test_el_checkout_se_evalua_con_el_catalogo_por_sku(config, stub, merch
     })
     evaluador, llamadas = evaluador_espia()
     app = create_app(config=replace(config, ficha_demo=True), transport=transporte,
-                     evaluador=evaluador)
+                     evaluador=evaluador, demo=FuentesDemo())
     async with cliente_de(app) as c:
         contexto = await buscar(c, "B")
         task = (await checkout(c, contexto, "cart_1")).json()["result"]
@@ -742,7 +741,7 @@ async def test_el_catalogo_por_sku_de_otro_comercio_no_se_usa(config, merchant):
     })
     evaluador, llamadas = evaluador_espia()
     app = create_app(config=replace(config, ficha_demo=True), transport=transporte,
-                     evaluador=evaluador)
+                     evaluador=evaluador, demo=FuentesDemo())
     async with cliente_de(app) as c:
         contexto = await buscar(c, "B")
         await checkout(c, contexto, "cart_1")

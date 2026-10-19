@@ -416,11 +416,15 @@ def main() -> None:
     filtro = cargar_filtro()
     filtro_modo = modo_filtro(filtro)
     fabricante = cargar_fabricante()
+    # La demo local: fichas de los escenarios fijos y chequeo de AP2 desde
+    # demo_world (fuera del motor; se importa acá, no al importar el módulo).
+    from proxy.demo_local import FuentesDemo
+
     try:
         app = create_app(
             config, evaluador=evaluador, persistencia=persistencia, agente=agente, filtro=filtro,
             filtro_modo=filtro_modo, fabricante=fabricante, integradores=integradores,
-            comercios=comercios, almacen=almacen,
+            comercios=comercios, almacen=almacen, demo=FuentesDemo(),
         )
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
