@@ -209,12 +209,90 @@ export function tonosComparacion(sin, con) {
   return { sin: tono(sin, con), con: tono(con, sin) };
 }
 
-/** Guarda la última corrida por escenario y lado ({sin, con}). No muta. */
-export function guardarResultado(mapa, resultado) {
+/**
+ * Guarda la última corrida por lado ({sin, con}) bajo `clave` (por defecto,
+ * el escenario). Con `maximo`, quedan las claves más nuevas: la que se guarda
+ * pasa al final. No muta.
+ */
+export function guardarResultado(mapa, resultado, { clave = resultado?.escenario, maximo = Number.POSITIVE_INFINITY } = {}) {
   const base = mapa && typeof mapa === "object" ? mapa : {};
-  if (!resultado?.escenario) return base;
+  if (!resultado?.escenario || !clave) return base;
   const lado = resultado.guardActivo ? "con" : "sin";
-  return { ...base, [resultado.escenario]: { ...(base[resultado.escenario] || {}), [lado]: resultado } };
+  const { [clave]: previo, ...resto } = base;
+  const entradas = Object.entries({ ...resto, [clave]: { ...(previo || {}), [lado]: resultado } });
+  return Object.fromEntries(entradas.slice(Math.max(0, entradas.length - maximo)));
+}
+
+const MAX_PEDIDO_CLAVE = 200;
+
+/** El pedido en minúsculas, sin tildes ni puntuación: "Comprame 20…, hasta" ≈ "comprame 20… hasta". */
+function normalizarPedido(pedido) {
+  if (typeof pedido !== "string") return "";
+  return pedido.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/[^a-z0-9ñ]+/g, " ").trim().slice(0, MAX_PEDIDO_CLAVE);
+}
+
+/**
+ * La clave del contraste: el mismo pedido al mismo comportamiento del
+ * comercio, con y sin intermediario (con pedidos libres, el escenario solo no
+ * alcanza). null sin escenario o sin pedido.
+ */
+export function claveComparacion(escenario, pedido) {
+  const p = normalizarPedido(pedido);
+  return escenario && p ? `${escenario}|${p}` : null;
+}
+
+/** El pedido de la corrida: el primer mensaje que el usuario le mandó al agente de compras. */
+export function pedidoDeCorrida(items) {
+  const m = (items || []).find((i) => i?.origen === "demo" && i.tipo === "usuario" && i.destino === "agente"
+    && typeof i.texto === "string" && i.texto.trim());
+  return m ? m.texto.trim() : null;
+}
+
+// ---------------------------------------------------------------- comportamientos del comercio
+
+const valida = (s) => s && typeof s.etiqueta === "string" && s.etiqueta.trim()
+  && typeof s.texto === "string" && s.texto.trim();
+
+/**
+ * Pedidos para empezar (GET /api/demo/escenarios → sugerencias). El comercio
+ * general responde a cualquiera; un escenario fijo responde siempre lo mismo,
+ * así que sugiere solo su pedido (o nada).
+ */
+export function sugerenciasPara(datos, activo) {
+  const info = datos?.nombres?.[activo];
+  if (info?.tipo === "fijo") {
+    return typeof info.pedido === "string" && info.pedido.trim()
+      ? [{ etiqueta: "Pedido del escenario", texto: info.pedido.trim() }] : [];
+  }
+  return (Array.isArray(datos?.sugerencias) ? datos.sugerencias : []).filter(valida)
+    .map(({ etiqueta, texto }) => ({ etiqueta, texto }));
+}
+
+function infoDe(datos, id) {
+  if (!id) return null;
+  const nombre = datos?.nombres?.[id];
+  if (nombre?.etiqueta) return nombre;
+  for (const g of datos?.grupos || []) {
+    for (const o of g?.opciones || []) if (o?.id === id && o.etiqueta) return { etiqueta: o.etiqueta, tipo: g.tipo ?? null };
+  }
+  return null;
+}
+
+/** "Inyección en la oferta", "Zapatillas · inyección" o el id de un escenario que no conocemos. */
+export function nombreDeEscenario(datos, id) {
+  return infoDe(datos, id)?.etiqueta ?? (id ? String(id) : "");
+}
+
+const COLA_COMERCIO = "Tu agente negocia; KaiAI revisa antes de que firmes.";
+
+/** La bajada de la bienvenida: con qué comercio se está comprando. */
+export function textoDelComercio(datos, activo) {
+  if (!activo) return "Tu agente negocia con el comercio; KaiAI revisa antes de que firmes.";
+  const info = infoDe(datos, activo);
+  if (info?.tipo === "general") return `Comportamiento del comercio: ${minuscula(info.etiqueta)}. ${COLA_COMERCIO}`;
+  if (info?.tipo === "fijo") return `Escenario de prueba: ${info.etiqueta}. ${COLA_COMERCIO}`;
+  return `Escenario del comercio: ${info?.etiqueta ?? activo}. ${COLA_COMERCIO}`;
 }
 
 // ---------------------------------------------------------------- ritmo del relato en vivo

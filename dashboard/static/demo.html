@@ -34,6 +34,7 @@
         <section class="bloque" aria-labelledby="comercio-titulo">
           <h2 id="comercio-titulo" class="bloque-titulo">Comercio</h2>
           <div id="escenarios" class="escenarios"></div>
+          <p id="escenarios-vacio" class="historial-vacio" hidden>El comercio no tiene comportamientos para elegir: responde como esté configurado.</p>
         </section>
 
         <section class="bloque" aria-labelledby="historial-titulo">
@@ -83,7 +84,7 @@
             <desc id="diagrama-desc">Todavía no pasó nada.</desc>
           </svg>
           <div id="contraste" class="contraste" aria-labelledby="contraste-titulo" hidden>
-            <h3 id="contraste-titulo" class="sr-only">El mismo comercio, con y sin intermediario</h3>
+            <h3 id="contraste-titulo" class="sr-only">El mismo pedido al mismo comercio, con y sin intermediario</h3>
             <div class="contraste-lado" data-lado="sin">
               <p class="contraste-rotulo"><span class="contraste-marca" aria-hidden="true"></span>Sin intermediario</p>
               <p class="contraste-texto" id="contraste-sin">—</p>
@@ -122,9 +123,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V6"/><path d="M6 11l6-6 6 6"/></svg>
             </button>
           </div>
-          <div class="sugerencias">
-            <button type="button" id="ejemplo" class="sugerencia" hidden>Usar el pedido de ejemplo</button>
-          </div>
+          <div id="sugerencias" class="sugerencias" role="group" aria-label="Pedidos para empezar" hidden></div>
           <p id="aviso-entrada" class="aviso-entrada" role="status" aria-live="polite"></p>
         </form>
       </footer>

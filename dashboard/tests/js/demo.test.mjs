@@ -4,8 +4,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, resultadoCorrida, resumenComparacion,
-  retenerLineas, tonosComparacion,
+  claveComparacion, desenlace, guardarResultado, lineaDeTiempo, lineasASoltar, modoDelInput, nombreDeEscenario,
+  pedidoDeCorrida, resultadoCorrida, resumenComparacion, retenerLineas, sugerenciasPara, textoDelComercio,
+  tonosComparacion,
 } from "../../static/lib/demo.js";
 
 const AHORA = Date.UTC(2026, 9, 18, 12, 0, 0);
@@ -181,4 +182,89 @@ test("al soltar, salen juntas las del Guard seguidas con la misma pausa", () => 
   ];
   assert.deepEqual(lineasASoltar(lineas, "g1"), ["g1", "g2"]);
   assert.deepEqual(lineasASoltar(lineas, "ya-no-esta"), ["ya-no-esta"]);
+});
+
+// ---------------------------------------------------------------- pedido libre y comportamientos del comercio
+
+test("el contraste es del mismo pedido al mismo comercio: la clave junta los dos", () => {
+  const a = claveComparacion("general_inyeccion", "  Comprame 20 Computadoras para el LUNES, hasta 20000 USD. ");
+  assert.equal(a, claveComparacion("general_inyeccion", "comprame 20 computadoras para el lunes hasta 20000 usd"));
+  assert.notEqual(a, claveComparacion("general", "Comprame 20 computadoras para el lunes, hasta 20000 USD."));
+  assert.notEqual(a, claveComparacion("general_inyeccion", "Un monitor de 27 pulgadas"));
+  assert.equal(claveComparacion("general", "Auriculares con cancelación"), claveComparacion("general", "auriculares con cancelacion"));
+  assert.equal(claveComparacion(null, "algo"), null);
+  assert.equal(claveComparacion("general", "   "), null);
+  assert.equal(claveComparacion("general", null), null);
+});
+
+test("el pedido de la corrida es el primer mensaje al agente de compras", () => {
+  const items = lineaDeTiempo([ev("ofertas_recibidas", OFERTAS)], [
+    msg("usuario", { texto: "Comprame 20 computadoras", destino: "agente" }),
+    msg("usuario", { texto: "Para la oficina", destino: "contexto" }),
+    msg("usuario", { texto: "Sí, la primera", destino: "agente" }),
+  ], null);
+  assert.equal(pedidoDeCorrida(items), "Comprame 20 computadoras");
+  assert.equal(pedidoDeCorrida(lineaDeTiempo([], [msg("usuario", { texto: "sí", destino: "decision" })], null)), null);
+  assert.equal(pedidoDeCorrida([]), null);
+});
+
+test("guardarResultado con otra clave y un tope: queda lo más nuevo", () => {
+  const r = (n) => ({ escenario: "general", guardActivo: n % 2 === 0, clave: "pagado", n });
+  let mapa = {};
+  for (let i = 0; i < 5; i++) mapa = guardarResultado(mapa, r(i), { clave: `general|pedido ${i}`, maximo: 3 });
+  assert.deepEqual(Object.keys(mapa), ["general|pedido 2", "general|pedido 3", "general|pedido 4"]);
+  // Volver a guardar una clave la pasa al final (no se pierde por vieja).
+  mapa = guardarResultado(mapa, r(7), { clave: "general|pedido 2", maximo: 3 });
+  assert.deepEqual(Object.keys(mapa), ["general|pedido 3", "general|pedido 4", "general|pedido 2"]);
+  assert.equal(mapa["general|pedido 2"].sin.n, 7);
+  assert.equal(mapa["general|pedido 2"].con.n, 2);
+  // Sin clave, como antes: por escenario.
+  assert.deepEqual(Object.keys(guardarResultado({}, r(0))), ["general"]);
+  assert.deepEqual(guardarResultado(mapa, r(0), { clave: null }), mapa);
+});
+
+const ESCENARIOS = {
+  activo: "general",
+  grupos: [{ categoria: "Comportamiento del comercio", tipo: "general",
+    opciones: [{ id: "general", etiqueta: "Honesto", honesto: true, pedido: null }] }],
+  nombres: {
+    general: { etiqueta: "Honesto", tipo: "general", pedido: null },
+    general_inyeccion: { etiqueta: "Inyección en la oferta", tipo: "general", pedido: null },
+    notebook_honesto: { etiqueta: "Notebook · honesto", tipo: "fijo", pedido: "Una notebook de 16 GB" },
+    B: { etiqueta: "Zapatillas · inyección", tipo: "fijo", pedido: null },
+  },
+  sugerencias: [
+    { etiqueta: "Monitor", texto: "Un monitor de 27 pulgadas hasta 400 USD" },
+    { etiqueta: "", texto: "sin etiqueta" }, { etiqueta: "x" }, null,
+    { etiqueta: "20 computadoras", texto: "20 computadoras para el lunes" },
+  ],
+};
+
+test("las sugerencias valen para cualquier comportamiento; un escenario fijo sugiere su pedido", () => {
+  const generales = [
+    { etiqueta: "Monitor", texto: "Un monitor de 27 pulgadas hasta 400 USD" },
+    { etiqueta: "20 computadoras", texto: "20 computadoras para el lunes" },
+  ];
+  assert.deepEqual(sugerenciasPara(ESCENARIOS, "general"), generales);
+  assert.deepEqual(sugerenciasPara(ESCENARIOS, "general_inyeccion"), generales);
+  assert.deepEqual(sugerenciasPara(ESCENARIOS, null), generales); // sin escenario activo, igual
+  assert.deepEqual(sugerenciasPara(ESCENARIOS, "desconocido"), generales);
+  assert.deepEqual(sugerenciasPara(ESCENARIOS, "notebook_honesto"),
+    [{ etiqueta: "Pedido del escenario", texto: "Una notebook de 16 GB" }]);
+  // Un escenario fijo responde siempre lo mismo: sugerir otra cosa confunde.
+  assert.deepEqual(sugerenciasPara(ESCENARIOS, "B"), []);
+  assert.deepEqual(sugerenciasPara(null, "general"), []);
+});
+
+test("cómo se nombra el comercio: el comportamiento, el escenario fijo o el id", () => {
+  assert.equal(nombreDeEscenario(ESCENARIOS, "general_inyeccion"), "Inyección en la oferta");
+  assert.equal(nombreDeEscenario(ESCENARIOS, "B"), "Zapatillas · inyección");
+  assert.equal(nombreDeEscenario(ESCENARIOS, "A"), "A");
+  assert.equal(nombreDeEscenario(ESCENARIOS, null), "");
+  assert.equal(nombreDeEscenario({ grupos: [{ categoria: "x", opciones: [{ id: "z", etiqueta: "Zeta" }] }] }, "z"), "Zeta");
+  const cola = "Tu agente negocia; KaiAI revisa antes de que firmes.";
+  assert.equal(textoDelComercio(ESCENARIOS, "general_inyeccion"), `Comportamiento del comercio: inyección en la oferta. ${cola}`);
+  assert.equal(textoDelComercio(ESCENARIOS, "B"), `Escenario de prueba: Zapatillas · inyección. ${cola}`);
+  assert.equal(textoDelComercio(ESCENARIOS, "A"), `Escenario del comercio: A. ${cola}`);
+  assert.equal(textoDelComercio(ESCENARIOS, null), "Tu agente negocia con el comercio; KaiAI revisa antes de que firmes.");
 });

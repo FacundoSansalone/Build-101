@@ -15,6 +15,8 @@ const NOMBRES_ATRIBUTO = {
   autonomia_bateria: "Batería",
   conectividad: "Conectividad",
   weight: "Peso",
+  // El chequeo de categoría del Guard (guard/categorias.py: campo del cumplimiento).
+  categoria_taxonomia: "Categoría",
 };
 
 const NOMBRES_CAMPO = { ...CAMPOS, titulo: "Título", sku: "SKU", gtin: "GTIN" };
@@ -279,15 +281,36 @@ function marcaParametro(p) {
   return ["falta", "crit"];
 }
 
+const MAX_NIVELES_RUTA = 6;
+const MAX_NIVEL_RUTA = 40;
+const MAX_RUTA = 200;
+
+/**
+ * La ruta de la categoría en la taxonomía de Google (nuestro árbol, nunca
+ * texto del comercio) en una línea: ["Electrónica", "Laptops"] o
+ * "Electrónica > Laptops" → "Electrónica › Laptops". null si no hay o no se
+ * entiende.
+ */
+export function rutaCategoria(valor) {
+  const partes = Array.isArray(valor) ? valor : typeof valor === "string" ? valor.split(">") : [];
+  const niveles = partes.filter((p) => typeof p === "string")
+    .map((p) => recortar(p.replace(/[\u0000-\u001f\u007f]/g, " "), MAX_NIVEL_RUTA)).filter(Boolean);
+  if (!niveles.length) return null;
+  return recortar(niveles.slice(-MAX_NIVELES_RUTA).join(" › "), MAX_RUTA);
+}
+
+const MARCA_CATEGORIA = "KaiAI la verifica en cada oferta";
+
 /**
  * La ficha parcial del intake (`ficha_parcial` de pedido_detectado, como la
  * arma el proxy) en filas legibles: [{nombre, valor, marca, tono, preferido}].
  * Los valores son plantillas del intake (números, fechas, monedas) o
  * requisitos tipados: nada del comercio salvo el nombre de una categoría de
- * su catálogo público.
+ * su catálogo público. Con `categoriaRuta` (la ruta de la taxonomía que trae
+ * el evento), suma la fila "Categoría" después del producto.
  */
-export function filasFicha(fichaParcial) {
-  return (Array.isArray(fichaParcial) ? fichaParcial : [])
+export function filasFicha(fichaParcial, { categoriaRuta = null } = {}) {
+  const filas = (Array.isArray(fichaParcial) ? fichaParcial : [])
     .filter((p) => p && typeof p === "object" && typeof p.parametro === "string")
     .map((p) => {
       const d = describirParametro(p);
@@ -296,8 +319,14 @@ export function filasFicha(fichaParcial) {
         valor = CATEGORIAS[p.valor] ?? titulo(p.valor.replace(/_/g, " "));
       }
       const [marca, tono] = marcaParametro(p);
-      return { nombre: d.nombre, valor, marca, tono, preferido: !d.obligatorio };
+      return { nombre: d.nombre, valor, marca, tono, preferido: !d.obligatorio, parametro: p.parametro };
     });
+  const ruta = rutaCategoria(categoriaRuta);
+  if (ruta) {
+    const producto = filas.findIndex((f) => f.parametro === "categoria");
+    filas.splice(producto + 1, 0, { nombre: "Categoría", valor: ruta, marca: MARCA_CATEGORIA, tono: "neutro", preferido: false });
+  }
+  return filas.map(({ parametro, ...f }) => f);
 }
 
 const NOTA_FICHA = "Escribí «sí» para confirmarla o corregí lo que haga falta. "
@@ -312,7 +341,7 @@ function lineaPedido(item, d) {
   const pregunta = String(d.pregunta ?? "").trim();
   if (d.confirmar) {
     const l = linea(item, `Nuestro agente te pide confirmar: ${pregunta}`, "aviso", "guard", { max: MAX_PREGUNTA });
-    const ficha = filasFicha(d.ficha_parcial);
+    const ficha = filasFicha(d.ficha_parcial, { categoriaRuta: d.categoria_ruta });
     return ficha.length ? { ...l, ficha, nota: NOTA_FICHA } : l;
   }
   if (n > 0) return linea(item, `Nuestro agente repregunta: ${pregunta}`, "aviso", "guard", { max: MAX_PREGUNTA });
@@ -365,7 +394,9 @@ export function textoEntendido(contexto) {
 }
 
 function lineaContexto(item, d, ctx) {
-  if (d.final && d.confirmada) return linea(item, "Confirmaste la ficha: con eso negocia tu agente", "ok", "guard");
+  const ruta = d.final ? rutaCategoria(d.categoria_ruta) : null;
+  const categoria = ruta ? ` (categoría: ${ruta})` : "";
+  if (d.final && d.confirmada) return linea(item, `Confirmaste la ficha: con eso negocia tu agente${categoria}`, "ok", "guard");
   if (d.omitido || d.vencido) {
     return linea(item, Number(d.turno) > 0 ? "Sin más respuestas: sigue con lo que ya dijiste"
       : "Sin el porqué: tu agente sigue con el pedido literal", "tenue", "guard");
@@ -381,7 +412,7 @@ function lineaContexto(item, d, ctx) {
   if (!entendido && d.contexto && respuesta) {
     return linea(item, `Nuestro agente entendió: «${recortar(respuesta, 160)}»`, "neutro", "guard");
   }
-  if (d.final) return linea(item, "Ficha lista: con eso negocia tu agente", "neutro", "guard");
+  if (d.final) return linea(item, `Ficha lista: con eso negocia tu agente${categoria}`, "neutro", "guard");
   return null;
 }
 

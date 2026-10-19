@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  armarRelato, filasFicha, formatearMedida, humanizarAtributo, limpiarTexto, textoCorteFiltro,
+  armarRelato, filasFicha, formatearMedida, humanizarAtributo, limpiarTexto, rutaCategoria, textoCorteFiltro,
 } from "../../static/lib/relato.js";
 import { itemsDeEventos, itemsDeMensajes, lineaDeTiempo } from "../../static/lib/demo.js";
 
@@ -393,6 +393,7 @@ test("atributos y medidas en palabras", () => {
   assert.equal(humanizarAtributo("memoria_ram"), "Memoria RAM");
   assert.equal(humanizarAtributo("tamano_pantalla"), "Pantalla");
   assert.equal(humanizarAtributo("algo_nuevo"), "Algo nuevo");
+  assert.equal(humanizarAtributo("categoria_taxonomia"), "Categoría");
   assert.equal(formatearMedida({ valor: "8", unidad: "GB" }), "8 GB");
   assert.equal(formatearMedida({ valor: "N", unidad: null }), "no");
   assert.equal(formatearMedida(true), "sí");
@@ -406,4 +407,58 @@ test("el relato usa los items de eventos y mensajes en orden de hora", () => {
   assert.deepEqual(items.map((i) => i.origen), ["demo", "proxy"]);
   assert.equal(itemsDeEventos([a])[0].tipo, "ofertas_recibidas");
   assert.equal(itemsDeMensajes([b])[0].tipo, "usuario");
+});
+
+// ---------------------------------------------------------------- categoría de la taxonomía
+
+test("rutaCategoria: la ruta del árbol en una línea, venga como lista o como texto", () => {
+  assert.equal(rutaCategoria(["Electrónica", "Computadoras", "Laptops"]), "Electrónica › Computadoras › Laptops");
+  assert.equal(rutaCategoria("Electrónica > Video > Monitores"), "Electrónica › Video › Monitores");
+  assert.equal(rutaCategoria("Calzado"), "Calzado");
+  assert.equal(rutaCategoria(["  Electrónica ", "", null, "Audio"]), "Electrónica › Audio");
+  for (const malo of [null, undefined, "", "  ", [], [1, 2], { ruta: "x" }, 42]) assert.equal(rutaCategoria(malo), null);
+  // Larga o con demasiados niveles, recortada.
+  const larga = rutaCategoria(Array.from({ length: 20 }, (_, i) => `Nivel ${i} ${"x".repeat(100)}`));
+  assert.ok(larga.length <= 200, larga);
+});
+
+test("la ficha a confirmar muestra la categoría del árbol si el evento la trae", () => {
+  const [l] = relato([evento("pedido_detectado", { compra_id: "cmp-pc", pregunta: "¿La confirmás?", turno: 1, confirmar: true,
+    ficha_parcial: FICHA_PARCIAL, categoria_ruta: ["Electrónica", "Computadoras", "Laptops"] })]);
+  const filas = l.ficha.map((f) => [f.nombre, f.valor]);
+  // Justo después del producto.
+  assert.deepEqual(filas.slice(0, 3), [["Producto", "notebooks"], ["Categoría", "Electrónica › Computadoras › Laptops"], ["Cantidad", "20"]]);
+  const categoria = l.ficha[1];
+  assert.equal(categoria.tono, "neutro");
+  assert.equal(categoria.preferido, false);
+  assert.match(categoria.marca, /verifica/);
+  // Sin ruta (o con una inválida), la ficha queda como siempre.
+  for (const datos of [{}, { categoria_ruta: null }, { categoria_ruta: [7] }]) {
+    const [sin] = relato([evento("pedido_detectado", { compra_id: "c", pregunta: "¿La confirmás?", turno: 1, confirmar: true,
+      ficha_parcial: FICHA_PARCIAL, ...datos })]);
+    assert.ok(!sin.ficha.some((f) => f.nombre === "Categoría"));
+  }
+  // Sin producto en la ficha, la categoría va primera.
+  assert.deepEqual(filasFicha(FICHA_PARCIAL.slice(1, 2), { categoriaRuta: "Calzado > Zapatillas" }).map((f) => f.nombre),
+    ["Categoría", "Cantidad"]);
+  // Una ficha vacía con categoría: solo la categoría.
+  assert.deepEqual(filasFicha([], { categoriaRuta: ["Calzado"] }).map((f) => f.valor), ["Calzado"]);
+});
+
+test("la categoría fuera de la pedida: el motivo del Guard con nombres del árbol", () => {
+  const veredicto = { status: "escalar", cart_id_elegido: "cart_1_ab12cd",
+    motivo: "Escalar: Categoría Tablets (4745) fuera de la pedida (Laptops, 328), según el catálogo público.",
+    chequeos: [{ tipo: "cumplimiento", resultado: "escalar", campo: "categoria_taxonomia", esperado: "328", observado: "4745",
+      origen: "catalogo_publico", detalle: "Categoría Tablets (4745) fuera de la pedida (Laptops, 328), según el catálogo público." }] };
+  assert.deepEqual(textos(relato([evento("veredicto", { veredicto })])),
+    ["⚠ Nuestra verificación pide tu revisión: Categoría Tablets (4745) fuera de la pedida (Laptops, 328), según el catálogo público"]);
+});
+
+test("al cerrar la ficha, la línea dice la categoría si la trae", () => {
+  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 2, final: true, confirmada: true,
+    categoria_ruta: ["Electrónica", "Monitores"] })])),
+  ["Confirmaste la ficha: con eso negocia tu agente (categoría: Electrónica › Monitores)"]);
+  assert.deepEqual(textos(relato([evento("contexto_registrado", { compra_id: "c", turno: 0, final: true, contexto: null,
+    categoria_ruta: "Calzado > Zapatillas" })])),
+  ["Ficha lista: con eso negocia tu agente (categoría: Calzado › Zapatillas)"]);
 });
