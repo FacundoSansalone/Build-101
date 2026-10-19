@@ -395,15 +395,23 @@ def test_vercel_json_es_valido_y_respeta_hobby():
     assert not {"builds", "routes"} & set(datos)
 
 
-def test_exclude_files_saca_la_simulacion_y_lo_que_no_es_runtime():
+def test_exclude_files_entra_en_el_limite_de_vercel():
+    # El esquema de vercel.json rechaza un excludeFiles de más de 256
+    # caracteres ("Schema verification failed" en el deploy).
+    assert len(_vercel_json()["functions"]["index.py"]["excludeFiles"]) <= 256
+
+
+def test_ni_la_simulacion_ni_lo_que_no_es_runtime_llegan_al_bundle():
+    """Lo saca `.vercelignore` (no se sube) o, si se sube, `excludeFiles`."""
     for ruta in ("world/x.py", "dashboard/app.py", "deploy/start_all.sh", "docs/FLUJO.md",
                  "results/a.json", "fixtures/scenario_B.json", "fixtures/etapa2/a.json",
                  "fixtures/public_catalog.json", "proxy/tests/test_app.py",
                  "proxy/scripts/smoke_v1_general.py", "proxy/demo_local.py",
                  "proxy/subir_benchmark.py", "guard/benchmark_hook.py", "filtro/casos.py",
                  "filtro/evaluar.py", "intencion/evaluar_casos.py", ".temp-db/x.pem",
-                 ".logs/a.jsonl", "proxy/__pycache__/app.cpython-312.pyc"):
-        assert _excluido(ruta), f"excludeFiles no saca {ruta}"
+                 ".logs/a.jsonl", "proxy/__pycache__/app.cpython-312.pyc",
+                 "proxy/sql/003_gateway.sql", "proxy/README.md"):
+        assert not se_sube(ruta) or _excluido(ruta), f"{ruta} llega al bundle"
 
 
 def test_exclude_files_no_saca_el_motor_ni_sus_datos():

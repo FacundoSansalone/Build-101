@@ -18,7 +18,7 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 
 | Archivo | Qué es |
 |---|---|
-| [`vercel.json`](../../vercel.json) | La función `index.py`: `maxDuration: 300` (el máximo de Hobby) y `excludeFiles` (la simulación y lo que no es runtime) |
+| [`vercel.json`](../../vercel.json) | La función `index.py`: `maxDuration: 300` (el máximo de Hobby) y `excludeFiles` (lo que se sube pero no es runtime; la simulación ya la deja afuera `.vercelignore`; Vercel acepta hasta 256 caracteres) |
 | [`.vercelignore`](../../.vercelignore) | Lo que **no** sube `vercel deploy`: lista blanca en la raíz (solo el motor) y lista negra adentro (secretos, simulación, tests). Lo verifica `proxy/tests/test_despliegue_vercel.py` |
 | `env.ejemplo` | Todas las variables, obligatorias, opcionales y **prohibidas** |
 | `comercios.ejemplo.json` | Formato de `GATEWAY_COMERCIOS_JSON` con la simulación detrás del túnel |
