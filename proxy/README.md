@@ -49,7 +49,7 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `GUARD_EVENTS_JSONL` | `.logs/guard_events.jsonl` | Copia de los eventos (relativo a la raíz del repo; se crea con modo 0600) |
 | `GUARD_EVENTS_JSONL_PRIVADO` | `.logs/guard_events_privados.jsonl` (junto a `GUARD_EVENTS_JSONL`) | Copia de los eventos de compras de integrador (modo 0600). El dashboard no la sirve. Tiene que ser otro archivo que `GUARD_EVENTS_JSONL` (si no, no arranca) |
 | `GUARD_KEY_PATH` | `.temp-db/guard_signing_key.pem` | Clave del recibo (la maneja `guard.recibo`) |
-| `GUARD_SIGNING_KEY_PEM_B64` | — | Clave del recibo por entorno (el PEM EC P-256 en base64), para varias instancias sin disco compartido (Vercel). **Secreta**. `ClaveRecibo.desde_entorno`; con las dos variables a la vez, un PEM inválido o una clave que no es P-256, no arranca. El servidor local la valida pero todavía firma con `GUARD_KEY_PATH` |
+| `GUARD_SIGNING_KEY_PEM_B64` | — | Clave del recibo por entorno (el PEM EC P-256 en base64), para varias instancias sin disco compartido (Vercel). **Secreta**. `ClaveRecibo.desde_entorno`; con las dos variables a la vez, un PEM inválido o una clave que no es P-256, no arranca. Si está, `python -m proxy` firma y publica con esa (y no crea `GUARD_KEY_PATH`); en Vercel es la única |
 | `GUARD_SIGNING_KEY_PEM` | — | Lo mismo con el PEM directo (saltos reales o escritos `\n`). Una sola de las dos |
 | `GUARD_SIGNING_KID` | `guard-key-1` | El `kid` del recibo y de la JWK publicada (1 a 64 de `A-Za-z0-9._-`) |
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control, nuevo en cada arranque (modo 0600 donde aplica). Lo lee el servidor del dashboard |
@@ -821,8 +821,18 @@ Supabase (`GATEWAY_ESTADO=supabase`, migraciones 003 y 004) y cada pedido
 puede caer en otra instancia, con 300 s como máximo (esperas de 60 y 150 s,
 presupuesto de 270 s). La simulación queda en la máquina local detrás de un
 túnel. Paso a paso, variables, túnel y la prueba local con varias instancias
-(`deploy/vercel/local_multi.py` y `scripts/smoke_v1_pausas.py`):
+(`deploy/vercel/local_multi.py` y `scripts/smoke_v1_pausas.py`, también sin
+Supabase con `deploy/vercel/postgrest_local.py`):
 [`deploy/vercel/README.md`](../deploy/vercel/README.md).
+
+`proxy.vercel.crear_app_serverless(env)` arma la app con
+`create_app(..., clave_recibo=..., rutas_control=False,
+rutas_heredadas=False)`; si falta algo o algo no sirve (una clave activa,
+los registros, Supabase, la clave del recibo, el filtro del motor, el Guard
+real, una variable prohibida prendida, una URL que no es https, un tiempo
+por encima de su tope), responde 503 `{"error": "motor_no_configurado"}` a
+todo y deja el motivo en el log, sin secretos. Sin credenciales del LLM la
+intención queda apagada (pedido literal).
 
 ### Riesgos y fuera de alcance
 
@@ -860,11 +870,13 @@ túnel. Paso a paso, variables, túnel y la prueba local con varias instancias
 
 | Archivo | Qué es |
 |---|---|
-| `app.py` | `create_app(config, transport=None, evaluador=None, persistencia=None, agente=None, filtro=None)`: rutas, reenvío, etapas de la etapa 2 (contexto, filtro, oportunidad), decisión sobre el checkout (JSON y SSE), caché de decisiones, API de control |
+| `app.py` | `create_app(config, transport=None, evaluador=None, persistencia=None, agente=None, filtro=None, …, clave_recibo=None, rutas_control=True, rutas_heredadas=True)`: rutas, reenvío, etapas de la etapa 2 (contexto, filtro, oportunidad), decisión sobre el checkout (JSON y SSE), caché de decisiones, API de control. Con `clave_recibo` firma y publica con esa clave (sin tocar `GUARD_KEY_PATH`); `rutas_control=False` saca `/guard/*`, `ControlLocal`, CORS y el archivo del token y trata todo como del oyente público; `rutas_heredadas=False` saca la ruta vieja |
 | `a2a.py` | Helpers puros sobre el JSON de A2A (pedido, ofertas, checkouts, `guard.veredicto` ajeno y versión para el agente, tareas bloqueadas, total firmado exacto, huella del checkout, lectura acotada y SSE saneado) |
 | `aprobaciones.py` | Registro de aprobaciones humanas (un solo uso, atadas a contexto, cart y monto) |
 | `seguridad.py` | Middleware de la API de control (`Host`, `Origin`, `Content-Type`, `X-Guard-Token`) y el token por arranque |
 | `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo`: `ClaveRecibo` (del entorno o del archivo, `firmar`, `firmar_veredicto`, `jwk_publica`) |
+| `vercel.py` | La entrada serverless: `crear_app_serverless(env, almacen=None, transport=None)` y `app` (con `os.environ`). Fuerza lo del despliegue (varias instancias, webhooks en línea, nada en disco, sin demo ni `/guard/*`), los topes de Hobby y la frontera del motor para `GUARD_FILTRO`; si algo falta, `AppNoConfigurada` (503 a todo). No importa uvicorn, `proxy.__main__` ni la demo |
+| `../index.py` | La entrada de Vercel en la raíz: `from proxy.vercel import app` (`[tool.vercel] entrypoint = "index:app"` en `pyproject.toml`) |
 | `arranque.py` | Los cargadores desde el entorno (intención, filtro, fabricante, integradores y comercios por archivo o `GATEWAY_*_JSON`, validación cruzada, clave del recibo). No importa uvicorn: los usan `python -m proxy` (que los re-exporta) y la entrada serverless |
 | `guard_stub.py` | Stub con la firma de `contracts.Evaluador`: bloquea si el elegido es el último cart |
 | `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta `PROXY_MAX_SUSCRIPTORES_SSE`) y JSONL (los de compras de integrador, en el privado) |
