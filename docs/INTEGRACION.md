@@ -133,7 +133,14 @@ Lo que tenés que saber de la ficha:
   silencio.
 - `obligatorio: false` es un preferido: suma en el ranking, pero no bloquea.
 - `categoria_taxonomia` (opcional) es el ID de la taxonomía de productos de
-  Google, solo dígitos.
+  Google, solo dígitos. Con él, el Guard aplica la categoría: una oferta
+  fuera de esa rama, o más general que ella, escala; dentro de la rama, con
+  el dato solo declarado por el comercio, da aviso. Sin
+  `categoria_taxonomia` no hay chequeo de categoría.
+- **Precio por unidad:** si la oferta declara `quantity` mayor que 1 en
+  `demo.offer_details`, el `amount` del ap2.cart es el total y el Guard lo
+  compara con el precio público por unidad multiplicado por `quantity`. Una
+  oferta con varias unidades y una ficha sin `cantidad` escala.
 - La ficha entera pesa como mucho 32 KB en JSON compacto (sobra para 50
   requisitos); si no, 400 `validacion` en `ficha`.
 - Claves desconocidas en el cuerpo dan 400 `validacion`, con la lista de
@@ -312,6 +319,52 @@ Estados: `creada` → `esperando_contexto` → `negociando` →
 terminales `bloqueada` (lo cortó el filtro) y `vencida` (nadie decidió una
 propuesta a tiempo). Con una compra `bloqueada` o `vencida`, o pasadas 24 h
 desde que se creó, el tráfico A2A da 409: creá otra.
+
+### 5.6 Qué necesita el Guard de tu comercio
+
+- **`ap2.cart`** (AP2 estándar): `cart_id`, `item_label`, `amount` (el total) y
+  `currency`. De ahí toma el Guard el precio, la moneda y el `cart_id` que se
+  cobra.
+- **`demo.offer_details`** (extensión de KaiAI, no es AP2): una entrada por
+  `cart_id` con lo que el comercio **declara**: `sku`, `title`, `brand`,
+  `category`, `use`, `stock`, `sizes` y, si los tiene, `quantity` (unidades),
+  `deliveries` (`[{quantity, date}]`, el cronograma), `gtin`,
+  `categoria_taxonomia` y `atributos` (nombre → `{valor, unidad}`). El
+  texto libre (`description`, `item_label`) no decide nada. Sin esta lista, el
+  Guard no tiene nada declarado: un requisito obligatorio sobre un dato que
+  falta (marca, categoría, uso, talle, un atributo) escala.
+- **Catálogo público por SKU**: `GET <CATALOGO_URL>/products/<sku>` (y, si no
+  alcanza, `GET <CATALOGO_URL>/products`). Es la fuente que verifica precio y
+  datos. Sin catálogo, todo queda "solo declarado" y lo obligatorio escala. Un
+  catálogo que dice ser de otro comercio que el firmado en el checkout no se
+  usa.
+- **Ficha del fabricante por GTIN**: si la oferta trae `gtin`, el proxy consulta
+  la ficha del fabricante (`FABRICANTE_FUENTE`: `fixture` por defecto, rotulado
+  como datos de prueba; `icecat` apagado). Sin ficha, o con falla, lo
+  obligatorio escala.
+
+### 5.7 Probarlo sin LLM: `smoke_v1_general`
+
+`proxy/scripts/smoke_v1_general.py` recorre la integración de punta a punta por
+`/v1`, sin LLM de nuestro lado: crea la compra (`POST /v1/compras`), busca
+(`find_products`) y pide el checkout (`create_checkout`) con `X-Compra-Id`, e
+imprime el `status` del veredicto. Por defecto arma un gateway de prueba en el
+mismo proceso y necesita el comercio y el catálogo levantados (`bash
+deploy/start_all.sh general`, en :8001 y :8011). El `create_checkout` del
+comercio del sample usa su propio LLM (su `GOOGLE_API_KEY`).
+
+```sh
+PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_v1_general \
+    --pedido "un monitor de 27 pulgadas" --tope 400 --categoria 305 --esperado aprobado
+```
+
+Contra un gateway ya levantado: `--gateway http://localhost:8030 --comercio
+merchant_1`, con la clave en `KAIAI_CLAVE` (o `--clave`). `--esperado` sale con
+error si el `status` no es ese.
+
+En esta medición (2026-10-19): una notebook (categoría 328) → `aprobado`; una
+tablet "a tiempo" del comercio general (`general_otra_categoria`) → `escalar`
+por categoría; un pedido en ARS → `bloqueado` por moneda.
 
 ## 6. Referencia de la API
 
