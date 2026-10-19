@@ -182,11 +182,12 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
 - **Resultados del benchmark en git:** se escriben en `results/` (raíz) con
   `--out ../../results`. `.gitignore` no cambia.
 - **Puerto del dashboard:** 8020.
-- **Ficha en vivo:** para la demo se usa la de `scenarios.json` → `intent`
+- **Ficha en vivo:** desde la etapa 3 manda la que confirmó el usuario en el
+  intake (`PROXY_FICHA_DEMO=0`, el default). La de `scenarios.json` → `intent`
   (con `guard.ficha.ficha_desde_intent`: más `attributes` y
-  `google_product_category`; ver la integración de la etapa 2)
-  (`Ficha.desde_intent`), que el dashboard muestra como confirmada. La ficha
-  con LLM es opcional.
+  `google_product_category`) solo se usa con `PROXY_FICHA_DEMO=1` (grabaciones,
+  benchmark por el proxy), y el dashboard la muestra como confirmada solo si
+  el usuario la confirmó.
 - **Imports:** `contracts/`, `guard/`, `proxy/` y `dashboard/` corren con el
   entorno de `world/ap2` y la raíz del repo en el path (`pytest.ini` →
   `pythonpath = .`; el benchmark con `PYTHONPATH=../..`).
@@ -410,9 +411,10 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   (`dashboard.demo_api.MARCAS_GUARD`).
 
 - **Mejoras (2026-10-18, ramas `mejoras/*`):**
-  - **`DEMO_HOY=2026-10-18`:** fija el "hoy" del agente de intención
-    (`deploy/start_all.sh` lo exporta). El Guard no lo usa: los vencimientos
-    del checkout firmado se miran con el reloj de verdad.
+  - **`DEMO_HOY=2026-10-18`:** fija el "hoy" del agente de intención.
+    `deploy/start_all.sh` no lo fija: lo toma solo si viene del entorno o del
+    `.env` (una grabación). El Guard no lo usa: los vencimientos del checkout
+    firmado se miran con el reloj de verdad.
   - **JSONL privado de integradores:** los eventos de compras de integrador van
     a `GUARD_EVENTS_JSONL_PRIVADO` (`.logs/guard_events_privados.jsonl`). El
     JSONL principal, que sirve el replay, no los tiene.
@@ -463,6 +465,29 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     monitores, TV, proyectores, periféricos, almacenamiento, impresoras,
     celulares, consolas, routers, cámaras, muebles de oficina, sillas,
     mochilas, cafeteras, audio y calzado).
+  - **Intake (etapa 3):** lo que el usuario dijo y quedó resuelto no se
+    des-resuelve en el turno siguiente. Acepta un tipo general de producto
+    ("computadoras" es la categoría 278 de la taxonomía). Un día de la semana
+    es el próximo, nunca hoy: dicho un lunes, "el lunes" es el de la semana
+    que viene; en una misma oración, con otra fecha antes, sigue la secuencia
+    (no se corre entre oraciones ni ante "si no"). Un número de cosas ("20
+    computadoras") nunca es el tope.
+  - **Escenarios fijos:** `/demo` los ofrece solo con `DEMO_ESCENARIOS_FIJOS=1`
+    (benchmark, tests y grabaciones). Sin la variable, el selector trae solo
+    los comportamientos del comercio general.
+  - **Sin resultados:** una búsqueda sin ofertas emite `ofertas_recibidas`
+    con `carts: []` y `offer_details: []`, y la corrida termina ("sin
+    resultados").
+  - **Instrucción del shopper:** la búsqueda (`find_products`) conserva todas
+    las restricciones del pedido (cantidad, plazo, tope y especificaciones).
+    Sin eso el agente perdía "para el lunes" y el comercio general no podía
+    planificar las entregas (`world/NOTICE.md`).
+  - **Smoke de `/v1`:** `proxy/scripts/smoke_v1_general.py` prueba una compra
+    de integrador sin LLM de nuestro lado: crea la compra con `POST
+    /v1/compras`, busca y pide el checkout con `X-Compra-Id`, e imprime el
+    `status` del veredicto. Por defecto arma un gateway de prueba en el
+    proceso; con `--gateway` y `KAIAI_CLAVE` apunta a uno ya levantado.
+    `--esperado` sale con error si el status no es ese.
 
 Tests de las carpetas nuevas, desde la raíz:
 
