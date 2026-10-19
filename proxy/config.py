@@ -450,7 +450,8 @@ def verificar_gateway(config: Config, hay_claves: bool) -> None:
         if not es_loopback(config.gateway_host):
             logger.warning(
                 "GATEWAY_HOST=%r no es una interfaz local, pero no hay claves de API "
-                "activas (GATEWAY_CLAVES_ARCHIVO): no se abre el gateway público y se "
+                "activas (GATEWAY_CLAVES_ARCHIVO o GATEWAY_CLAVES_JSON): no se abre el "
+                "gateway público y se "
                 "ignora GATEWAY_HOST.",
                 config.gateway_host,
             )
