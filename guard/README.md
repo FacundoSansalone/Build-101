@@ -172,6 +172,16 @@ escala. Los nombres se canonicalizan con un vocabulario chico de sinónimos
 de características (no un esquema por categoría); dos nombres que caen en el
 mismo con valores distintos son ambiguos y se descartan.
 
+En el `detalle` (y el `motivo`), lo observado va en la unidad del requisito
+y, si hubo que convertir, con la original entre paréntesis:
+"tamano_pantalla 24 in (61 cm) no cumple el obligatorio (27 in)",
+"weight 0.31 kg (310 g) no cumple el preferido (máximo 0.3 kg)"
+(`formatear_en_unidad`: tres cifras significativas, enteros desde 100; con
+la tolerancia de 0,5% lo que no cumple nunca se lee igual a lo pedido). Los
+códigos UN/CEFACT se escriben como símbolos (`E34` → GB, `CMT` → cm). En el
+`Chequeo` de cumplimiento de un atributo con unidad, `esperado` es
+`{valor, unidad}` como `observado` (sin unidad, el valor pedido).
+
 **Fuentes de verdad, en orden** (`guard/fuentes.py`): datos del comprador
 (`ficha`) > fabricante por GTIN (`fabricante`) > página pública del vendedor,
 JSON-LD (`pagina_publica`) > catálogo público > solo declarado. Manda la

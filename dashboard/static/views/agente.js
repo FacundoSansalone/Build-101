@@ -107,7 +107,7 @@ function otrasEsperando(compras, actual, ctx) {
 function vacioAgente(ctx) {
   if (ctx.estado.fuente === "vivo") {
     return vacio(ctx.estado.proxy.conectado === false ? "Proxy desconectado: nuestro agente no ve pedidos" : "Todavía no hay pedidos",
-      h("p", { text: "Cuando el agente del cliente busca algo a través del proxy (:8010), el proxy retiene la búsqueda y nuestro agente te pregunta acá para qué lo necesitás." }),
+      h("p", { text: `Cuando el agente del cliente busca algo a través del proxy (${String(ctx.estado.config.proxy_url).replace(/^https?:\/\//, "")}), el proxy retiene la búsqueda y nuestro agente te pregunta acá para qué lo necesitás.` }),
       h("p", { text: "Sin el flujo levantado: pasá a «Replay (archivo)» arriba." }));
   }
   return vacio("Este replay no tiene conversaciones con nuestro agente",
@@ -136,7 +136,7 @@ function conversacion(c, ctx) {
       c.estado === "negociando" && !intakeTerminado(c)
         ? mensaje("nuestro", {}, h("p", { text: "Estoy revisando tu respuesta…" })) : null,
       intakeTerminado(c) ? bloqueEntendi(c) : null,
-      fichaFinal(c),
+      fichaFinal(c, ctx),
       // Mientras nuestro agente arma el contexto, la búsqueda sigue retenida.
       c.estado === "negociando" && fin !== "armando" && intakeTerminado(c) ? mensaje("sistema", { tono: "neutro" }, h("p", {
         text: SIN_CONTEXTO.has(fin)
@@ -174,12 +174,22 @@ function listaRequisitos(requisitos) {
   ];
 }
 
+// Con intake, lo que entendió nuestro agente no está autorizado hasta que
+// termina (lo inferido, solo si el usuario confirma); sin intake, el pedido
+// explícito es lo autorizado.
+function rotuloRequisitos(c) {
+  if (!tieneIntake(c)) return "Parámetros autorizados (pedido explícito)";
+  return c.intake.final === true
+    ? "Parámetros vigentes: con estos verifica el Guard"
+    : "Lo que entendió nuestro agente (todavía sin autorizar)";
+}
+
 function msjPedido(c) {
   if (!c.pedido && !c.requisitos.length) return null;
   return mensaje("cliente", {},
     c.pedido ? h("blockquote", { class: "msj-pedido" }, h("p", { text: c.pedido })) : null,
     c.requisitos.length
-      ? [h("p", { class: "rotulo", text: "Parámetros autorizados (pedido explícito)" }), listaRequisitos(c.requisitos)]
+      ? [h("p", { class: "rotulo", text: rotuloRequisitos(c) }), listaRequisitos(c.requisitos)]
       : null);
 }
 
@@ -253,9 +263,12 @@ function tablaFicha(parcial) {
 }
 
 /** Cómo terminó el intake: la ficha autorizada (confirmada o no). */
-function fichaFinal(c) {
+function fichaFinal(c, ctx) {
   const i = c.intake;
   if (!i?.final) return null;
+  // Solo si el proxy usa las fichas de los escenarios (PROXY_FICHA_DEMO=1, o
+  // un replay de una grabación): por defecto manda la que confirmó el usuario.
+  const fichaDemo = ctx.estado.fuente === "replay" || ctx.estado.proxy.ficha_demo === true;
   const autorizada = Array.isArray(i.ficha_autorizada) ? i.ficha_autorizada : [];
   const sinGuard = Array.isArray(i.sin_verificar_guard) ? i.sin_verificar_guard : [];
   return mensaje("nuestro", { clase: "msj-ficha" },
@@ -268,11 +281,11 @@ function fichaFinal(c) {
     sinGuard.length ? [
       h("p", { class: "rotulo", text: "Lo anoté, pero el Guard todavía no lo verifica" }),
       listaRequisitos(sinGuard)] : null,
-    // Con un escenario de la demo que trae ficha confirmada, manda esa (la de
-    // arriba, CLAUDE.md → "Ficha en vivo"); la del intake, con un comercio real.
-    c.requisitos.length && c.estado !== "esperando_contexto" && !mismosRequisitos(c.requisitos, autorizada)
+    // Con PROXY_FICHA_DEMO=1 y un escenario fijo que trae ficha confirmada,
+    // manda esa (la de arriba); por defecto, la del intake.
+    fichaDemo && c.requisitos.length && c.estado !== "esperando_contexto" && !mismosRequisitos(c.requisitos, autorizada)
       ? h("p", { class: "aviso t-warn" }, icono("alert"), h("span", {
-        text: "En este escenario de la demo manda la ficha confirmada del escenario (la de arriba). Con un comercio real, manda esta." }))
+        text: "El proxy corre con PROXY_FICHA_DEMO=1: en este escenario de prueba manda la ficha del escenario (la de arriba), no esta." }))
       : null,
     i.mensaje ? h("p", { class: "aviso t-warn" }, icono("alert"), h("span", { text: i.mensaje })) : null,
     i.sin_tiempo ? h("p", { class: "nota", text: "No quedaba tiempo de la llamada para seguir preguntando." }) : null);

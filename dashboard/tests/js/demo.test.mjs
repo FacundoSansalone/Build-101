@@ -86,9 +86,52 @@ const OFERTAS = {
 };
 const VEREDICTO = {
   status: "bloqueado", cart_id_elegido: "cart_4", motivo: "Bloqueado: memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB).",
-  chequeos: [{ tipo: "cumplimiento", resultado: "bloquea", campo: "atributo:memoria_ram", esperado: 16,
+  chequeos: [{ tipo: "cumplimiento", resultado: "bloquea", campo: "atributo:memoria_ram", esperado: { valor: 16, unidad: "GB" },
     observado: { valor: "8", unidad: "GB" }, origen: "fabricante", detalle: "memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)." }],
 };
+const VACIO = { carts: [], offer_details: [] };
+
+test("el hallazgo muestra lo real en la unidad de lo pedido", () => {
+  const pantalla = {
+    status: "bloqueado", cart_id_elegido: "cart_4", motivo: "Bloqueado: …",
+    chequeos: [{ tipo: "cumplimiento", resultado: "bloquea", campo: "atributo:tamano_pantalla",
+      esperado: { valor: 27, unidad: "in" }, observado: { valor: 61, unidad: "cm" }, origen: "fabricante", detalle: "…" }],
+  };
+  const items = lineaDeTiempo([ev("ofertas_recibidas", OFERTAS), ev("veredicto", { veredicto: pantalla }),
+    ev("bloqueado", { status: "bloqueado", cart_id: "cart_4" })], [], null);
+  const r = resultadoCorrida(items, { escenario: "general_dato_falso", guardActivo: true });
+  assert.deepEqual(r.hallazgo, { atributo: "Pantalla", real: "24 in (61 cm)", pedido: "27 in" });
+  // Un veredicto viejo (lo pedido sin unidad) no inventa la unidad de lo observado.
+  const viejo = { ...pantalla, chequeos: [{ ...pantalla.chequeos[0], esperado: 27 }] };
+  const items2 = lineaDeTiempo([ev("veredicto", { veredicto: viejo }), ev("bloqueado", { status: "bloqueado" })], [], null);
+  assert.deepEqual(resultadoCorrida(items2, { escenario: "x", guardActivo: true }).hallazgo,
+    { atributo: "Pantalla", real: "61 cm", pedido: "27" });
+});
+
+test("sin resultados: la corrida termina con un estado claro", () => {
+  const items = (...evs) => lineaDeTiempo(evs, [], null);
+  const fin = desenlace(items(ev("busqueda_enviada", { catalog_search: "un monitor" }),
+    ev("ofertas_recibidas", VACIO), ev("reenviado", { metodo: "find_products" })));
+  assert.equal(fin.clave, "sin_resultados");
+  assert.equal(fin.texto, "El comercio no tiene nada que cumpla tu pedido");
+  assert.equal(fin.tono, "aviso");
+  // Si después encuentra algo (otra búsqueda) o elige una oferta de antes, la corrida sigue.
+  assert.equal(desenlace(items(ev("ofertas_recibidas", VACIO), ev("ofertas_recibidas", OFERTAS))), null);
+  assert.equal(desenlace(items(ev("ofertas_recibidas", OFERTAS), ev("ofertas_recibidas", VACIO),
+    ev("checkout_pedido", { cart_id: "cart_4" }))), null);
+  // Lo último que pasó manda.
+  assert.equal(desenlace(items(ev("ofertas_recibidas", OFERTAS), ev("bloqueado", { status: "bloqueado" }),
+    ev("ofertas_recibidas", VACIO))).clave, "sin_resultados");
+  assert.equal(desenlace(items(ev("ofertas_recibidas", VACIO), ev("bloqueado", { etapa: "seguridad" }))).clave, "cortada");
+
+  const con = resultadoCorrida(items(ev("ofertas_recibidas", VACIO)), { escenario: "general_sin_resultados", guardActivo: true });
+  assert.deepEqual(con, { escenario: "general_sin_resultados", guardActivo: true, clave: "sin_resultados",
+    producto: null, precio: null, moneda: null, hallazgo: null });
+  const sin = { ...con, guardActivo: false };
+  assert.deepEqual(resumenComparacion(sin, con), {
+    sin: "El comercio no tiene nada que cumpla tu pedido", con: "El comercio no tiene nada que cumpla tu pedido" });
+  assert.deepEqual(tonosComparacion(sin, con), { sin: "neutro", con: "neutro" });
+});
 
 test("desenlace de cada corrida", () => {
   // Los eventos del proxy traen contexto_id; los mensajes de la demo, no.

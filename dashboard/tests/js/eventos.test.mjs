@@ -3,8 +3,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  agruparCompras, cartIdElegido, describirEvento, estadoCompra, fusionarEventos,
-  mandatosDe, montoCheckout, parLadoALado, partirTextoLibre, topeDeFicha, aJsonl,
+  agruparCompras, cartIdElegido, describirEvento, escenarioDelMomento, estadoCompra, fichaVigente,
+  fusionarEventos, mandatosDe, montoCheckout, parLadoALado, partirTextoLibre, topeDeFicha, aJsonl,
 } from "../../static/lib/eventos.js";
 
 let n = 0;
@@ -70,6 +70,60 @@ test("compra bloqueada con Guard: elegido, estado y guard del momento de la deci
   assert.equal(cartIdElegido(c), "cart_1");
   assert.equal(estadoCompra(c).clave, "bloqueado");
   assert.equal(montoCheckout(c.checkout), 149);
+});
+
+test("la ficha que se muestra: el recibo, la del intake o, solo con ficha_demo, la del escenario", () => {
+  const recibo = { pedido_original: "p", requisitos: [{ campo: "precio" }], confirmada: true };
+  const escenario = { pedido_original: "zapatillas", requisitos: [{ campo: "talle" }], confirmada: true };
+  const tope = { campo: "precio", operador: "maximo", valor: 400, obligatorio: true };
+  const delIntake = { compra_id: "cmp-1", pedido: "un monitor de 27", requisitos: [tope],
+    intake: { final: true, confirmada: true } };
+  const conRecibo = { veredicto: { recibo: { ficha: recibo } } };
+
+  // El recibo manda siempre: es la que usó el Guard.
+  assert.deepEqual(fichaVigente({ compra: conRecibo, compraAgente: delIntake, fichaDemo: true, fichaEscenario: escenario }),
+    { ficha: recibo, fuente: "recibo" });
+  // Con PROXY_FICHA_DEMO=0 (por defecto) la del escenario no se muestra: el proxy no la usa.
+  const intake = fichaVigente({ compra: {}, compraAgente: delIntake, fichaDemo: false, fichaEscenario: escenario });
+  assert.equal(intake.fuente, "intake");
+  assert.deepEqual(intake.ficha, { pedido_original: "un monitor de 27", requisitos: [tope],
+    criterio: "lowest_price_among_compliant", confirmada: true });
+  assert.deepEqual(fichaVigente({ compra: {}, fichaDemo: false, fichaEscenario: escenario }), { ficha: null, fuente: null });
+  assert.deepEqual(fichaVigente({ fichaEscenario: escenario }), { ficha: null, fuente: null }); // sin dato del proxy
+  // Con PROXY_FICHA_DEMO=1, la del escenario manda sobre la del intake (como en el proxy).
+  assert.deepEqual(fichaVigente({ compra: {}, compraAgente: delIntake, fichaDemo: true, fichaEscenario: escenario }),
+    { ficha: escenario, fuente: "escenario" });
+  // Sin confirmar en el intake: se muestra como sin confirmar.
+  const sinConfirmar = fichaVigente({ compraAgente: { ...delIntake, intake: { final: false } } });
+  assert.equal(sinConfirmar.ficha.confirmada, false);
+});
+
+test("el momento clave sigue a la compra más nueva salvo que se elija un escenario", () => {
+  const evs = [
+    ev("busqueda_enviada", { contexto_id: "ctx-viejo", escenario: "B" }),
+    ev("busqueda_enviada", { contexto_id: "ctx-nuevo", escenario: "general_dato_falso" }),
+  ];
+  const { compras } = agruparCompras(evs);
+  assert.equal(escenarioDelMomento({ compras, porDefecto: "baseline" }), "general_dato_falso");
+  assert.equal(escenarioDelMomento({ elegido: "B", compras, porDefecto: "baseline" }), "B");
+  assert.equal(escenarioDelMomento({ compras: [], porDefecto: "baseline" }), "baseline");
+  assert.equal(escenarioDelMomento({ compras: [{ escenario: null }], porDefecto: "baseline" }), "baseline");
+});
+
+test("una búsqueda sin resultados termina la compra (no queda en curso)", () => {
+  const vacio = { carts: [], offer_details: [] };
+  const evs = [
+    ev("busqueda_enviada", { contexto_id: "ctx-v", datos: { catalog_search: "un monitor" } }),
+    ev("ofertas_recibidas", { contexto_id: "ctx-v", datos: vacio }),
+    ev("reenviado", { contexto_id: "ctx-v", datos: { metodo: "find_products" } }),
+  ];
+  let [c] = agruparCompras(evs).compras;
+  assert.deepEqual(estadoCompra(c), { clave: "sin_resultados", texto: "Sin resultados: el comercio no tiene nada que cumpla el pedido" });
+  assert.equal(describirEvento(evs[1]).resumen, "Sin resultados: 0 carritos (ap2.cart)");
+  // Si después pide el checkout de una oferta de antes, sigue.
+  evs.push(ev("checkout_pedido", { contexto_id: "ctx-v", datos: { cart_id: "cart_1" } }));
+  [c] = agruparCompras(evs).compras;
+  assert.equal(estadoCompra(c).clave, "en_curso");
 });
 
 test("compra sin Guard: checkout reenviado y después mandatos firmados", () => {

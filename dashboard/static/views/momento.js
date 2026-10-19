@@ -1,6 +1,8 @@
-// Vista 1: el momento clave, escenario B lado a lado (DEMO.md).
+// Vista 1: el momento clave, la misma compra sin y con Guard lado a lado
+// (DEMO.md). Sigue al escenario (o comportamiento del comercio) de la compra
+// más nueva hasta que se elige uno.
 
-import { estadoCompra, mandatosDe, parLadoALado } from "../lib/eventos.js";
+import { escenarioDelMomento, estadoCompra, mandatosDe, parLadoALado } from "../lib/eventos.js";
 import {
   chipGuard, dinero, h, icono, leyendaTextoLibre, tarjeta, textoLibre, vacio, vistaJson, vistaJws,
 } from "./comunes.js";
@@ -13,9 +15,15 @@ import {
 const FRASE_1 = "Todas las firmas son válidas y AP2 aprobó todo.";
 const FRASE_2 = "Y aun así el usuario compró algo que no quería.";
 
+function escenarioDe(ctx) {
+  return escenarioDelMomento({
+    elegido: ctx.estado.escenarioMomentoElegido, compras: ctx.compras, porDefecto: ctx.estado.escenarioMomento,
+  });
+}
+
 export function renderMomento(raiz, ctx) {
   const { estado } = ctx;
-  const esc = estado.escenarioMomento;
+  const esc = escenarioDe(ctx);
   const delEscenario = ctx.compras.filter((c) => c.escenario === esc);
   const par = parLadoALado(ctx.compras, esc);
   const buscar = (id) => delEscenario.find((c) => c.contextoId === id) ?? null;
@@ -46,7 +54,7 @@ export function renderMomento(raiz, ctx) {
       h("h2", { class: "frase" }, FRASE_1, " ", h("em", { text: FRASE_2 })),
       h("div", { class: "filtros" },
         h("label", { class: "campo" }, h("span", { text: "Escenario" }),
-          h("select", { name: "escenario", onchange: (e) => ctx.set({ escenarioMomento: e.target.value, momentoSin: null, momentoCon: null }) },
+          h("select", { name: "escenario", onchange: (e) => ctx.set({ escenarioMomentoElegido: e.target.value, momentoSin: null, momentoCon: null }) },
             escenarios.map((s) => h("option", { value: s, selected: s === esc ? true : null, text: s })))),
         selectorCompra(false, sin, "momentoSin"),
         selectorCompra(true, con, "momentoCon"))),
@@ -70,13 +78,14 @@ function lineaFirma(tono, iconoNombre, texto) {
 }
 
 function sinCompra(activo, ctx, fixture) {
+  const esc = escenarioDe(ctx);
   const instruccion = ctx.estado.fuente === "vivo"
-    ? `En vivo: ${activo ? "prendé" : "apagá"} el Guard con el interruptor de arriba y hacé la compra del escenario ${ctx.estado.escenarioMomento}.`
+    ? `En vivo: ${activo ? "prendé" : "apagá"} el Guard con el interruptor de arriba y hacé la misma compra (escenario ${esc}).`
     : "Elegí otro archivo de replay o pasá a «En vivo (proxy)».";
   const cart = fixture?.carts?.find((c) => c.cart_id === fixture?.expected?.attack_target_cart_id);
   const producto = (ctx.catalogo?.products || []).find((p) => p.sku === fixture?.attack?.target_sku);
   return h("div", { class: "col-vacia" },
-    vacio(`Todavía no hay una compra del escenario ${ctx.estado.escenarioMomento} con el Guard ${activo ? "prendido" : "apagado"}.`,
+    vacio(`Todavía no hay una compra del escenario ${esc} con el Guard ${activo ? "prendido" : "apagado"}.`,
       h("p", { text: instruccion })),
     cart ? tarjeta({ titulo: "Lo que manda el comercio en este escenario", subtitulo: `Fixture exportado por world/ (fixtures/scenario_${fixture.scenario}.json): no es una compra en vivo`, clase: "tarjeta-fixture" },
       vistaJson(cart, { resaltar: { item_label: (t) => textoLibre(t, producto ? [producto.title, producto.description] : []) } }),

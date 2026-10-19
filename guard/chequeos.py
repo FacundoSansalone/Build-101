@@ -35,7 +35,13 @@ from __future__ import annotations
 from typing import Any
 
 from contracts import Chequeo, Evidencia, Ficha, Oferta, Origen, Politica, Requisito, ValorAtributo
-from guard.atributos import clave_atributo, comparar, formatear_atributo, mostrable_declarado
+from guard.atributos import (
+    clave_atributo,
+    comparar,
+    formatear_atributo,
+    formatear_en_unidad,
+    mostrable_declarado,
+)
 from guard.fuentes import ORIGENES_INDEPENDIENTES, nombre_fuente
 from guard.normalizar import (
     EPSILON_MONTO,
@@ -372,10 +378,19 @@ def _chequeo_requisito(
         resultado=resultado,
         detalle=detalle,
         campo=clave if requisito.campo == "atributo" else requisito.campo,
-        esperado=requisito.valor,
+        esperado=_esperado(requisito) if es_atributo else requisito.valor,
         observado=acotar_atributo(observado) if es_atributo else acotar(observado),
         origen=origen_del_campo(clave if requisito.campo == "atributo" else requisito.campo, oferta),
     )
+
+
+def _esperado(requisito: Requisito) -> Any:
+    """Lo pedido de un atributo. Con unidad va como `observado`, `{valor,
+    unidad}` ({"valor": 27, "unidad": "in"}): sin la unidad no se puede leer
+    (61 cm contra "27"). Sin unidad (booleano, enumerado, conjunto), el valor."""
+    if requisito.unidad is None or isinstance(requisito.valor, (dict, list, tuple)):
+        return requisito.valor
+    return acotar_atributo(ValorAtributo(valor=requisito.valor, unidad=requisito.unidad))
 
 
 def _mostrable(requisito: Requisito, oferta: Oferta, observado: Any) -> Any:
@@ -688,7 +703,11 @@ def _detalle_atributo(
     referencia: str,
     pedido: str,
 ) -> str:
-    """Ej.: "memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)"."""
+    """Ej.: "memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)".
+
+    Lo observado va en la unidad del requisito y, si hubo que convertir, con
+    la original entre paréntesis: "tamano_pantalla 24 in (61 cm) no cumple el
+    obligatorio (27 in)"."""
     nombre = nombre_campo(clave_evidencia(requisito))
     if resultado_cumple is None:
         return f"{nombre}: sin dato para comparar con {referencia} ({pedido})."
@@ -696,7 +715,10 @@ def _detalle_atributo(
         if resultado_cumple:
             return f"{nombre}: lo que indica el comercio cumple {referencia} ({pedido})."
         return f"{nombre}: lo que indica el comercio no cumple {referencia} ({pedido})."
-    valor = observado if isinstance(observado, str) else formatear_atributo(observado)
+    valor = (
+        observado if isinstance(observado, str)
+        else formatear_en_unidad(observado, requisito.unidad)
+    )
     if valor in ("sí", "no"):  # "cancelacion_ruido (no) no cumple...", no "no no cumple"
         valor = f"({valor})"
     verbo = "cumple" if resultado_cumple else "no cumple"

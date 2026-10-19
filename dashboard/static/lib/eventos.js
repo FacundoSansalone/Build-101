@@ -219,7 +219,23 @@ export function estadoCompra(compra) {
     return { clave: "para_firmar", texto: "Checkout presentado para firmar" };
   }
   if (compra.errores.length > 0) return { clave: "error", texto: "Error en el proxy" };
+  if (terminoSinResultados(compra.eventos)) {
+    return { clave: "sin_resultados", texto: "Sin resultados: el comercio no tiene nada que cumpla el pedido" };
+  }
   return { clave: "en_curso", texto: "En curso" };
+}
+
+/**
+ * ¿Lo último de la compra es una búsqueda que el comercio terminó sin nada?
+ * (`ofertas_recibidas` con `carts: []`, sin ofertas ni checkout después).
+ */
+function terminoSinResultados(eventos) {
+  for (let i = (eventos || []).length - 1; i >= 0; i--) {
+    const e = eventos[i];
+    if (e.tipo === "checkout_pedido") return false;
+    if (e.tipo === "ofertas_recibidas") return Array.isArray(e.datos?.carts) && e.datos.carts.length === 0;
+  }
+  return false;
 }
 
 /**
@@ -283,6 +299,50 @@ export function parLadoALado(compras, escenario) {
 export function topeDeFicha(ficha) {
   const r = (ficha?.requisitos || []).find((q) => q.campo === "precio" && q.operador === "maximo");
   return typeof r?.valor === "number" ? r.valor : null;
+}
+
+const esObjeto = (x) => Boolean(x) && typeof x === "object" && !Array.isArray(x);
+
+/**
+ * El escenario del "Momento clave": el que eligió el usuario o, si no eligió,
+ * el de la compra más nueva (con el comercio general, el comportamiento de
+ * esa corrida); sin compras, el de por defecto (un fixture). `compras`, de
+ * la más nueva a la más vieja (agruparCompras).
+ */
+export function escenarioDelMomento({ elegido = null, compras = [], porDefecto = null } = {}) {
+  if (elegido) return elegido;
+  return (compras || []).find((c) => typeof c?.escenario === "string" && c.escenario)?.escenario ?? porDefecto;
+}
+
+/**
+ * La ficha de una compra que muestra el panel, y de dónde sale: {ficha, fuente}.
+ * Sigue el orden del proxy (`proxy.ficha_de`):
+ * - "recibo": la que usó el Guard (`veredicto.recibo.ficha`). Manda siempre.
+ * - "escenario": la del escenario de la demo, solo si el proxy la usa
+ *   (`GET /guard/state` → `ficha_demo`, PROXY_FICHA_DEMO=1).
+ * - "intake": la que armó nuestro agente con el usuario (los requisitos
+ *   vigentes de la compra en GET /guard/compras), confirmada solo si el
+ *   usuario la confirmó.
+ * - null: ninguna todavía. Con `ficha_demo` apagado (el default) o sin dato
+ *   del proxy, la del escenario nunca se muestra como la de la compra.
+ */
+export function fichaVigente({ compra = null, compraAgente = null, fichaDemo = false, fichaEscenario = null } = {}) {
+  const recibo = compra?.veredicto?.recibo?.ficha;
+  if (esObjeto(recibo)) return { ficha: recibo, fuente: "recibo" };
+  if (fichaDemo === true && esObjeto(fichaEscenario)) return { ficha: fichaEscenario, fuente: "escenario" };
+  const requisitos = Array.isArray(compraAgente?.requisitos) ? compraAgente.requisitos : [];
+  if (requisitos.length) {
+    return {
+      ficha: {
+        pedido_original: typeof compraAgente.pedido === "string" ? compraAgente.pedido : "",
+        requisitos,
+        criterio: "lowest_price_among_compliant",
+        confirmada: compraAgente.intake?.confirmada === true,
+      },
+      fuente: "intake",
+    };
+  }
+  return { ficha: null, fuente: null };
 }
 
 /** Monto del checkout firmado (centavos del JWT → unidades), o del evento. */
@@ -416,7 +476,10 @@ export function describirEvento(e) {
     case "busqueda_enviada": resumen = d.catalog_search ?? ""; break;
     case "ofertas_recibidas": {
       const n = (d.carts || []).length;
-      resumen = `${n} ${n === 1 ? "carrito" : "carritos"} (ap2.cart) y ${(d.offer_details || []).length} fichas declaradas`;
+      // Vacío: el proxy lo emite cuando el comercio terminó la búsqueda sin nada.
+      resumen = Array.isArray(d.carts) && n === 0
+        ? "Sin resultados: 0 carritos (ap2.cart)"
+        : `${n} ${n === 1 ? "carrito" : "carritos"} (ap2.cart) y ${(d.offer_details || []).length} fichas declaradas`;
       break;
     }
     case "checkout_pedido": resumen = `cart_id ${d.cart_id ?? "—"}`; break;

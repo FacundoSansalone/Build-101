@@ -197,6 +197,10 @@ function pasoProxy(e, item) {
     case "ofertas_recibidas":
       if (!on) return [flujo("comercio", "agente")];
       e.etapas.filtro = "trabajando";
+      // El proxy retiene la búsqueda hasta que nuestro agente termina de
+      // preguntar: si el comercio ya respondió, la intención no sigue
+      // "revisando" (el «sí» del usuario puede quedar con una hora posterior).
+      if (e.etapas.intencion === "trabajando") e.etapas.intencion = "ok";
       return [flujo("comercio", "guard")];
     case "reenviado":
       if (d.mandatos) {

@@ -21,6 +21,9 @@ const NOMBRES_ATRIBUTO = {
 
 const NOMBRES_CAMPO = { ...CAMPOS, titulo: "Título", sku: "SKU", gtin: "GTIN" };
 
+/** El comercio terminó la búsqueda sin carts (`ofertas_recibidas` vacío del proxy). */
+export const SIN_RESULTADOS = "El comercio no tiene nada que cumpla tu pedido";
+
 const FUENTES = {
   fabricante: "el fabricante",
   catalogo_publico: "el catálogo público",
@@ -69,16 +72,94 @@ function nombreCampo(campo) {
   return NOMBRES_CAMPO[c] ?? humanizarAtributo(c);
 }
 
+const esMedida = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v) && "valor" in v;
+
 /** {valor: "8", unidad: "GB"} → "8 GB"; "N"/"Y" y booleanos → "no"/"sí". */
 export function formatearMedida(v) {
-  if (v && typeof v === "object" && !Array.isArray(v) && "valor" in v) {
-    const valor = formatearMedida(v.valor);
-    return v.unidad ? `${valor} ${v.unidad}` : valor;
+  if (esMedida(v)) {
+    const valor = typeof v.valor === "number" && Number.isFinite(v.valor) ? numeroLegible(v.valor) : formatearMedida(v.valor);
+    return v.unidad ? `${valor} ${unidadLegible(v.unidad)}` : valor;
   }
   if (v === true || v === "Y") return "sí";
   if (v === false || v === "N") return "no";
   if (v === null || v === undefined) return "—";
   return formatearValor(null, v);
+}
+
+// Unidades por dimensión, con su factor a la de base: las mismas que
+// guard/atributos.py (_DIMENSIONES). Acá solo sirven para mostrar; la
+// comparación la hace el Guard con los números sin redondear.
+const DIMENSIONES = {
+  datos: {
+    b: 1, byte: 1, bytes: 1, ad: 1, kb: 1e3, "2p": 1e3, mb: 1e6, "4l": 1e6, gb: 1e9, e34: 1e9, tb: 1e12, e35: 1e12,
+    kib: 2 ** 10, mib: 2 ** 20, gib: 2 ** 30, tib: 2 ** 40,
+  },
+  longitud: {
+    mm: 1e-3, mmt: 1e-3, cm: 1e-2, cmt: 1e-2, m: 1, mtr: 1, in: 0.0254, inh: 0.0254, inch: 0.0254, inches: 0.0254,
+    '"': 0.0254, "″": 0.0254, pulgada: 0.0254, pulgadas: 0.0254, pulg: 0.0254,
+  },
+  masa: {
+    mg: 1e-6, mgm: 1e-6, g: 1e-3, gr: 1e-3, grm: 1e-3, kg: 1, kgm: 1,
+    lb: 0.45359237, lbs: 0.45359237, lbr: 0.45359237, oz: 0.028349523125, onz: 0.028349523125,
+  },
+  tiempo: {
+    s: 1, sec: 1, seg: 1, min: 60, h: 3600, hr: 3600, hrs: 3600, hur: 3600, hora: 3600, horas: 3600, hour: 3600, hours: 3600,
+  },
+};
+const UNIDADES = new Map(Object.entries(DIMENSIONES).flatMap(([dim, us]) =>
+  Object.entries(us).map(([u, factor]) => [u, [dim, factor]])));
+// Códigos UN/CEFACT (unitCode de schema.org) y signos, como se leen.
+const SIMBOLOS = {
+  ad: "B", "2p": "kB", "4l": "MB", e34: "GB", e35: "TB", mmt: "mm", cmt: "cm", mtr: "m", inh: "in", '"': "in", "″": "in",
+  mgm: "mg", grm: "g", kgm: "kg", lbr: "lb", onz: "oz", hur: "h",
+};
+const claveUnidad = (u) => String(u).trim().toLowerCase().replace(/\.+$/, "");
+const NUMERO_CON_UNIDAD = /^\s*(-?\d+(?:[.,]\d+)?)\s*([^\d\s][^\d]{0,15})?\s*$/;
+const CIFRAS_CONVERTIDO = 3;
+
+/** "E34" → "GB", "CMT" → "cm", '"' → "in"; una que no es código, tal cual. */
+export function unidadLegible(u) {
+  return SIMBOLOS[claveUnidad(u)] ?? String(u).trim();
+}
+
+function numeroLegible(n) {
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(6)));
+}
+
+/** Tres cifras significativas (enteros desde 100), como el Guard: 24,0157 → "24". */
+function aproximado(n) {
+  if (n === 0) return "0";
+  const decimales = Math.max(0, CIFRAS_CONVERTIDO - 1 - Math.floor(Math.log10(Math.abs(n))));
+  return numeroLegible(Number(n.toFixed(decimales)));
+}
+
+/** [número, unidad] de una medida ({valor: 61, unidad: "cm"} o {valor: "61 cm"}), o null. */
+function cantidadDe(v) {
+  if (typeof v.valor === "number" && Number.isFinite(v.valor)) return [v.valor, v.unidad ?? null];
+  if (typeof v.valor !== "string") return null;
+  if (v.unidad && /^\s*-?\d+(?:\.\d+)?\s*$/.test(v.valor)) return [Number(v.valor), v.unidad];
+  const m = v.unidad ? null : NUMERO_CON_UNIDAD.exec(v.valor);
+  return m ? [Number(m[1].replace(",", ".")), m[2] ?? null] : null;
+}
+
+/**
+ * Una medida en la unidad de lo pedido y, si hubo que convertir, la original
+ * entre paréntesis: ({valor: 61, unidad: "cm"}, "in") → "24 in (61 cm)". La
+ * misma unidad con otro nombre ("E34", "pulgadas") va con la de lo pedido. Si
+ * no se puede convertir (sin unidad, otra dimensión, unidad desconocida),
+ * igual que formatearMedida.
+ */
+export function medidaEnUnidad(v, unidad) {
+  const original = formatearMedida(v);
+  if (!esMedida(v) || typeof unidad !== "string" || !unidad.trim()) return original;
+  const cantidad = cantidadDe(v);
+  if (!cantidad || !cantidad[1]) return original;
+  const [n, desde] = cantidad;
+  const origen = UNIDADES.get(claveUnidad(desde)) ?? [`unidad:${claveUnidad(desde)}`, 1];
+  const destino = UNIDADES.get(claveUnidad(unidad)) ?? [`unidad:${claveUnidad(unidad)}`, 1];
+  if (origen[0] !== destino[0]) return original;
+  if (origen[1] === destino[1]) return `${numeroLegible(n)} ${unidadLegible(unidad)}`;
+  return `${aproximado((n * origen[1]) / destino[1])} ${unidadLegible(unidad)} (${original})`;
 }
 
 /** Texto del agente sin markdown, en una línea y recortado. */
@@ -243,7 +324,9 @@ function lineasVeredicto(item, d) {
     c?.tipo === "evidencia" && c.resultado !== "ok" && FUENTES[c.origen] && c.campo !== "titulo" &&
     c.esperado !== null && c.esperado !== undefined && c.observado !== null && c.observado !== undefined);
   contrastes.slice(0, 2).forEach((c, i) => {
-    out.push(linea(item, `${nombreCampo(c.campo)}: ${FUENTES[c.origen]} dice ${formatearMedida(c.esperado)}; el comercio declaró ${formatearMedida(c.observado)}`,
+    // La fuente, en la unidad que declaró el comercio: "dice 24 in (61 cm); declaró 27 in".
+    const unidad = esMedida(c.observado) ? c.observado.unidad : null;
+    out.push(linea(item, `${nombreCampo(c.campo)}: ${FUENTES[c.origen]} dice ${medidaEnUnidad(c.esperado, unidad)}; el comercio declaró ${formatearMedida(c.observado)}`,
       "aviso", "guard", { sufijo: `-f${i}` }));
   });
   const bloquea = (v.chequeos || []).find((c) => c?.resultado === "bloquea");
@@ -464,6 +547,8 @@ function lineasDeEventoSolo(item, ctx) {
     case "ofertas_recibidas": {
       registrarOfertas(ctx, d);
       const n = (d.carts || []).length;
+      // El proxy lo emite vacío cuando el comercio terminó la búsqueda sin nada.
+      if (n === 0) return [linea(item, SIN_RESULTADOS, "aviso", "comercio")];
       return [linea(item, `El comercio respondió con ${n} ${n === 1 ? "oferta" : "ofertas"}`, "neutro", "comercio")];
     }
     case "reenviado": {

@@ -40,6 +40,20 @@ test("con el Guard prendido, la búsqueda pasa por él y el filtro revisa", () =
   assert.deepEqual(flujos(r), ["agente>usuario"]);
 });
 
+test("la respuesta del comercio cierra la etapa de intención aunque el «sí» llegue después del evento", () => {
+  // Orden real (/demo): el proxy registra la confirmación y el mensaje del
+  // usuario queda con una hora apenas posterior. La búsqueda vuelve recién
+  // cuando nuestro agente terminó de preguntar: al terminar, no "revisa".
+  let r = paso(estadoInicial(true), ev("pedido_detectado", { compra_id: "c", pregunta: "¿Confirmás?" }));
+  r = paso(r.estado, ev("contexto_registrado", { compra_id: "c", final: true, confirmada: true }));
+  r = paso(r.estado, msg("usuario", { texto: "sí", destino: "confirmar" }));
+  assert.equal(r.estado.etapas.intencion, "trabajando");
+  r = paso(r.estado, ev("ofertas_recibidas", { carts: [], offer_details: [] }));
+  assert.equal(r.estado.etapas.intencion, "ok");
+  r = paso(r.estado, ev("reenviado", { metodo: "find_products" }));
+  assert.equal(r.estado.guard, "ok");
+});
+
 test("sin herramienta previa (replay), la búsqueda dibuja los dos tramos", () => {
   const r = paso(estadoInicial(true), ev("busqueda_enviada", { catalog_search: "x" }));
   assert.deepEqual(flujos(r), ["agente>guard", "guard>comercio"]);

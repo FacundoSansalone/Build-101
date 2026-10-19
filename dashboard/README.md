@@ -1,6 +1,6 @@
 # dashboard/ (Dev 3)
 
-Panel de la demo de KaiAI: el **escenario B lado a lado**, el flujo de
+Panel de la demo de KaiAI: **la misma compra sin y con Guard lado a lado**, el flujo de
 cada compra, el veredicto con sus chequeos, el recibo firmado (verificado en el
 navegador), la ficha del pedido, el gráfico del benchmark "de X% a Y%" y, en la
 etapa 2, la conversación con **nuestro agente** (vista Agente).
@@ -119,13 +119,20 @@ queda como "Detalle técnico" (`/`).
   Guard (verificado en `proxy/app.py`: todo depende de `guard_activo`); el
   diagrama baja al Guard atenuado y los mensajes van directo agente ↔
   comercio; el relato lo dice en una línea.
+- **Sin resultados**: si el comercio termina la búsqueda sin carts, el proxy
+  emite `ofertas_recibidas` con `carts: []` y la corrida termina con "El
+  comercio no tiene nada que cumpla tu pedido" (relato, historial y
+  contraste; en el panel, "Sin resultados"). Si después el agente busca otra
+  cosa y encuentra, o pide el checkout de una oferta de antes, sigue.
 - **Con y sin intermediario**: al terminar una corrida (pagada, frenada,
-  cortada, retenida, vencida) se guarda su resultado **por comportamiento del
-  comercio, pedido y lado** en `localStorage` (`psg.demo.contraste`, las 40
-  más nuevas; el pedido se compara sin mayúsculas, tildes ni puntuación) y se
-  muestra lado a lado cuando volvés a hacer el mismo pedido al mismo
-  comportamiento ("Se compró Zento Slim 14, con 8 GB de memoria RAM (pediste
-  16 GB)" / "Frenada antes de la firma: no se pagó nada"). `/demo/clasico`
+  cortada, retenida, vencida, sin resultados) se guarda su resultado **por
+  comportamiento del comercio, pedido y lado** en `localStorage`
+  (`psg.demo.contraste`, las 40 más nuevas; el pedido se compara sin
+  mayúsculas, tildes ni puntuación) y se muestra lado a lado cuando volvés a
+  hacer el mismo pedido al mismo comportamiento ("Se compró Zento Slim 14,
+  con 8 GB de memoria RAM (pediste 16 GB)" / "Frenada antes de la firma: no
+  se pagó nada"). Lo real va en la unidad de lo pedido ("con 24 in (61 cm) de
+  pantalla (pediste 27 in)"), igual que el motivo del Guard. `/demo/clasico`
   sigue guardando por escenario en `psg.demo.comparacion`.
 - **Replay (plan B)**: en `/demo/clasico`, el selector "Grabación…"
   reproduce un `.jsonl` de `dashboard/demo/` o `.logs/` con el mismo
@@ -171,7 +178,9 @@ Lógica sin DOM (la vista solo la pinta; testeada con `node --test`):
   confirmarla), `filasFicha(ficha_parcial, {categoriaRuta})` → `[{nombre,
   valor, marca, tono, preferido}]`, `rutaCategoria(ruta)`,
   `textoEntendido(contexto)`, `resumirAgente`, `limpiarTexto`,
-  `humanizarAtributo`, `formatearMedida`.
+  `humanizarAtributo`, `formatearMedida`, `medidaEnUnidad(medida, unidad)`
+  ("24 in (61 cm)"; las mismas unidades que `guard/atributos.py`, solo para
+  mostrar) y `unidadLegible` (`E34` → GB).
 - `lib/diagrama.js`: `geometria("horizontal"|"vertical")` (nodos, paths de
   las aristas, cuánto se corre el Guard apagado), `estadoInicial`,
   `paso(estado, item)` → `{estado, flujos: [{de, a, tono, clave,
@@ -210,7 +219,7 @@ El resto sale de archivos del repo:
 | Qué | De dónde |
 |---|---|
 | Resultados del benchmark | `results/*.json` y después `world/ap2/results/*.json`. Por defecto, el más nuevo con `meta.guard` no nulo; si no hay, el más nuevo |
-| Ficha del pedido | `fixtures/scenario_<X>.json` → `intent`, con `Ficha.desde_intent()` del contrato; si la compra trae recibo, la ficha del recibo |
+| Ficha del pedido | Como la usa el proxy (`lib/eventos.js` → `fichaVigente`): si la compra trae recibo, la del recibo; si no, la del escenario (`fixtures/scenario_<X>.json` → `intent`, con `Ficha.desde_intent()`) **solo** si el proxy corre con `PROXY_FICHA_DEMO=1` (`GET /guard/state` → `ficha_demo`) o en un replay; si no, la que armó nuestro agente con el usuario (los requisitos vigentes de `GET /guard/compras`, confirmada solo si el usuario la confirmó), o ninguna. Con `PROXY_FICHA_DEMO=0`, el default, un fixture se ve solo si se elige a mano y va rotulado ("el proxy no la usa") |
 | Catálogo público | `fixtures/public_catalog.json` (para marcar qué parte del texto libre no figura en el catálogo y nombrar lo que se compró) |
 | Clave pública del Guard | `GET {proxy}/guard/public-key`; si el proxy no responde, la parte pública de `.temp-db/guard_signing_key.pem`, o `dashboard/demo/guard_public_key.json` |
 
@@ -326,8 +335,9 @@ avisa que esa capa está apagada.
 
 ## Qué se ve en cada vista
 
-1. **Momento clave.** Escenario B (se puede cambiar) en dos columnas con los
-   mismos pasos alineados. *Sin Guard*: el `ap2.cart` elegido con el
+1. **Momento clave.** El escenario (o comportamiento del comercio general) de
+   la compra más nueva, sin compras el B de los fixtures; se puede elegir otro
+   (`escenarioDelMomento`). Dos columnas con los mismos pasos alineados. *Sin Guard*: el `ap2.cart` elegido con el
    `item_label` marcado como texto libre del vendedor (y subrayado lo que no
    figura en su catálogo público), el `checkout_jwt` con header, payload y
    **firma ES256 del comercio**, el `checkout_hash` recalculado en el navegador,
@@ -359,8 +369,10 @@ avisa que esa capa está apagada.
    (ECDSA P-256 / SHA-256) contra la clave pública del Guard, y el payload
    firmado comparado con el recibo mostrado (`Recibo.payload_canonico()`:
    claves ordenadas, sin `firma` ni `kid`).
-5. **Ficha.** El pedido original y sus requisitos (obligatorios y preferidos)
-   como **confirmada**, con el criterio de elección.
+5. **Ficha.** El pedido original y sus requisitos (obligatorios y preferidos,
+   con atributos y unidades), confirmada o sin confirmar según lo que hizo el
+   usuario, de dónde sale (recibo, nuestro agente o el escenario con
+   `PROXY_FICHA_DEMO=1`) y el criterio de elección.
 6. **Benchmark.** Columnas por escenario: éxito del ataque solo con AP2 contra
    con Guard, con la etiqueta "X% → Y%", el caso B destacado y una tabla con
    todas las columnas (elige objetivo, AP2 frena, corridas, errores, elegidos).
