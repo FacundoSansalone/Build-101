@@ -95,14 +95,18 @@ def _veredicto_con_recibo() -> Veredicto:
     return guard_stub.evaluar(ficha, ofertas, "cart_1", {}, checkout_hash="h")
 
 
-def _guard_recibo_falso(monkeypatch, firmar):
+def _guard_recibo_falso(monkeypatch, firmar, *, con_jwk: bool = True):
     from cryptography.hazmat.primitives.asymmetric import ec
+
+    from guard.recibo import clave_publica_jwk  # la real, antes de reemplazar guard
 
     clave = ec.generate_private_key(ec.SECP256R1())
     paquete = types.ModuleType("guard")
     modulo = types.ModuleType("guard.recibo")
     modulo.cargar_o_crear_clave = lambda path: clave
     modulo.firmar_recibo = firmar
+    if con_jwk:
+        modulo.clave_publica_jwk = clave_publica_jwk
     paquete.recibo = modulo
     monkeypatch.setitem(sys.modules, "guard", paquete)
     monkeypatch.setitem(sys.modules, "guard.recibo", modulo)
@@ -137,6 +141,13 @@ def test_clave_publica_jwk(monkeypatch, tmp_path):
     assert datos["kid"] == "guard-key-1"
     assert datos["jwk"]["kty"] == "EC" and datos["jwk"]["crv"] == "P-256"
     assert "d" not in datos["jwk"]  # nunca la privada
+
+
+def test_clave_publica_sin_clave_publica_jwk_no_publica(monkeypatch, tmp_path):
+    """Sin `guard.recibo.clave_publica_jwk` no hay respaldo (jwcrypto no es
+    dependencia del motor): no se publica nada."""
+    _guard_recibo_falso(monkeypatch, lambda recibo, clave: "a.b.c", con_jwk=False)
+    assert clave_publica(tmp_path / "k.pem") is None
 
 
 def test_clave_publica_sin_guard_recibo(monkeypatch, tmp_path):
