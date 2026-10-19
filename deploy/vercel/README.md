@@ -31,6 +31,7 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 | `postgrest_local.py` | PostgREST falso por HTTP en :54321 (las tablas `gw_*` en memoria): la prueba local **sin Supabase** |
 | `local_sin_supabase.env.ejemplo` | El entorno de esa prueba (sin secretos) |
 | [`proxy/scripts/smoke_v1_pausas.py`](../../proxy/scripts/smoke_v1_pausas.py) | Prueba de las pausas (porqué y oportunidad) con las respuestas por otras instancias |
+| [`proxy/consola/`](../../proxy/consola/) | La consola web del motor (`/consola`): probar una compra desde el navegador ([paso 8](#8-consola-web)) |
 
 Los comandos van desde la raíz del repo, con el venv de `world/ap2`
 (`PY=world/ap2/.venv/Scripts/python` en Windows con Git Bash,
@@ -259,6 +260,27 @@ $PY proxy/scripts/smoke_v1_pausas.py --gateway "$GW" --caso sin-decidir
 
 En Vercel no hay `X-Balanceador-Instancia`: `--otra-instancia` y los casos
 `matar-*` son solo para la prueba local. Los logs: `npx vercel logs <url>`.
+
+### 8. Consola web
+
+**Consola web: https://kaiai-motor.vercel.app/consola** (y `GET /` → 307 a
+`/consola`). La sirve el mismo motor (`create_app(..., consola=True)`,
+estáticos en `proxy/consola/`, sin clave y sin estado) y hace lo que el agente
+de un integrador: con la clave de `.temp-db/vercel/clave_integrador_<id>.txt`
+pegada en la página, compra, búsqueda con las pausas (porqué y propuesta),
+checkout, aprobación de un `escalar`, verificación del recibo y `/v1/filtrar`.
+No tiene permisos propios: cada paso es una llamada a la API con esa clave.
+CSP estricta (`default-src 'none'`, `connect-src 'self'`), `nosniff`,
+`no-referrer` y `no-store`; sin recursos externos.
+
+```sh
+curl -sI "$GW/" | grep -i '^location'            # /consola
+curl -s -o /dev/null -w '%{http_code}
+' "$GW/consola"   # 200
+```
+
+En la prueba local con varias instancias es la misma página:
+`http://127.0.0.1:8040/consola`.
 
 ## Prueba local con varias instancias
 

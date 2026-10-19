@@ -426,6 +426,25 @@ def test_exclude_files_no_saca_el_motor_ni_sus_datos():
         assert not _excluido(ruta), ruta
 
 
+def test_los_estaticos_de_la_consola_entran_en_el_bundle():
+    """La consola web (`proxy/consola/`, `/consola` en el motor): el HTML, el
+    JS y el CSS se suben y `excludeFiles` no los saca; sus tests no."""
+    carpeta = RAIZ / "proxy" / "consola"
+    estaticos = sorted(
+        p.relative_to(RAIZ).as_posix() for p in carpeta.iterdir()
+        if p.is_file() and p.suffix in (".html", ".js", ".mjs", ".css")
+    )
+    assert set(estaticos) == {
+        "proxy/consola/index.html", "proxy/consola/app.js", "proxy/consola/logica.mjs",
+        "proxy/consola/estilo.css",
+    }
+    for ruta in estaticos:
+        assert se_sube(ruta), f"{ruta} no se subiría"
+        assert not _excluido(ruta), f"excludeFiles saca {ruta}"
+    for ruta in ("proxy/tests/js/consola.test.mjs", "proxy/tests/js/verificar_recibo_cli.mjs"):
+        assert not se_sube(ruta) or _excluido(ruta), f"{ruta} llega al bundle"
+
+
 def _motor_de_pyproject() -> dict | None:
     pyproject = RAIZ / "pyproject.toml"
     if not pyproject.exists():

@@ -535,6 +535,11 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     `proxy/scripts/smoke_v1_pausas.py`.
   - **El porqué de una compra de integrador** no pide lo que ya está en la
     ficha (tope, moneda): va solo la plantilla del porqué.
+  - **Consola web: https://kaiai-motor.vercel.app/consola** (`proxy/consola/`,
+    `create_app(..., consola=True)`; `/` → 307): hace lo del agente de un
+    integrador con la clave que pega el usuario, sin permisos propios; CSP
+    estricta y todo texto del comercio con `textContent`. Local:
+    `GATEWAY_CONSOLA=1`.
 
 Tests de las carpetas nuevas, desde la raíz:
 

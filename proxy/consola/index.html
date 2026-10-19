@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>KaiAI · Consola</title>
+  <meta name="description" content="Probá el motor de KaiAI desde el navegador: una compra de punta a punta con tu clave de integrador.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l7.5 3v6.2c0 4.7-3.2 8.1-7.5 9.8-4.3-1.7-7.5-5.1-7.5-9.8V5.5z' fill='%231f5fae'/%3E%3Cpath d='M8.2 12.3l2.6 2.6 5-5.2' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/consola/estilo.css">
+  <script type="module" src="/consola/app.js"></script>
+</head>
+<body>
+  <a class="saltar" href="#principal">Saltar al contenido</a>
+
+  <header class="cabecera">
+    <div class="marca">
+      <svg class="marca-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/>
+        <path class="marca-tilde" d="M8.8 12.2l2.3 2.3 4.2-4.4"/>
+      </svg>
+      <span class="marca-nombre">KaiAI</span>
+      <span class="marca-sub">Consola del motor</span>
+    </div>
+    <nav class="cabecera-nav" aria-label="Documentación de la API">
+      <a href="/v1/docs">API</a>
+      <a href="/v1/openapi.json">OpenAPI</a>
+    </nav>
+  </header>
+
+  <noscript><p class="sin-js">La consola necesita JavaScript.</p></noscript>
+
+  <div class="contenedor">
+    <main id="principal" class="principal" tabindex="-1">
+      <p class="intro">
+        Hacé en el navegador lo mismo que el agente de compras de un integrador: creá una compra
+        con lo que autorizás, buscá a través de KaiAI, contestá lo que te pregunte y pedí el
+        checkout. La consola no decide nada: cada paso es una llamada a la API con tu clave.
+      </p>
+
+      <section class="tarjeta" aria-labelledby="t-clave">
+        <h2 id="t-clave"><span class="paso" aria-hidden="true">1</span> Tu clave de integrador</h2>
+        <form id="form-clave" class="formulario" novalidate>
+          <label for="clave">Clave de API</label>
+          <div class="campo-con-boton">
+            <input id="clave" type="password" autocomplete="off" spellcheck="false" autocapitalize="off"
+                   placeholder="psg_…" aria-describedby="clave-ayuda">
+            <button type="button" id="mostrar-clave" class="boton boton-sec" aria-pressed="false" aria-controls="clave">Mostrar</button>
+          </div>
+          <p id="clave-ayuda" class="ayuda">
+            Queda en la memoria de esta página y solo viaja a este mismo sitio. Nunca aparece en el registro.
+          </p>
+          <label class="check"><input type="checkbox" id="recordar"> Recordar en esta pestaña</label>
+          <div class="acciones">
+            <button type="submit" class="boton">Usar esta clave</button>
+            <button type="button" id="olvidar" class="boton boton-sec">Olvidar</button>
+          </div>
+          <p id="clave-estado" class="estado" role="status"></p>
+        </form>
+      </section>
+
+      <div class="pestanas" role="tablist" aria-label="Qué probar">
+        <button type="button" role="tab" id="tab-compra" class="pestana" aria-selected="true" aria-controls="panel-compra">Compra</button>
+        <button type="button" role="tab" id="tab-filtro" class="pestana" aria-selected="false" aria-controls="panel-filtro" tabindex="-1">Filtro</button>
+      </div>
+
+      <div id="panel-compra" class="panel" role="tabpanel" aria-labelledby="tab-compra" tabindex="0">
+        <section class="tarjeta" aria-labelledby="t-compra">
+          <h2 id="t-compra"><span class="paso" aria-hidden="true">2</span> Nueva compra</h2>
+          <form id="form-compra" class="formulario" novalidate>
+            <label for="pedido">Pedido</label>
+            <textarea id="pedido" rows="2" maxlength="2000">20 computadoras para el lunes</textarea>
+
+            <div class="grilla">
+              <div class="campo">
+                <label for="comercio">Comercio</label>
+                <select id="comercio" aria-describedby="comercio-ayuda">
+                  <option value="">Cargá la clave primero</option>
+                </select>
+                <p id="comercio-ayuda" class="ayuda">Los habilitados para tu clave (<code>GET /v1/comercios</code>).</p>
+              </div>
+              <div class="campo">
+                <label for="escenario">Comportamiento del comercio simulado</label>
+                <select id="escenario" aria-describedby="escenario-ayuda"></select>
+                <p id="escenario-ayuda" class="ayuda"></p>
+              </div>
+              <div class="campo">
+                <label for="tope">Tope (precio máximo)</label>
+                <input id="tope" inputmode="decimal" autocomplete="off" value="20000" aria-required="true">
+              </div>
+              <div class="campo">
+                <label for="moneda">Moneda</label>
+                <input id="moneda" maxlength="3" autocomplete="off" autocapitalize="characters" value="USD" aria-required="true">
+              </div>
+              <div class="campo">
+                <label for="cantidad">Cantidad <span class="opcional">(opcional)</span></label>
+                <input id="cantidad" inputmode="numeric" autocomplete="off" value="20">
+              </div>
+              <div class="campo">
+                <label for="plazo">Para cuándo <span class="opcional">(opcional)</span></label>
+                <input id="plazo" type="date" aria-describedby="plazo-ayuda">
+                <p id="plazo-ayuda" class="ayuda">Todas las unidades para esa fecha. Necesita la cantidad.</p>
+              </div>
+              <div class="campo">
+                <label for="categoria">Categoría <span class="opcional">(opcional)</span></label>
+                <input id="categoria" inputmode="numeric" autocomplete="off" value="278" aria-describedby="categoria-ayuda">
+                <p id="categoria-ayuda" class="ayuda">ID de la taxonomía de Google: 278 computadoras, 328 notebooks, 305 monitores.</p>
+              </div>
+            </div>
+
+            <label class="check"><input type="checkbox" id="preguntar" checked> Preguntar el porqué, para que KaiAI pueda proponerte alternativas</label>
+            <div id="compra-errores" class="errores" role="alert"></div>
+            <div class="acciones">
+              <button type="submit" id="crear" class="boton">Crear compra</button>
+            </div>
+          </form>
+
+          <div id="compra-vista" class="resumen" hidden>
+            <h3>Compra creada</h3>
+            <dl class="datos">
+              <div><dt>Compra</dt><dd id="c-id" class="mono"></dd></div>
+              <div><dt>Estado</dt><dd id="c-estado"></dd></div>
+              <div><dt>Comercio</dt><dd id="c-comercio" class="mono"></dd></div>
+              <div><dt>Intención</dt><dd id="c-intencion"></dd></div>
+            </dl>
+            <h4>Lo que autorizaste</h4>
+            <ul id="c-requisitos" class="lista-simple"></ul>
+            <p id="c-categoria" class="ayuda"></p>
+          </div>
+        </section>
+
+        <section id="sec-busqueda" class="tarjeta" aria-labelledby="t-busqueda" hidden>
+          <h2 id="t-busqueda"><span class="paso" aria-hidden="true">3</span> Búsqueda</h2>
+          <p class="ayuda">
+            Tu agente le pide ofertas al comercio a través de KaiAI (<code>find_products</code>). Si KaiAI
+            necesita algo de vos, el pedido queda retenido y aparece acá.
+          </p>
+          <div class="acciones">
+            <button type="button" id="buscar" class="boton">Buscar</button>
+          </div>
+          <p id="busqueda-estado" class="estado" role="status"></p>
+
+          <div id="pend-porque" class="pendiente" hidden>
+            <h3 id="pend-porque-titulo" tabindex="-1">KaiAI te pregunta</h3>
+            <p id="porque-pregunta" class="pregunta"></p>
+            <p class="vence">Vence en <strong id="porque-restante">—</strong></p>
+            <label for="porque-respuesta">Tu respuesta</label>
+            <textarea id="porque-respuesta" rows="3" maxlength="1000"></textarea>
+            <div class="acciones">
+              <button type="button" id="responder" class="boton">Responder</button>
+              <button type="button" id="omitir" class="boton boton-sec">Omitir</button>
+            </div>
+            <p class="ayuda">Si no contestás a tiempo, sigue el pedido literal.</p>
+          </div>
+
+          <div id="pend-oportunidad" class="pendiente" hidden>
+            <h3 id="pend-op-titulo" tabindex="-1">Una oferta no cumple lo pedido, pero sí lo que necesitás</h3>
+            <p id="op-titulo" class="op-titulo"></p>
+            <p id="op-precio"></p>
+            <div class="tabla-envoltura">
+              <table class="tabla">
+                <caption class="sr-only">Qué cambia si aceptás</caption>
+                <thead><tr><th scope="col">Qué</th><th scope="col">Pediste</th><th scope="col">Te ofrecen</th></tr></thead>
+                <tbody id="op-cambios"></tbody>
+              </table>
+            </div>
+            <p id="op-porque" class="op-porque"></p>
+            <p class="vence">Vence en <strong id="op-restante">—</strong></p>
+            <div class="acciones">
+              <button type="button" id="aceptar" class="boton">Aceptar</button>
+              <button type="button" id="rechazar" class="boton boton-sec">Rechazar</button>
+            </div>
+            <p class="ayuda">Aceptar cambia lo autorizado solo para esta oferta. Si nadie decide a tiempo, no se compra nada.</p>
+          </div>
+
+          <div id="resultado-busqueda" hidden>
+            <p id="busqueda-mensaje" class="mensaje" hidden></p>
+            <p id="parametros" class="parametros" hidden></p>
+            <fieldset id="carts" class="carts" hidden>
+              <legend>Elegí un cart para el checkout</legend>
+              <p class="ayuda">Lo que sigue lo escribió el comercio: es lo que vería tu agente.</p>
+              <ul id="lista-carts" class="lista-carts"></ul>
+            </fieldset>
+          </div>
+        </section>
+
+        <section id="sec-checkout" class="tarjeta" aria-labelledby="t-checkout" hidden>
+          <h2 id="t-checkout"><span class="paso" aria-hidden="true">4</span> Checkout</h2>
+          <p class="ayuda">
+            Tu agente pide el checkout del cart elegido (<code>create_checkout</code>). KaiAI verifica lo
+            firmado antes de dártelo.
+          </p>
+          <div class="acciones">
+            <button type="button" id="checkout" class="boton" disabled>Pedir checkout</button>
+          </div>
+          <p id="checkout-estado" class="estado" role="status"></p>
+
+          <div id="veredicto" class="veredicto" hidden>
+            <p><span id="v-status" class="pastilla" tabindex="-1"></span></p>
+            <p id="v-motivo" class="motivo"></p>
+            <p id="v-firma" class="firma"></p>
+            <h3 class="sub">Chequeos</h3>
+            <ul id="v-chequeos" class="chequeos"></ul>
+            <div id="escalar" class="bloque-escalar" hidden>
+              <p>KaiAI no pudo verificar todo. Mirá la evidencia y decidí vos: la aprobación vale una sola vez, para este cart y este total.</p>
+              <div class="acciones">
+                <button type="button" id="aprobar" class="boton">Aprobar igual</button>
+                <button type="button" id="reintentar" class="boton boton-sec">Reintentar checkout</button>
+              </div>
+              <p id="aprobacion-estado" class="estado" role="status"></p>
+            </div>
+          </div>
+        </section>
+
+        <section id="sec-compra" class="tarjeta" aria-labelledby="t-recibos" hidden>
+          <h2 id="t-recibos"><span class="paso" aria-hidden="true">5</span> La compra completa</h2>
+          <dl class="datos">
+            <div><dt>Estado</dt><dd id="r-estado"></dd></div>
+            <div><dt>Aprobaciones</dt><dd id="r-aprobaciones"></dd></div>
+          </dl>
+          <h3 class="sub">Veredictos y recibos</h3>
+          <ol id="lista-veredictos" class="lista-veredictos"></ol>
+          <div class="acciones">
+            <button type="button" id="refrescar" class="boton boton-sec">Actualizar</button>
+            <button type="button" id="nueva" class="boton boton-sec">Nueva compra</button>
+          </div>
+        </section>
+      </div>
+
+      <div id="panel-filtro" class="panel" role="tabpanel" aria-labelledby="tab-filtro" tabindex="0" hidden>
+        <section class="tarjeta" aria-labelledby="t-filtro">
+          <h2 id="t-filtro">Filtro de seguridad</h2>
+          <p class="ayuda">
+            El mismo filtro que revisa las respuestas de los comercios, para lo que tu agente lee por su
+            cuenta (<code>POST /v1/filtrar</code>). La respuesta nunca devuelve lo que mandaste.
+          </p>
+          <form id="form-filtro" class="formulario" novalidate>
+            <label for="filtro-texto">Contenido</label>
+            <textarea id="filtro-texto" rows="5" maxlength="20000"></textarea>
+            <label for="filtro-origen">De dónde lo sacó tu agente</label>
+            <select id="filtro-origen">
+              <option value="otro">Otro</option>
+              <option value="web_search">Una búsqueda web</option>
+              <option value="pagina">Una página</option>
+              <option value="herramienta">Una herramienta</option>
+            </select>
+            <div class="acciones">
+              <button type="submit" class="boton">Filtrar</button>
+              <button type="button" id="filtro-ejemplo" class="boton boton-sec">Ejemplo con inyección</button>
+            </div>
+            <p id="filtro-estado" class="estado" role="status"></p>
+          </form>
+          <div id="filtro-resultado" class="veredicto" hidden>
+            <p><span id="f-status" class="pastilla"></span></p>
+            <p id="f-motivo" class="motivo"></p>
+            <h3 class="sub">Señales</h3>
+            <ul id="f-senales" class="chequeos"></ul>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <aside class="registro" aria-labelledby="t-registro">
+      <div class="registro-cab">
+        <h2 id="t-registro">Registro</h2>
+        <button type="button" id="limpiar-registro" class="boton boton-chico boton-sec">Limpiar</button>
+      </div>
+      <div class="registro-envoltura" role="log" aria-live="polite" aria-labelledby="t-registro">
+        <ol id="registro" class="registro-lista"></ol>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="pie">
+    KaiAI: los modelos entienden y proponen, vos autorizás y el código verifica antes de la firma.
+  </footer>
+</body>
+</html>

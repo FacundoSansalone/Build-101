@@ -326,14 +326,20 @@ def test_la_app_completa_con_lo_que_fuerza_el_despliegue():
     assert proxy.almacen.durable is True
 
 
-def test_solo_a2a_m_y_v1():
+def test_solo_a2a_m_v1_y_la_consola():
     rutas = _rutas(_serverless())
     assert not any(r.startswith("/guard") for r in rutas)
     assert "/a2a/merchant_agent" not in rutas
     assert {r for r in rutas if r.startswith("/a2a")} == {
         "/a2a/m/{comercio}", "/a2a/m/{comercio}/{resto:path}"
     }
-    assert all(r == "/v1" or r.startswith(("/a2a/m/", "/v1/")) for r in rutas)
+    # Además, la consola web (estáticos sin clave, ver test_consola.py).
+    consola = {r for r in rutas if r == "/" or r == "/consola" or r.startswith("/consola/")}
+    assert consola == {
+        "/", "/consola", "/consola/", "/consola/app.js", "/consola/logica.mjs",
+        "/consola/estilo.css",
+    }
+    assert all(r == "/v1" or r.startswith(("/a2a/m/", "/v1/")) for r in rutas - consola)
 
 
 async def test_openapi_public_key_y_las_rutas_que_no_estan():
@@ -344,12 +350,14 @@ async def test_openapi_public_key_y_las_rutas_que_no_estan():
         guard = await c.get("/guard/state")
         vieja = await c.post("/a2a/merchant_agent", json={})
         sin_clave = await anonimo.post("/a2a/m/merchant_1", json={})
-        raiz = await c.get("/")
+        raiz = await c.get("/", follow_redirects=False)
+        no_existe = await c.get("/no-existe")
     assert openapi.status_code == 200
     assert openapi.json()["servers"][0]["url"].startswith(URL_PUBLICA)
     assert publica.status_code == 200 and publica.json()["kid"] == KID
     assert publica.json()["jwk"] == ClaveRecibo.desde_entorno(entorno()).jwk_publica()
-    assert guard.status_code == 404 and vieja.status_code == 404 and raiz.status_code == 404
+    assert guard.status_code == 404 and vieja.status_code == 404 and no_existe.status_code == 404
+    assert raiz.status_code == 307 and raiz.headers["location"] == "/consola"
     assert sin_clave.status_code == 401
 
 
