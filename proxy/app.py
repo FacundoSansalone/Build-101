@@ -95,6 +95,8 @@ from proxy.compras import (
     misma_fila,
 )
 from proxy.config import Config
+from proxy.consola import RUTAS_ABIERTAS as RUTAS_CONSOLA
+from proxy.consola import rutas_consola
 from proxy.esperas import Apertura, EsperaCompartida, EsperaLocal, Esperas
 from proxy.estado import (
     EstadoMemoria,
@@ -4416,6 +4418,7 @@ def create_app(
     clave_recibo: ClaveRecibo | None = None,
     rutas_control: bool = True,
     rutas_heredadas: bool = True,
+    consola: bool = False,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
@@ -4456,6 +4459,12 @@ def create_app(
       hay oyente local ni puerto propio.
     - `rutas_heredadas=False`: sin la ruta vieja del comercio por defecto
       (`config.rpc_path`); queda solo `/a2a/m/{comercio}`.
+
+    `consola=True` suma la consola web (`proxy/consola/`): `GET /consola` y
+    sus estáticos, y `GET /` → 307 a `/consola`, sin clave en los dos
+    oyentes. No tiene permisos propios: llama a `/v1` y `/a2a/m/{comercio}`
+    con la clave que pega el usuario. La prende el despliegue serverless; en
+    `python -m proxy`, `GATEWAY_CONSOLA=1`.
 
     Con los defaults la app es la de siempre.
     """
@@ -4543,6 +4552,8 @@ def create_app(
     rutas += rutas_v1(
         nucleo, max_cuerpo_bytes=config.max_cuerpo_v1, url_publica=config.gateway_public_url,
     )
+    if consola:
+        rutas += rutas_consola()
     # El más externo: decide el oyente, autentica y cierra el público a /a2a
     # y /v1 (en el local, /guard/* sigue con ControlLocal). Sin la API de
     # control (serverless) no hay oyente local: todo es del público.
@@ -4550,6 +4561,7 @@ def create_app(
         Middleware(
             AutenticacionGateway, registro=integradores, puertos_publicos=puertos_publicos,
             todo_publico=not rutas_control,
+            rutas_abiertas=RUTAS_CONSOLA if consola else (),
         ),
     ]
     if rutas_control:

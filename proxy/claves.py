@@ -16,7 +16,9 @@
   como público: en Vercel no hay puerto) y aplica las reglas por ruta del
   diseño: en el oyente público solo existen `/a2a/*` y `/v1/*`, y piden
   clave; en el local nada cambia para la demo (`/a2a/*` anónimo sigue
-  andando) salvo que una clave `psg_` presente tiene que ser válida.
+  andando) salvo que una clave `psg_` presente tiene que ser válida. Las
+  `rutas_abiertas` (rutas exactas: la consola web, `proxy/consola/`) pasan
+  sin clave en los dos oyentes: son archivos estáticos sin estado.
 
 Nunca se loguea la clave ni el header `Authorization`. Middleware ASGI puro
 (como `ControlLocal`) para no interferir con el SSE.
@@ -390,12 +392,17 @@ class AutenticacionGateway:
 
     - `oyente`: "local" | "publico";
     - `integrador`: el `Integrador` autenticado, o None si el pedido es
-      anónimo (solo posible en el oyente local, fuera de `/v1` protegido).
+      anónimo (en el oyente local fuera de `/v1` protegido, o una de las
+      `rutas_abiertas`).
 
     El oyente sale del puerto local de la conexión (`puertos_publicos`). Con
     `todo_publico=True` todo pedido es del oyente público, sin mirar el
     puerto: en un despliegue serverless (Vercel) no hay puerto propio ni
     oyente local, y lo que llega viene de afuera.
+
+    `rutas_abiertas`: rutas exactas que pasan sin clave en cualquier oyente
+    (la consola web: archivos estáticos, sin estado; ver `proxy.consola`).
+    Nunca abre nada bajo `/guard`, `/v1` ni `/a2a`.
     """
 
     def __init__(
@@ -405,11 +412,20 @@ class AutenticacionGateway:
         registro: RegistroIntegradores,
         puertos_publicos: Iterable[int] = (),
         todo_publico: bool = False,
+        rutas_abiertas: Iterable[str] = (),
     ) -> None:
+        abiertas = frozenset(rutas_abiertas)
+        protegidas = [
+            r for r in abiertas
+            if any(_bajo(r, p) for p in (_PREFIJO_GUARD, _PREFIJO_V1, _PREFIJO_A2A))
+        ]
+        if protegidas:
+            raise ValueError(f"rutas_abiertas no puede abrir rutas protegidas: {sorted(protegidas)}")
         self.app = app
         self.registro = registro
         self.puertos_publicos = frozenset(puertos_publicos)
         self.todo_publico = bool(todo_publico)
+        self.rutas_abiertas = abiertas
 
     def oyente(self, scope: Scope) -> Oyente:
         """"publico" siempre con `todo_publico`; si no, por el puerto."""
@@ -442,7 +458,7 @@ class AutenticacionGateway:
         if _bajo(path, _PREFIJO_GUARD):
             # En el local la protege ControlLocal, igual que hoy.
             return _no_encontrado() if publico else None
-        if path in RUTAS_V1_PUBLICAS:
+        if path in RUTAS_V1_PUBLICAS or path in self.rutas_abiertas:
             return None
         if _bajo(path, _PREFIJO_V1):
             return self._exigir_clave(scope)

@@ -7,6 +7,9 @@ memoria ni disco compartidos (diseño 2.2 del plan de Vercel):
   control (`/guard/*`), sin la ruta vieja del comercio por defecto, sin
   `ControlLocal` ni CORS, y todo pedido es del oyente público
   (`create_app(..., rutas_control=False, rutas_heredadas=False)`);
+- además, la consola web (`/consola`, y `/` → 307 a `/consola`;
+  `create_app(..., consola=True)`, ver `proxy/consola/`): estáticos sin
+  clave que llaman a la API con la clave que pega el usuario;
 - integradores y comercios de `GATEWAY_CLAVES_JSON` y
   `GATEWAY_COMERCIOS_JSON` (los archivos no se leen), con la validación
   cruzada de siempre y sin webhooks inseguros;
@@ -423,6 +426,7 @@ def _armar(
         clave_recibo=clave,
         rutas_control=False,
         rutas_heredadas=False,
+        consola=True,
     )
     logger.info(
         "Motor KaiAI (serverless) | integradores: %d | comercios: %s | filtro: %s | "
