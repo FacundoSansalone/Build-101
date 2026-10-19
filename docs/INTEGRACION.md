@@ -83,6 +83,12 @@ son las mismas; cambia esto:
   usuario tiene que contestar dentro de esos plazos (§12).
 - **Cuerpo de hasta 4,5 MB** por pedido y por respuesta (más, 413 de Vercel
   antes de llegar al gateway).
+- **Latido durante una pausa.** Una conexión sin bytes se corta a los 60 s,
+  así que un pedido A2A retenido (el porqué, una propuesta) empieza a
+  responder a los 15 s: el cuerpo JSON puede traer **espacios al principio**
+  (sigue siendo JSON válido) y el stream SSE, comentarios `: latido`. Como
+  el status `200` ya salió, si el final es un error llega como error
+  JSON-RPC, con el status que iba a tener en `error.data.http_status`.
 - **Varias instancias.** Tus pedidos pueden caer en instancias distintas: la
   compra y sus esperas viven en la base, así que contestar el porqué, decidir
   o aprobar funciona desde cualquier pedido, aunque la búsqueda siga abierta

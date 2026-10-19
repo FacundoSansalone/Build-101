@@ -603,6 +603,26 @@ def test_los_topes_exactos_valen():
     assert config.presupuesto_llamada_s + config.barrera_s + vercel.MARGEN_S == 300
 
 
+def test_el_despliegue_fuerza_el_latido():
+    """Sin bytes, Vercel corta a los 60 s: un pedido retenido late."""
+    assert vercel.LATIDO_S == 15.0 and vercel.MAX_LATIDO_S == 30.0
+    assert _serverless().state.proxy.config.latido_s == vercel.LATIDO_S
+
+
+@pytest.mark.parametrize(("valor", "esperado"), [("5", 5.0), ("0.5", 0.5), ("30", 30.0)])
+def test_el_latido_se_puede_bajar_hasta_el_tope(valor, esperado):
+    config = _serverless(entorno(GATEWAY_LATIDO_S=valor)).state.proxy.config
+    assert config.latido_s == esperado
+
+
+@pytest.mark.parametrize("valor", ["0", "off", "no", "31", "61", "-1", "nan", "inf", "quince"])
+async def test_el_latido_no_se_apaga_ni_pasa_del_tope(valor, caplog):
+    with caplog.at_level("ERROR", logger="proxy.vercel"):
+        app = _serverless(entorno(GATEWAY_LATIDO_S=valor))
+    await _responde_503(app)
+    assert "GATEWAY_LATIDO_S" in caplog.text
+
+
 # -- la frontera ------------------------------------------------------------------------
 
 

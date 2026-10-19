@@ -781,6 +781,7 @@ Con `GATEWAY_ESTADO=supabase` y sin las tablas, crear una compra da 503
 | `GATEWAY_MAX_CUERPO_BYTES` | `1048576` | Tope de cuerpo de `/v1` |
 | `GATEWAY_MAX_CUERPO_A2A_BYTES` | `5242880` | Tope de un pedido A2A de integrador |
 | `GATEWAY_COMPRA_TTL_S` | `86400` | Vida de una compra de integrador |
+| `GATEWAY_LATIDO_S` | apagado | Latido de un pedido A2A retenido en `/a2a/m/{comercio}`: si la respuesta no está a los N segundos, sale `200` y un espacio cada N antes del JSON (en `message/stream`, un comentario `: latido`); un error final va como error JSON-RPC con `data.http_status`. Más de 0 y hasta 60; `0` u `off`, apagado. En Vercel, 15 (hasta 30; no se apaga) |
 | *(nombres libres)* | — | Secretos de webhook, los que nombra `secreto_env` |
 
 ### `/guard/state`

@@ -199,6 +199,13 @@ npx vercel env ls production                               # nombres, sin valore
   presupuesto + `GATEWAY_BARRERA_S` (10 s) + 15 ≤ 300. Los cuerpos
   (`GATEWAY_MAX_CUERPO_BYTES`, `GATEWAY_MAX_CUERPO_A2A_BYTES`) y la
   respuesta del comercio (`PROXY_MAX_RESPUESTA_BYTES`), hasta 4 MB.
+- **Latido:** entre el cliente y la función, Vercel corta una conexión sin
+  bytes a los 60 s. Un pedido A2A retenido (el porqué, una decisión)
+  empieza a responder a los `GATEWAY_LATIDO_S` (15 s) con `200` y manda un
+  espacio cada 15 s antes del JSON (en `message/stream`, un comentario
+  `: latido`); un error final va como error JSON-RPC con
+  `data.http_status`. Se puede bajar (hasta 30 s como mucho); apagarlo
+  (`0`, `off`) o subirlo de 30 no arranca.
 - Las variables nuevas valen recién en el deploy siguiente.
 
 ### 5. El túnel a la simulación
