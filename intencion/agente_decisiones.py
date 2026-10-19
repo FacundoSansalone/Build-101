@@ -23,6 +23,7 @@ elige entre opciones y el código decide con umbrales.
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from collections import OrderedDict
@@ -32,11 +33,20 @@ from datetime import date
 from typing import Any
 
 from contracts import Contexto, Entrega, Ficha, Flexibilidad, Oferta, Oportunidad, Requisito, Turno
-from decisiones import ClienteDecisiones, Eleccion, Predicado, Pregunta, RespuestaPredicado
+from decisiones import (
+    ClienteDecisiones,
+    DecisionesError,
+    Eleccion,
+    Predicado,
+    Pregunta,
+    RespuestaPredicado,
+)
 from intencion import intake
 from intencion.agente import LARGO_NECESIDAD
 from intencion.agente import Pregunta as PreguntaAgente
 from intencion.intake import ResultadoIntake, Umbrales
+
+logger = logging.getLogger(__name__)
 
 MAX_CACHE = 64
 MAX_CRONOGRAMA = 6
@@ -121,17 +131,33 @@ def cronograma_candidato(respuestas: Sequence[str], hoy: date) -> list[tuple[int
 
     Por cláusula ("10 el lunes y otros 10 el jueves"): una cantidad y una
     fecha en la misma cláusula forman un par. El modelo después juzga cada
-    par; nunca inventa uno.
+    par; nunca inventa uno. Las cláusulas de una respuesta van en orden: un
+    día de la semana no cae antes que la fecha de una cláusula anterior
+    (dicho un lunes, "el jueves" de esa frase es el 29, no el 22; ver
+    `intake._fechas`).
     """
     pares: list[tuple[int, str, str]] = []
     for texto in respuestas:
-        for clausula in _SEPARADORES.split(texto or ""):
+        crudo = (texto or "")[: intake.LARGO_TEXTO]
+        original = intake._sin_tildes(crudo)
+        frases = crudo if len(crudo) == len(original) else original
+        # Las fechas, de la respuesta entera (el orden entre cláusulas cuenta).
+        fechas = [
+            (span, f)
+            for span, f in intake._fechas(original.lower(), hoy, intake._idioma(original))
+            if f is not None
+        ]
+        inicio = 0
+        for a, b in [*(m.span() for m in _SEPARADORES.finditer(original)), (len(original),) * 2]:
+            desde, inicio = inicio, b
+            clausula = frases[desde:a]
             if not clausula.strip():
                 continue
-            c = intake.extraer([clausula], hoy)
-            if len(c.cantidades) == 1 and len(c.fechas) == 1:
-                par = (c.cantidades[0].valor, c.fechas[0].valor, clausula.strip())
-                if (par[0], par[1]) not in {(a, b) for a, b, _ in pares}:
+            cantidades = intake.extraer([clausula], hoy).cantidades
+            en_clausula = [f for span, f in fechas if desde <= span[0] < a]
+            if len(cantidades) == 1 and len(en_clausula) == 1:
+                par = (cantidades[0].valor, en_clausula[0].isoformat(), clausula.strip())
+                if (par[0], par[1]) not in {(x, y) for x, y, _ in pares}:
                     pares.append(par)
     return pares[:MAX_CRONOGRAMA]
 
@@ -287,7 +313,12 @@ class AgenteDecisiones:
         hoy: date,
         categorias: Sequence[str] | Mapping[str, str] | None,
     ) -> tuple[ResultadoIntake, Contexto | None]:
-        """Una llamada por turno: intake y, si hay respuestas, contexto."""
+        """Una llamada por turno: intake y, si hay respuestas, contexto.
+
+        Memoria: el resultado del turno anterior de esta conversación. Si no
+        está en la caché (otro agente, o la caché se llenó), se recalcula
+        antes: lo que el usuario ya dijo no depende de la caché.
+        """
         if not pedido or not pedido.strip():
             raise ValueError("El pedido está vacío")
         conversacion = tuple((t.pregunta, t.respuesta) for t in turnos)
@@ -298,13 +329,17 @@ class AgenteDecisiones:
                 return self._cache[clave]
             if categorias is None:
                 categorias = self._categorias.get(pedido)
-            # Memoria: el resultado del turno anterior de esta conversación.
             previo = self._cache.get((pedido, conversacion[:-1], hoy.isoformat())) if turnos else None
+        if turnos and previo is None and len(turnos) <= intake.MAX_TURNOS:
+            try:
+                previo = self._analizar(pedido, turnos[:-1], hoy, categorias)
+            except DecisionesError:  # sin el turno anterior: este, sin memoria
+                logger.warning("No se pudo recalcular el turno anterior del intake: sin memoria")
         anterior = previo[0] if previo else None
         hechas = intake.respondidas(turnos)
         cands = intake.candidatos_de(pedido, hechas, hoy)
         cronograma = cronograma_candidato([t.respuesta or "" for t in hechas], hoy) if hechas else []
-        qs = intake.preguntas(cands, categorias)
+        qs = intake.preguntas(cands, categorias, anterior if hechas else None)
         if hechas:
             qs += preguntas_contexto(cronograma)
         respuestas = self.cliente.decidir(intake.estado_para_modelo(pedido, hechas, hoy), qs)

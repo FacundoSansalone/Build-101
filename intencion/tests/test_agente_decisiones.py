@@ -87,8 +87,13 @@ def test_preguntar_arma_la_pregunta_por_plantilla_y_los_parametros_dichos():
     assert pregunta.pregunta == PORQUE["es"]  # no falta nada: solo el porqué
     campos = {r.campo: r.valor for r in pregunta.requisitos}
     assert campos["precio"] == 20000.0 and campos["moneda"] == "USD"
-    assert campos["cantidad"] == 20 and campos["categoria"] == "laptops"
+    assert campos["cantidad"] == 20
+    # "computadoras" es la rama general (278): el modelo eligió laptops, pero
+    # eso achica lo que dijo el usuario. Sin requisito: la rama la verifica el Guard.
+    assert "categoria" not in campos
     assert pregunta.intake is not None and pregunta.intake.completo
+    categoria = next(p for p in pregunta.intake.parametros if p.nombre == "categoria")
+    assert (categoria.estado, categoria.eleccion, categoria.valor) == ("resuelto", "278", "computadoras")
     assert len(cliente.pedidos) == 1
     # Sin respuestas todavía no hay preguntas de contexto.
     assert not any(q.nombre.startswith(("cron_", "flex_")) for q in cliente.pedidos[0][1])
@@ -142,10 +147,12 @@ def test_el_turno_siguiente_recuerda_lo_resuelto():
     agente.preguntar(PEDIDO, HOY, CATEGORIAS)
     r = agente.evaluar_intake(PEDIDO, [Turno(pregunta=PORQUE["es"], respuesta=RESPUESTA)], HOY, CATEGORIAS)
     assert "precio" not in r.faltan
-    # Sin el turno anterior (otro agente, sin memoria), la duda es faltante.
-    otro = AgenteDecisiones(DecisionesFalso(responder))
+    # Otro agente, sin el turno anterior en su caché: lo recalcula y recuerda igual.
+    cliente = DecisionesFalso(responder)
+    otro = AgenteDecisiones(cliente)
     r = otro.evaluar_intake(PEDIDO, [Turno(pregunta=PORQUE["es"], respuesta=RESPUESTA)], HOY, CATEGORIAS)
-    assert "precio" in r.faltan
+    assert "precio" not in r.faltan
+    assert [len(estado["conversacion"]) for estado, _ in cliente.pedidos] == [0, 1]
 
 
 def test_el_orden_no_importa_contexto_primero():
