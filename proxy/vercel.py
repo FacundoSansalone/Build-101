@@ -23,7 +23,9 @@ memoria ni disco compartidos (diseño 2.2 del plan de Vercel):
 - los tiempos de Hobby (300 s por pedido): presupuesto por llamada 270 s,
   espera del porqué 60 s y de la decisión 150 s, y presupuesto + barrera +
   15 ≤ 300. Se pueden bajar por entorno; subirlos por encima del tope no
-  arranca. Los cuerpos, hasta 4 MB (Vercel corta en 4,5 MB).
+  arranca. Los cuerpos, hasta 4 MB (Vercel corta en 4,5 MB);
+- el latido de un pedido A2A retenido cada 15 s (`GATEWAY_LATIDO_S`, hasta
+  30 s; apagado no arranca): Vercel corta una conexión sin bytes a los 60 s.
 
 Fail-closed: si falta algo o algo no sirve, la app es una mínima que
 responde 503 `{"error": "motor_no_configurado"}` a todo (también a
@@ -87,6 +89,11 @@ PRESUPUESTO_LLAMADA_S = 270.0
 ESPERA_CONTEXTO_S = 60.0
 ESPERA_DECISION_S = 150.0
 MAX_CUERPO_BYTES = 4_000_000  # Vercel corta pedidos y respuestas en 4,5 MB
+# Entre el cliente y la función, una conexión sin bytes se corta a los 60 s:
+# un pedido A2A retenido (el porqué, una decisión) late cada tanto. Se puede
+# bajar por entorno (GATEWAY_LATIDO_S), no apagar ni subir de esto.
+LATIDO_S = 15.0
+MAX_LATIDO_S = 30.0
 
 # Variable → (campo de Config, tope en Vercel). Sin la variable, el tope; con
 # ella, su valor si no lo supera (si lo supera, no arranca).
@@ -237,6 +244,7 @@ def _config(env: Mapping[str, str]) -> Config:
         # Varias instancias sin memoria compartida.
         instancias="varias",
         webhooks_perfil="en_linea",
+        latido_s=_latido(env, base),
     )
     total = config.presupuesto_llamada_s + config.barrera_s + MARGEN_S
     if total > LIMITE_FUNCION_S:
@@ -246,6 +254,24 @@ def _config(env: Mapping[str, str]) -> Config:
             f"{LIMITE_FUNCION_S:g} s de la función"
         )
     return config
+
+
+def _latido(env: Mapping[str, str], base: Config) -> float:
+    """El latido de un pedido retenido: `LATIDO_S` sin la variable; con ella,
+    su valor si no pasa de `MAX_LATIDO_S`. Apagado no arranca: sin latido,
+    un porqué o una decisión retenidos se cortan a los 60 s."""
+    if not (env.get("GATEWAY_LATIDO_S") or "").strip():
+        return LATIDO_S
+    if base.latido_s is None:
+        raise MotorNoConfigurado(
+            "GATEWAY_LATIDO_S no se puede apagar en el despliegue (sin latido, un pedido "
+            "retenido se corta a los 60 s sin bytes)"
+        )
+    if base.latido_s > MAX_LATIDO_S:
+        raise MotorNoConfigurado(
+            f"GATEWAY_LATIDO_S={base.latido_s:g} supera el tope del despliegue ({MAX_LATIDO_S:g})"
+        )
+    return base.latido_s
 
 
 def _url_segura(nombre: str, url: str) -> None:
@@ -401,7 +427,7 @@ def _armar(
     logger.info(
         "Motor KaiAI (serverless) | integradores: %d | comercios: %s | filtro: %s | "
         "intención: %s | fabricante: %s | almacén: %s | recibo: kid %s | presupuesto %g s, "
-        "porqué %g s, decisión %g s, barrera %g s",
+        "porqué %g s, decisión %g s, barrera %g s, latido %g s",
         len(integradores.todos()),
         ", ".join(c.id for c in comercios.todos()),
         filtro_modo or "sí",
@@ -413,6 +439,7 @@ def _armar(
         config.espera_contexto_s,
         config.espera_decision_s,
         config.barrera_s,
+        config.latido_s,
     )
     return app
 
