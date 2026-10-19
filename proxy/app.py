@@ -102,6 +102,7 @@ from proxy.estado import (
     fila_ultimo_veredicto,
 )
 from proxy.evaluador import (
+    ClaveRecibo,
     EvaluadorCargado,
     cargar_evaluador,
     clave_publica,
@@ -568,6 +569,7 @@ class ProxyGuard:
         despachador: Despachador | None = None,
         filtro_modo: str | None = None,
         demo: FuentesDemoProtocolo | None = None,
+        clave_recibo: ClaveRecibo | None = None,
     ) -> None:
         # Fail-closed: sin un evaluar() que ate el checkout (o con el stub sin
         # PROXY_ALLOW_STUB=1) el proxy no se arma.
@@ -575,6 +577,10 @@ class ProxyGuard:
         self.config = config
         self.client = client
         self.evaluador = evaluador
+        # La clave del recibo inyectada (la del entorno: Vercel, varias
+        # instancias). Sin ella, la del archivo `config.guard_key_path`, como
+        # siempre (`firmar_recibo` / `clave_publica` de `proxy.evaluador`).
+        self.clave_recibo = clave_recibo
         self.guard_activo = config.guard_activo
         self.bus = BusDeEventos(
             config.events_jsonl,
@@ -691,6 +697,20 @@ class ProxyGuard:
         """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
         ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
         return self.config.demo_hoy or date.today()
+
+    def firmar_veredicto(self, veredicto: Veredicto) -> Veredicto:
+        """El veredicto con el recibo firmado: con la `ClaveRecibo` inyectada
+        o, sin ella, con la del archivo (`config.guard_key_path`)."""
+        if self.clave_recibo is not None:
+            return self.clave_recibo.firmar_veredicto(veredicto)
+        return firmar_recibo(veredicto, self.config.guard_key_path)
+
+    def datos_clave_publica(self) -> dict[str, Any] | None:
+        """`{"kid", "jwk"}` de la clave con que se firman los recibos (None si
+        `guard.recibo` no la expone)."""
+        if self.clave_recibo is not None:
+            return self.clave_recibo.clave_publica()
+        return clave_publica(self.config.guard_key_path)
 
     def cerrar_hilos(self) -> None:
         """Al apagar: sin esperar a los que siguen corriendo (un LLM colgado)
@@ -3274,7 +3294,7 @@ class ProxyGuard:
             )
 
         try:
-            veredicto = firmar_recibo(veredicto, self.config.guard_key_path)
+            veredicto = self.firmar_veredicto(veredicto)
         except Exception as e:  # noqa: BLE001 - el recibo sin firma igual sirve
             logger.exception("No se pudo firmar el recibo")
             self._emitir(
@@ -3894,7 +3914,7 @@ class ProxyGuard:
                 {"error": "Sin Guard real: no hay clave del recibo"}, status_code=404
             )
         try:
-            datos = clave_publica(self.config.guard_key_path)
+            datos = self.datos_clave_publica()
         except Exception:  # noqa: BLE001
             logger.exception("No se pudo leer la clave del Guard")
             return JSONResponse({"error": "No se pudo leer la clave"}, status_code=500)
@@ -4028,6 +4048,9 @@ def create_app(
     despachador: Despachador | None = None,
     filtro_modo: str | None = None,
     demo: FuentesDemoProtocolo | None = None,
+    clave_recibo: ClaveRecibo | None = None,
+    rutas_control: bool = True,
+    rutas_heredadas: bool = True,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
@@ -4056,6 +4079,20 @@ def create_app(
     lee la compra de la base y, antes de responder, una barrera espera lo
     que se escribió (`ProxyGuard.barrera`). Con `una` (el default), todo
     como siempre.
+
+    El despliegue serverless (`proxy/vercel.py`) usa además:
+
+    - `clave_recibo` (`proxy.evaluador.ClaveRecibo`): firma y publica los
+      recibos con esa clave y no toca `config.guard_key_path` (ni la crea).
+      Sin ella, la del archivo, como siempre.
+    - `rutas_control=False`: sin la API de control (`/guard/*`), sin
+      `ControlLocal` ni CORS, sin escribir el token y con todo pedido tratado
+      como del oyente público (`AutenticacionGateway(todo_publico=True)`): no
+      hay oyente local ni puerto propio.
+    - `rutas_heredadas=False`: sin la ruta vieja del comercio por defecto
+      (`config.rpc_path`); queda solo `/a2a/m/{comercio}`.
+
+    Con los defaults la app es la de siempre.
     """
     from proxy.gateway import NucleoProxy  # gateway importa este módulo
 
@@ -4081,20 +4118,25 @@ def create_app(
         persistencia=persistencia, agente=agente, filtro=filtro, fabricante=fabricante,
         integradores=integradores, comercios=comercios, almacen=almacen,
         despachador=despachador, filtro_modo=filtro_modo, demo=demo,
+        clave_recibo=clave_recibo,
     )
     nucleo = NucleoProxy(proxy)
     # El oyente público solo existe con claves: sin ellas, todo pedido es local.
     puertos_publicos = {config.gateway_port} if integradores.hay_claves() else set()
-    if config.api_token_path is not None:
+    if rutas_control and config.api_token_path is not None:
         # Para el servidor del dashboard (lo lee y lo agrega en su reenvío).
         escribir_token(config.api_token_path, proxy.api_token)
         logger.info("Token de la API de control en %s", config.api_token_path)
-    try:
-        # La clave del recibo se crea al arrancar, no en la primera decisión.
-        if preparar_clave(config.guard_key_path):
-            logger.info("Clave del recibo lista en %s", config.guard_key_path)
-    except Exception:  # noqa: BLE001 - sin clave el recibo va sin firma
-        logger.exception("No se pudo preparar la clave del recibo")
+    if clave_recibo is not None:
+        # Inyectada: nada en disco (con varias instancias, cada una crearía otra).
+        logger.info("Clave del recibo: %s (kid %s)", clave_recibo.origen, clave_recibo.kid)
+    else:
+        try:
+            # La clave del recibo se crea al arrancar, no en la primera decisión.
+            if preparar_clave(config.guard_key_path):
+                logger.info("Clave del recibo lista en %s", config.guard_key_path)
+        except Exception:  # noqa: BLE001 - sin clave el recibo va sin firma
+            logger.exception("No se pudo preparar la clave del recibo")
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -4109,13 +4151,18 @@ def create_app(
         await client.aclose()
 
     rpc_path = config.rpc_path
-    app = Starlette(
-        routes=[
-            # Antes que las viejas: `/a2a/m/{id}` es un comercio del registro.
-            Route("/a2a/m/{comercio}", proxy.rpc, methods=["POST"]),
-            Route("/a2a/m/{comercio}/{resto:path}", proxy.card, methods=["GET"]),
+    rutas: list[Route] = [
+        # Antes que las viejas: `/a2a/m/{id}` es un comercio del registro.
+        Route("/a2a/m/{comercio}", proxy.rpc, methods=["POST"]),
+        Route("/a2a/m/{comercio}/{resto:path}", proxy.card, methods=["GET"]),
+    ]
+    if rutas_heredadas:
+        rutas += [
             Route(rpc_path, proxy.rpc, methods=["POST"]),
             Route(f"{rpc_path}/{{resto:path}}", proxy.card, methods=["GET"]),
+        ]
+    if rutas_control:
+        rutas += [
             Route("/guard/state", proxy.get_state, methods=["GET"]),
             Route("/guard/state", proxy.post_state, methods=["POST"]),
             Route("/guard/aprobaciones", proxy.get_aprobaciones, methods=["GET"]),
@@ -4127,17 +4174,21 @@ def create_app(
             Route("/guard/events", proxy.eventos_sse, methods=["GET"]),
             Route("/guard/events/history", proxy.historial, methods=["GET"]),
             Route("/guard/public-key", proxy.public_key, methods=["GET"]),
-            *rutas_v1(
-                nucleo, max_cuerpo_bytes=config.max_cuerpo_v1,
-                url_publica=config.gateway_public_url,
-            ),
-        ],
-        middleware=[
-            # El más externo: decide el oyente, autentica y cierra el público
-            # a /a2a y /v1 (en el local, /guard/* sigue con ControlLocal).
-            Middleware(
-                AutenticacionGateway, registro=integradores, puertos_publicos=puertos_publicos
-            ),
+        ]
+    rutas += rutas_v1(
+        nucleo, max_cuerpo_bytes=config.max_cuerpo_v1, url_publica=config.gateway_public_url,
+    )
+    # El más externo: decide el oyente, autentica y cierra el público a /a2a
+    # y /v1 (en el local, /guard/* sigue con ControlLocal). Sin la API de
+    # control (serverless) no hay oyente local: todo es del público.
+    middleware = [
+        Middleware(
+            AutenticacionGateway, registro=integradores, puertos_publicos=puertos_publicos,
+            todo_publico=not rutas_control,
+        ),
+    ]
+    if rutas_control:
+        middleware += [
             Middleware(
                 ControlLocal,
                 hosts=config.hosts_permitidos,
@@ -4151,9 +4202,8 @@ def create_app(
                 allow_methods=["GET", "POST", "OPTIONS"],
                 allow_headers=["content-type"],
             ),
-        ],
-        lifespan=lifespan,
-    )
+        ]
+    app = Starlette(routes=rutas, middleware=middleware, lifespan=lifespan)
     app.state.proxy = proxy
     app.state.nucleo = nucleo
     return app

@@ -48,7 +48,6 @@ from proxy.comercios import politica_de
 from proxy.compras import ESTADOS_ESPERANDO, Compra, EstadoInvalido
 from proxy.esperas import EsperaCompartida
 from proxy.estado import fila_aprobacion_gw
-from proxy.evaluador import clave_publica
 from proxy.tipos_gateway import (
     ID_ESPERA_RE,
     Comercio,
@@ -666,7 +665,9 @@ class NucleoProxy:
         resultado = await sin_estado.evaluar_sin_estado(
             solicitud,
             evaluador=proxy.evaluador,
-            key_path=proxy.config.guard_key_path,
+            # La clave inyectada (Vercel) o, sin ella, la del archivo: una sola.
+            key_path=None if proxy.clave_recibo is not None else proxy.config.guard_key_path,
+            clave=proxy.clave_recibo,
             client=proxy.client,
             comercio=comercio,
             politica=politica,
@@ -724,7 +725,7 @@ class NucleoProxy:
         if proxy.evaluador.nombre != "guard":
             return None
         try:
-            datos = clave_publica(proxy.config.guard_key_path)
+            datos = proxy.datos_clave_publica()
         except Exception:  # noqa: BLE001
             logger.exception("No se pudo leer la clave del Guard")
             return None
