@@ -748,6 +748,16 @@ def test_004_trigger_de_la_compra():
     texto = _normal((SQL / "004_serverless.sql").read_text(encoding="utf-8"))
     assert "create or replace function public.gw_compras_proteger() returns trigger" in texto
     assert "set search_path = ''" in texto
+    # El paso a terminal entra antes del chequeo de `actualizada` (sin retroceder).
+    paso = re.search(
+        r"if new\.estado in \(([^)]*)\) and old\.estado not in \(([^)]*)\) then "
+        r"new\.actualizada := greatest\(new\.actualizada, old\.actualizada\); return new; end if;",
+        texto,
+    )
+    assert paso is not None
+    for grupo in paso.groups():
+        assert {t.strip(" '") for t in grupo.split(",")} == set(estado.ESTADOS_TERMINALES)
+    assert texto.index(paso.group(0)) < texto.index("if new.actualizada < old.actualizada")
     assert "if new.actualizada < old.actualizada then return null; end if;" in texto
     terminales = re.search(r"if old\.estado in \(([^)]*)\) and new\.estado is distinct from "
                            r"old\.estado then return null; end if;", texto)

@@ -644,6 +644,29 @@ async def test_compra_no_sale_de_un_estado_terminal(instancias, terminal):
     assert (await a.cargar_compra(CMP1))["datos"]["veredictos"] == [{"status": "bloqueado"}]
 
 
+@pytest.mark.parametrize("terminal", ["bloqueada", "vencida"])
+async def test_el_paso_a_terminal_entra_aunque_llegue_con_actualizada_menor(instancias, terminal):
+    """Una copia vieja con el reloj adelantado llegó antes que el corte: el
+    corte igual entra (si no, la conversación cortada seguiría) y
+    `actualizada` no retrocede."""
+    a, b = instancias(), instancias()
+    await a.guardar_compra(compra_en("negociando"))
+    await b.guardar_compra(compra_en("negociando", actualizada=AHORA + timedelta(seconds=5)))
+    await a.guardar_compra(compra_en(terminal, actualizada=AHORA + timedelta(seconds=1)))
+    fila = await b.cargar_compra(CMP1)
+    assert fila["estado"] == terminal
+    assert momento(fila, "actualizada") == AHORA + timedelta(seconds=5)
+    # Por la escritura condicionada, igual.
+    await a.guardar_compra(
+        compra_en("sin_oportunidad", CMP2, actualizada=AHORA + timedelta(seconds=9))
+    )
+    assert await b.guardar_compra_condicionada(
+        compra_en(terminal, CMP2, actualizada=AHORA), estado_esperado="sin_oportunidad",
+        espera_id_esperado=CUALQUIERA,
+    )
+    assert (await a.cargar_compra(CMP2))["estado"] == terminal
+
+
 async def test_compra_descarta_la_escritura_vieja(instancias):
     a, b = instancias(), instancias()
     await a.guardar_compra(compra_en("negociando", actualizada=AHORA + timedelta(seconds=2)))

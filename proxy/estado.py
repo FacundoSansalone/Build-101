@@ -315,15 +315,24 @@ def _validar_fila_evento(fila: Any) -> dict[str, Any]:
     return {columna: copy.deepcopy(fila.get(columna)) for columna in COLUMNAS_EVENTO}
 
 
-def _protege_compra(vieja: dict[str, Any], nueva: dict[str, Any]) -> bool:
-    """Lo que hace el trigger `gw_compras_proteger` (004): False = la base
-    descarta la escritura sin error. Una escritura con `actualizada` menor que
-    la guardada llega tarde; de `bloqueada` o `vencida` no se sale."""
+def _proteger_compra(vieja: dict[str, Any], nueva: dict[str, Any]) -> dict[str, Any] | None:
+    """Lo que hace el trigger `gw_compras_proteger` (004): la fila que queda,
+    o None si la base descarta la escritura sin error.
+
+    El paso a un estado terminal entra siempre (aunque llegue con una
+    `actualizada` menor: una copia vieja que llegó antes no puede dejar
+    seguir una conversación cortada), con la `actualizada` mayor de las dos.
+    Si no, una escritura con `actualizada` menor que la guardada llega tarde,
+    y de `bloqueada` o `vencida` no se sale."""
+    if nueva["estado"] in ESTADOS_TERMINALES and vieja["estado"] not in ESTADOS_TERMINALES:
+        if _fecha(nueva["actualizada"]) < _fecha(vieja["actualizada"]):
+            nueva = {**nueva, "actualizada": vieja["actualizada"]}
+        return nueva
     if _fecha(nueva["actualizada"]) < _fecha(vieja["actualizada"]):
-        return False
+        return None
     if vieja["estado"] in ESTADOS_TERMINALES and nueva["estado"] != vieja["estado"]:
-        return False
-    return True
+        return None
+    return nueva
 
 
 def _proyectar(fila: dict[str, Any], columnas: tuple[str, ...]) -> dict[str, Any]:
@@ -754,8 +763,8 @@ class EstadoMemoria:
         fila = _validar_fila_compra(fila)
         actual = self._compras.get(fila["id"])
         if actual is not None:
-            nueva = {**actual, **copy.deepcopy(fila)}
-            if _protege_compra(actual, nueva):
+            nueva = _proteger_compra(actual, {**actual, **copy.deepcopy(fila)})
+            if nueva is not None:
                 self._compras[fila["id"]] = nueva
             else:
                 logger.debug("Estado: escritura descartada de la compra %s", fila["id"])
@@ -794,8 +803,8 @@ class EstadoMemoria:
             return False
         if actualizada is not None and _fecha(actual["actualizada"]) != actualizada:
             return False
-        nueva = {**actual, **copy.deepcopy(fila)}
-        if not _protege_compra(actual, nueva):
+        nueva = _proteger_compra(actual, {**actual, **copy.deepcopy(fila)})
+        if nueva is None:
             return False
         self._compras[fila["id"]] = nueva
         return True
