@@ -1414,7 +1414,9 @@ class ProxyGuard:
             if pedido.tipo == "find_products":
                 respuesta = a2a.Respuesta()
                 respuesta.ingerir(result)
-                if not self._registrar_ofertas(respuesta, llamada):
+                if not self._registrar_ofertas(
+                    respuesta, llamada, completa=_busqueda_completa(result)
+                ):
                     return self._cortar(
                         llamada, result, _MOTIVO_CONTEXTO_AJENO, etapa="seguridad"
                     ), 200
@@ -1600,7 +1602,9 @@ class ProxyGuard:
                 self._emitir_busqueda(llamada, est.ofertas.contexto_id or est.contexto_id)
                 if final and not est.ofertas_registradas:
                     est.ofertas_registradas = True
-                    if not self._registrar_ofertas(est.ofertas, llamada):
+                    if not self._registrar_ofertas(
+                        est.ofertas, llamada, completa=_busqueda_completa(result)
+                    ):
                         return self._sse_cortar_etapa2(llamada, est, _MOTIVO_CONTEXTO_AJENO)
             return self._sse_encolar(est, crudo, final=final, llamada=llamada)
 
@@ -1721,15 +1725,26 @@ class ProxyGuard:
 
     # -- ofertas -------------------------------------------------------------
 
-    def _registrar_ofertas(self, respuesta: a2a.Respuesta, llamada: Llamada) -> bool:
+    def _registrar_ofertas(
+        self, respuesta: a2a.Respuesta, llamada: Llamada, completa: bool = False
+    ) -> bool:
         """Solo desde la respuesta a un find_products del cliente.
 
         False si ese contexto ya tiene ofertas de **otro** comercio: no se
         pisan (un comercio malicioso no envenena las de otro devolviendo su
         contextId) y el llamador corta la respuesta.
+
+        Sin carts no se registra nada; si además el comercio dio la búsqueda
+        por terminada (`completa`: tarea `completed`), se emite
+        `ofertas_recibidas` vacío para que la corrida termine ("el comercio
+        no tiene nada que cumpla tu pedido").
         """
         pedido = llamada.pedido
-        if pedido.tipo != "find_products" or not respuesta.carts:
+        if pedido.tipo != "find_products":
+            return True
+        if not respuesta.carts:
+            if completa:
+                self._emitir_sin_resultados(respuesta, llamada)
             return True
         contexto_id = respuesta.contexto_id or pedido.contexto_id
         escenario = respuesta.escenario or pedido.escenario
@@ -1780,6 +1795,27 @@ class ProxyGuard:
             llamada=llamada,
         )
         return True
+
+    def _emitir_sin_resultados(self, respuesta: a2a.Respuesta, llamada: Llamada) -> None:
+        """`ofertas_recibidas` con `carts: []`: el comercio terminó la búsqueda
+        sin nada para ofrecer. Sin carts no hay ofertas que elegir: tampoco
+        van las fichas que haya declarado. Si el contexto ya tiene ofertas de
+        otro comercio, no se emite (no se mezclan comercios en una compra)."""
+        pedido = llamada.pedido
+        contexto_id = respuesta.contexto_id or pedido.contexto_id
+        comercio_id = llamada.comercio.id if llamada.comercio is not None else None
+        previas = self._ofertas.get(contexto_id) if contexto_id else None
+        if previas is not None and previas.comercio_id not in (None, comercio_id):
+            return
+        logger.info("← sin resultados: contexto=%s", contexto_id)
+        self._emitir(
+            "ofertas_recibidas",
+            {"carts": [], "offer_details": []},
+            guard_activo=llamada.guard_activo,
+            contexto_id=contexto_id,
+            escenario=respuesta.escenario or pedido.escenario,
+            llamada=llamada,
+        )
 
     async def _contexto_respuesta_ok(self, llamada: Llamada, result: Any) -> bool:
         """El `contextId` que trae la respuesta (JSON o cada evento SSE).
@@ -3351,6 +3387,15 @@ def _leer_del_comercio(contenido: bytes | str) -> tuple[Any, str | None]:
     if error is None and a2a.anidado_de_mas(body, a2a.PROFUNDIDAD_MAXIMA):
         return None, f"la respuesta tiene más de {a2a.PROFUNDIDAD_MAXIMA} niveles de anidamiento"
     return body, error
+
+
+def _busqueda_completa(result: Any) -> bool:
+    """¿El comercio dio la búsqueda por terminada? Una tarea o el
+    status-update final en `completed` (no `failed`, ni un mensaje suelto)."""
+    if not isinstance(result, dict) or result.get("kind") not in ("task", "status-update"):
+        return False
+    status = result.get("status")
+    return isinstance(status, dict) and status.get("state") == "completed"
 
 
 def _pedido_legible(raw: bytes) -> bool:

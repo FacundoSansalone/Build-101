@@ -274,7 +274,7 @@ replay. En memoria y en el SSE siguen todos.
 | `tipo` | `datos` |
 |---|---|
 | `busqueda_enviada` | `{"catalog_search": str}`. Sale con el `contextId` del pedido o, si no lo traía, recién con el de la respuesta del comercio. |
-| `ofertas_recibidas` | `{"carts": [...], "offer_details": [...]}` |
+| `ofertas_recibidas` | `{"carts": [...], "offer_details": [...]}`. Con `carts: []` (y `offer_details: []`): el comercio terminó la búsqueda (tarea `completed`) sin nada para ofrecer; no se registra ninguna oferta y la corrida termina ("el comercio no tiene nada que cumpla tu pedido"). Una tarea fallida, un stream sin evento final o lo que cortó el filtro no lo emiten |
 | `checkout_pedido` | `{"cart_id": str}` |
 | `checkout_recibido` | `{"cart_id", "checkout_jwt", "checkout_hash", "jwt_header", "jwt_payload", "ap2_violaciones"}` (+ `cart_id_checkout` si el del checkout no es el del pedido). Header y payload decodificados solo para mostrar; `ap2_violaciones` = `demo_world.ap2_check.ap2_violations(cart, intent)` con el **tope y la moneda de la ficha de esa compra** (`intent_ap2`); `null` si la compra no tiene tope o no se pudo correr |
 | `veredicto` | `{"veredicto": <Veredicto JSON completo>, "fuente": "http"\|"fixture"\|"ninguno", "fabricante": {"fuente": "fixture"\|"icecat"\|"ninguna"\|…, "fixture": bool, "consultas": [{"gtin", "con_dato", "motivo"}], "error"?: str}, "comercio_id": <merchant.id firmado>, "catalogo_descartado"?: str, "recibo_firmado": bool, "evaluador": "guard"\|"stub"}` |
