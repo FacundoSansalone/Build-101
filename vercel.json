@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "index.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{world/**,dashboard/**,deploy/**,docs/**,results/**,fixtures/scenario_*.json,fixtures/etapa2/**,fixtures/general/**,fixtures/public_catalog.json,**/tests/**,proxy/scripts/**,proxy/sql/**,proxy/demo_local.py,proxy/subir_benchmark.py,guard/benchmark_hook.py,filtro/casos.py,filtro/evaluar.py,intencion/evaluar_*.py,.temp-db/**,.logs/**,**/__pycache__/**,**/.venv/**,.env,.env.*,**/*.pem,**/*.md}"
+    }
+  }
+}

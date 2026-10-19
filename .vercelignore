@@ -1,0 +1,76 @@
+# Qué NO sube `vercel deploy` (CLI). Mismo formato que .gitignore.
+#
+# CRÍTICO: el deploy sube la carpeta tal cual está en disco, no lo que hay en
+# git. Vercel solo ignora por su cuenta .git, .venv, node_modules,
+# __pycache__, .env.local y .env.*.local: el .env de la raíz SÍ se subiría.
+# Lo verifica proxy/tests/test_despliegue_vercel.py.
+#
+# Dos capas:
+#  1. Lista blanca en la raíz: se ignora todo y se vuelve a sumar solo el
+#     motor (contracts, guard, filtro, intencion, decisiones, taxonomia,
+#     fabricante, proxy), la entrada (index.py) y lo que lee el build.
+#     Un archivo nuevo en la raíz (un secreto, un volcado) no se sube.
+#  2. Lista negra adentro: secretos, la simulación y basura de desarrollo,
+#     en cualquier nivel.
+#
+# Si un lote suma un archivo a la raíz que el build necesita, agregalo acá
+# con `!` (y en el test).
+
+# -- 1. lista blanca en la raíz -----------------------------------------------
+/*
+!/index.py
+!/vercel.json
+!/pyproject.toml
+!/uv.lock
+!/requirements.txt
+!/.python-version
+!/contracts
+!/guard
+!/filtro
+!/intencion
+!/decisiones
+!/taxonomia
+!/fabricante
+!/proxy
+!/fixtures
+
+# fixtures/: solo la ficha del fabricante (FABRICANTE_FUENTE=fixture).
+/fixtures/*
+!/fixtures/fabricante
+
+# -- 2. secretos (en cualquier nivel) -----------------------------------------
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+guard_api_token
+.temp-db/
+.logs/
+.claude/
+.mcp.json
+.vercel/
+
+# -- simulación (no es el motor) ----------------------------------------------
+/world/
+/dashboard/
+/deploy/
+/docs/
+/results/
+fixtures/scenario_*.json
+fixtures/etapa2/
+fixtures/general/
+fixtures/public_catalog.json
+
+# -- desarrollo -----------------------------------------------------------------
+**/tests/
+proxy/scripts/
+**/.venv/
+**/venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.DS_Store
