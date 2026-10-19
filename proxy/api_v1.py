@@ -24,6 +24,7 @@ verificar entera no es una autorización.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
@@ -721,7 +722,11 @@ def rutas_v1(
 
     async def entregas(request: Request) -> Response:
         integrador = integrador_de(request)
-        return _json({"entregas": nucleo.entregas_webhook(integrador, _limite(request))})
+        entregas = nucleo.entregas_webhook(integrador, _limite(request))
+        if inspect.isawaitable(entregas):
+            # Con varias instancias el núcleo las lee del almacén.
+            entregas = await entregas
+        return _json({"entregas": entregas})
 
     async def probar_webhook(request: Request) -> Response:
         integrador = integrador_de(request)
