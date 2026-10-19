@@ -107,7 +107,7 @@ function otrasEsperando(compras, actual, ctx) {
 function vacioAgente(ctx) {
   if (ctx.estado.fuente === "vivo") {
     return vacio(ctx.estado.proxy.conectado === false ? "Proxy desconectado: nuestro agente no ve pedidos" : "Todavía no hay pedidos",
-      h("p", { text: "Cuando el agente del cliente busca algo a través del proxy (:8010), el proxy retiene la búsqueda y nuestro agente te pregunta acá para qué lo necesitás." }),
+      h("p", { text: `Cuando el agente del cliente busca algo a través del proxy (${String(ctx.estado.config.proxy_url).replace(/^https?:\/\//, "")}), el proxy retiene la búsqueda y nuestro agente te pregunta acá para qué lo necesitás.` }),
       h("p", { text: "Sin el flujo levantado: pasá a «Replay (archivo)» arriba." }));
   }
   return vacio("Este replay no tiene conversaciones con nuestro agente",

@@ -63,12 +63,17 @@ export function selectorCompra(ctx, { soloConVeredicto = false } = {}) {
       })))));
 }
 
+/** "127.0.0.1:8010": el proxy que configuró el panel (PROXY_URL), no un puerto fijo. */
+function proxyLegible(ctx) {
+  return String(ctx.estado.config?.proxy_url ?? "").replace(/^https?:\/\//, "") || "proxy";
+}
+
 export function renderFlujo(raiz, ctx) {
   const { estado } = ctx;
   const compra = ctx.compraActual();
   raiz.replaceChildren(
     h("header", { class: "vista-cab" },
-      h("p", { class: "eyebrow", text: estado.fuente === "vivo" ? "En vivo desde el proxy (:8010)" : `Replay · ${estado.replaySel ?? "sin archivo"}` }),
+      h("p", { class: "eyebrow", text: estado.fuente === "vivo" ? `En vivo desde el proxy (${proxyLegible(ctx)})` : `Replay · ${estado.replaySel ?? "sin archivo"}` }),
       h("h2", { text: "Flujo de cada compra" }),
       h("div", { class: "filtros" },
         h("button", { class: "boton", type: "button", onclick: () => ctx.descargarJsonl(), disabled: ctx.eventos.length === 0 ? true : null },
@@ -102,7 +107,7 @@ export function renderFlujo(raiz, ctx) {
 function vacioFlujo(ctx) {
   if (ctx.estado.fuente === "vivo") {
     return vacio(ctx.estado.proxy.conectado === false ? "Proxy desconectado: no llegan eventos" : "Esperando eventos del proxy",
-      h("p", { text: "Los eventos llegan por SSE desde el proxy del Guard (:8010/guard/events) cuando el Shopping Agent compra a través de él." }),
+      h("p", { text: `Los eventos llegan por SSE desde el proxy del Guard (${proxyLegible(ctx)}/guard/events) cuando el Shopping Agent compra a través de él.` }),
       h("p", { text: "Sin el flujo levantado: pasá a «Replay (archivo)» arriba." }));
   }
   return vacio("Este replay no tiene eventos",
