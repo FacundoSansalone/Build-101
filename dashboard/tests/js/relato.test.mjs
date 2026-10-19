@@ -4,7 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  armarRelato, filasFicha, formatearMedida, humanizarAtributo, limpiarTexto, rutaCategoria, textoCorteFiltro,
+  armarRelato, filasFicha, formatearMedida, humanizarAtributo, limpiarTexto, medidaEnUnidad, rutaCategoria,
+  textoCorteFiltro,
 } from "../../static/lib/relato.js";
 import { itemsDeEventos, itemsDeMensajes, lineaDeTiempo } from "../../static/lib/demo.js";
 
@@ -398,6 +399,59 @@ test("atributos y medidas en palabras", () => {
   assert.equal(formatearMedida({ valor: "N", unidad: null }), "no");
   assert.equal(formatearMedida(true), "sí");
   assert.equal(formatearMedida(16), "16");
+  // Los códigos UN/CEFACT (schema.org) se leen como símbolos, como en el Guard.
+  assert.equal(formatearMedida({ valor: 16, unidad: "E34" }), "16 GB");
+  assert.equal(formatearMedida({ valor: 1.8, unidad: "kg" }), "1.8 kg");
+});
+
+test("una medida en la unidad de lo pedido y, entre paréntesis, la original", () => {
+  assert.equal(medidaEnUnidad({ valor: 61, unidad: "cm" }, "in"), "24 in (61 cm)");
+  assert.equal(medidaEnUnidad({ valor: "68.6", unidad: "CMT" }, "in"), "27 in (68.6 cm)");
+  assert.equal(medidaEnUnidad({ valor: 310, unidad: "g" }, "kg"), "0.31 kg (310 g)");
+  assert.equal(medidaEnUnidad({ valor: 8, unidad: "GiB" }, "GB"), "8.59 GB (8 GiB)");
+  assert.equal(medidaEnUnidad({ valor: 1, unidad: "TB" }, "GB"), "1000 GB (1 TB)");
+  assert.equal(medidaEnUnidad({ valor: 512, unidad: "GB" }, "TB"), "0.512 TB (512 GB)");
+  assert.equal(medidaEnUnidad({ valor: 900, unidad: "min" }, "h"), "15 h (900 min)");
+  assert.equal(medidaEnUnidad({ valor: "61 cm", unidad: null }, "in"), "24 in (61 cm)");
+  // La misma unidad con otro nombre: la de lo pedido.
+  assert.equal(medidaEnUnidad({ valor: 16, unidad: "E34" }, "GB"), "16 GB");
+  assert.equal(medidaEnUnidad({ valor: 27, unidad: "pulgadas" }, "in"), "27 in");
+  // Sin conversión posible: como formatearMedida.
+  assert.equal(medidaEnUnidad({ valor: 16, unidad: "GB" }, null), "16 GB");
+  assert.equal(medidaEnUnidad({ valor: 16, unidad: "GB" }, "in"), "16 GB");
+  assert.equal(medidaEnUnidad({ valor: 40, unidad: "dB" }, "W"), "40 dB");
+  assert.equal(medidaEnUnidad({ valor: 4, unidad: null }, "GB"), "4");
+  assert.equal(medidaEnUnidad({ valor: "N", unidad: null }, "GB"), "no");
+  assert.equal(medidaEnUnidad(null, "in"), "—");
+});
+
+test("el fabricante en cm contra lo declarado en pulgadas: en la misma unidad", () => {
+  const veredicto = {
+    status: "bloqueado", cart_id_elegido: "cart_1",
+    motivo: "Bloqueado: tamano_pantalla 24 in (61 cm) no cumple el obligatorio (27 in).",
+    chequeos: [
+      { tipo: "cumplimiento", resultado: "bloquea", campo: "atributo:tamano_pantalla",
+        esperado: { valor: 27, unidad: "in" }, observado: { valor: 61, unidad: "cm" }, origen: "fabricante",
+        detalle: "tamano_pantalla 24 in (61 cm) no cumple el obligatorio (27 in)." },
+      { tipo: "evidencia", resultado: "escalar", campo: "atributo:tamano_pantalla",
+        esperado: { valor: 61, unidad: "cm" }, observado: { valor: 27, unidad: "in" }, origen: "fabricante",
+        detalle: "tamano_pantalla: lo que declara el comercio no coincide con la ficha del fabricante (61 cm)." },
+    ],
+  };
+  assert.deepEqual(textos(relato([evento("veredicto", { veredicto })])), [
+    "Pantalla: el fabricante dice 24 in (61 cm); el comercio declaró 27 in",
+    "Nuestra verificación: Pantalla 24 in (61 cm) no cumple lo que pediste (27 in)",
+  ]);
+});
+
+test("sin resultados: el comercio no tiene nada que cumpla el pedido", () => {
+  const lineas = relato([evento("ofertas_recibidas", { carts: [], offer_details: [] })]);
+  assert.deepEqual(textos(lineas), ["El comercio no tiene nada que cumpla tu pedido"]);
+  assert.equal(lineas[0].tono, "aviso");
+  assert.equal(lineas[0].actor, "comercio");
+  // Con ofertas, como siempre.
+  assert.deepEqual(textos(relato([evento("ofertas_recibidas", { carts: [{ cart_id: "c" }] })])),
+    ["El comercio respondió con 1 oferta"]);
 });
 
 test("el relato usa los items de eventos y mensajes en orden de hora", () => {

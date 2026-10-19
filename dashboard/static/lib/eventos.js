@@ -219,7 +219,23 @@ export function estadoCompra(compra) {
     return { clave: "para_firmar", texto: "Checkout presentado para firmar" };
   }
   if (compra.errores.length > 0) return { clave: "error", texto: "Error en el proxy" };
+  if (terminoSinResultados(compra.eventos)) {
+    return { clave: "sin_resultados", texto: "Sin resultados: el comercio no tiene nada que cumpla el pedido" };
+  }
   return { clave: "en_curso", texto: "En curso" };
+}
+
+/**
+ * ¿Lo último de la compra es una búsqueda que el comercio terminó sin nada?
+ * (`ofertas_recibidas` con `carts: []`, sin ofertas ni checkout después).
+ */
+function terminoSinResultados(eventos) {
+  for (let i = (eventos || []).length - 1; i >= 0; i--) {
+    const e = eventos[i];
+    if (e.tipo === "checkout_pedido") return false;
+    if (e.tipo === "ofertas_recibidas") return Array.isArray(e.datos?.carts) && e.datos.carts.length === 0;
+  }
+  return false;
 }
 
 /**
@@ -416,7 +432,10 @@ export function describirEvento(e) {
     case "busqueda_enviada": resumen = d.catalog_search ?? ""; break;
     case "ofertas_recibidas": {
       const n = (d.carts || []).length;
-      resumen = `${n} ${n === 1 ? "carrito" : "carritos"} (ap2.cart) y ${(d.offer_details || []).length} fichas declaradas`;
+      // Vacío: el proxy lo emite cuando el comercio terminó la búsqueda sin nada.
+      resumen = Array.isArray(d.carts) && n === 0
+        ? "Sin resultados: 0 carritos (ap2.cart)"
+        : `${n} ${n === 1 ? "carrito" : "carritos"} (ap2.cart) y ${(d.offer_details || []).length} fichas declaradas`;
       break;
     }
     case "checkout_pedido": resumen = `cart_id ${d.cart_id ?? "—"}`; break;

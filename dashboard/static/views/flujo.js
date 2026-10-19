@@ -25,6 +25,7 @@ const TONO_DECISION = { aceptada: "ok", rechazada: "neutro", vencida: "warn" };
 const TONO_ESTADO = {
   bloqueado: "crit", retenido: "serious", aprobado_humano: "ok", firmado: "ok", para_firmar: "neutro",
   escalar: "serious", error: "crit", en_curso: "neutro", corte_seguridad: "crit", sin_autorizacion: "warn",
+  sin_resultados: "warn",
 };
 
 function tonoEvento(e) {

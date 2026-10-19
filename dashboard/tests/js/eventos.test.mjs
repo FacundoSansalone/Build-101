@@ -72,6 +72,22 @@ test("compra bloqueada con Guard: elegido, estado y guard del momento de la deci
   assert.equal(montoCheckout(c.checkout), 149);
 });
 
+test("una búsqueda sin resultados termina la compra (no queda en curso)", () => {
+  const vacio = { carts: [], offer_details: [] };
+  const evs = [
+    ev("busqueda_enviada", { contexto_id: "ctx-v", datos: { catalog_search: "un monitor" } }),
+    ev("ofertas_recibidas", { contexto_id: "ctx-v", datos: vacio }),
+    ev("reenviado", { contexto_id: "ctx-v", datos: { metodo: "find_products" } }),
+  ];
+  let [c] = agruparCompras(evs).compras;
+  assert.deepEqual(estadoCompra(c), { clave: "sin_resultados", texto: "Sin resultados: el comercio no tiene nada que cumpla el pedido" });
+  assert.equal(describirEvento(evs[1]).resumen, "Sin resultados: 0 carritos (ap2.cart)");
+  // Si después pide el checkout de una oferta de antes, sigue.
+  evs.push(ev("checkout_pedido", { contexto_id: "ctx-v", datos: { cart_id: "cart_1" } }));
+  [c] = agruparCompras(evs).compras;
+  assert.equal(estadoCompra(c).clave, "en_curso");
+});
+
 test("compra sin Guard: checkout reenviado y después mandatos firmados", () => {
   const evs = [
     ev("checkout_recibido", { contexto_id: "ctx-s", datos: { cart_id: "cart_4", ap2_violaciones: [] } }),

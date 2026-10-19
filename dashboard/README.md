@@ -119,13 +119,20 @@ queda como "Detalle técnico" (`/`).
   Guard (verificado en `proxy/app.py`: todo depende de `guard_activo`); el
   diagrama baja al Guard atenuado y los mensajes van directo agente ↔
   comercio; el relato lo dice en una línea.
+- **Sin resultados**: si el comercio termina la búsqueda sin carts, el proxy
+  emite `ofertas_recibidas` con `carts: []` y la corrida termina con "El
+  comercio no tiene nada que cumpla tu pedido" (relato, historial y
+  contraste; en el panel, "Sin resultados"). Si después el agente busca otra
+  cosa y encuentra, o pide el checkout de una oferta de antes, sigue.
 - **Con y sin intermediario**: al terminar una corrida (pagada, frenada,
-  cortada, retenida, vencida) se guarda su resultado **por comportamiento del
-  comercio, pedido y lado** en `localStorage` (`psg.demo.contraste`, las 40
-  más nuevas; el pedido se compara sin mayúsculas, tildes ni puntuación) y se
-  muestra lado a lado cuando volvés a hacer el mismo pedido al mismo
-  comportamiento ("Se compró Zento Slim 14, con 8 GB de memoria RAM (pediste
-  16 GB)" / "Frenada antes de la firma: no se pagó nada"). `/demo/clasico`
+  cortada, retenida, vencida, sin resultados) se guarda su resultado **por
+  comportamiento del comercio, pedido y lado** en `localStorage`
+  (`psg.demo.contraste`, las 40 más nuevas; el pedido se compara sin
+  mayúsculas, tildes ni puntuación) y se muestra lado a lado cuando volvés a
+  hacer el mismo pedido al mismo comportamiento ("Se compró Zento Slim 14,
+  con 8 GB de memoria RAM (pediste 16 GB)" / "Frenada antes de la firma: no
+  se pagó nada"). Lo real va en la unidad de lo pedido ("con 24 in (61 cm) de
+  pantalla (pediste 27 in)"), igual que el motivo del Guard. `/demo/clasico`
   sigue guardando por escenario en `psg.demo.comparacion`.
 - **Replay (plan B)**: en `/demo/clasico`, el selector "Grabación…"
   reproduce un `.jsonl` de `dashboard/demo/` o `.logs/` con el mismo
@@ -171,7 +178,9 @@ Lógica sin DOM (la vista solo la pinta; testeada con `node --test`):
   confirmarla), `filasFicha(ficha_parcial, {categoriaRuta})` → `[{nombre,
   valor, marca, tono, preferido}]`, `rutaCategoria(ruta)`,
   `textoEntendido(contexto)`, `resumirAgente`, `limpiarTexto`,
-  `humanizarAtributo`, `formatearMedida`.
+  `humanizarAtributo`, `formatearMedida`, `medidaEnUnidad(medida, unidad)`
+  ("24 in (61 cm)"; las mismas unidades que `guard/atributos.py`, solo para
+  mostrar) y `unidadLegible` (`E34` → GB).
 - `lib/diagrama.js`: `geometria("horizontal"|"vertical")` (nodos, paths de
   las aristas, cuánto se corre el Guard apagado), `estadoInicial`,
   `paso(estado, item)` → `{estado, flujos: [{de, a, tono, clave,

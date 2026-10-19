@@ -2,7 +2,7 @@
 // agente de compras), a quién le habla el input, cómo terminó la corrida y el
 // contraste con y sin intermediario. Se testea con node --test.
 
-import { formatearMedida, humanizarAtributo, nombreDeOferta } from "./relato.js";
+import { SIN_RESULTADOS, formatearMedida, humanizarAtributo, medidaEnUnidad, nombreDeOferta } from "./relato.js";
 
 const ESPERAN = new Set(["esperando_contexto", "esperando_decision"]);
 const TOLERANCIA_MS = 2_000;
@@ -85,11 +85,16 @@ const DESENLACES = {
   cortada: { texto: "Conversación cortada por el filtro", tono: "crit" },
   retenida: { texto: "Retenida: necesita tu aprobación", tono: "aviso" },
   vencida: { texto: "La consulta venció", tono: "aviso" },
+  sin_resultados: { texto: SIN_RESULTADOS, tono: "aviso" },
 };
+
+const deProxy = (item, tipo) => item.origen === "proxy" && item.tipo === tipo;
+// null sin la lista: un evento sin `carts` no dice que no haya resultados.
+const cantidadDeCarts = (item) => (Array.isArray(item.datos?.carts) ? item.datos.carts.length : null);
 
 function claveDe(item) {
   if (item.origen === "demo" && item.tipo === "pago") return "pagado";
-  if (item.origen !== "proxy" || item.tipo !== "bloqueado") return null;
+  if (!deProxy(item, "bloqueado")) return null;
   const d = item.datos || {};
   if (d.etapa === "seguridad") return "cortada";
   if (d.etapa === "intencion") return "vencida";
@@ -97,27 +102,48 @@ function claveDe(item) {
   return "frenada";
 }
 
-/** Cómo terminó la corrida (el último desenlace), o null si sigue. */
+/** Después de una búsqueda vacía, ¿la corrida siguió? (ofertas nuevas o un checkout). */
+const siguio = (item) => (deProxy(item, "ofertas_recibidas") && cantidadDeCarts(item) > 0)
+  || deProxy(item, "checkout_pedido");
+
+/**
+ * Cómo terminó la corrida (el último desenlace), o null si sigue. Una
+ * búsqueda que el comercio terminó sin nada (`ofertas_recibidas` con
+ * `carts: []`) también termina, salvo que después la corrida siga.
+ */
 export function desenlace(items) {
+  let despues = false;
   for (let i = (items || []).length - 1; i >= 0; i--) {
-    const clave = claveDe(items[i]);
-    if (clave) return { clave, ...DESENLACES[clave], item: items[i] };
+    const item = items[i];
+    const clave = claveDe(item);
+    if (clave) return { clave, ...DESENLACES[clave], item };
+    if (siguio(item)) despues = true;
+    else if (!despues && deProxy(item, "ofertas_recibidas") && cantidadDeCarts(item) === 0) {
+      return { clave: "sin_resultados", ...DESENLACES.sin_resultados, item };
+    }
   }
   return null;
 }
 
 // ---------------------------------------------------------------- con y sin intermediario
 
-/** Lo que el Guard encontró en contra (el primer obligatorio que no cumple). */
+/**
+ * Lo que el Guard encontró en contra (el primer obligatorio que no cumple).
+ * Lo real va en la unidad de lo pedido: "24 in (61 cm)" contra "27 in". El
+ * Guard manda lo pedido de un atributo con su unidad (`{valor, unidad}`); un
+ * veredicto viejo con el número solo no inventa la unidad de lo observado.
+ */
 function hallazgoDe(veredicto) {
   const c = (veredicto?.chequeos || []).find((x) => x?.tipo === "cumplimiento" && x.resultado === "bloquea");
   if (!c) return null;
   const campo = String(c.campo ?? "");
   const atributo = campo.startsWith("atributo:") ? humanizarAtributo(campo.slice(9)) : humanizarAtributo(campo);
-  const unidad = c.observado && typeof c.observado === "object" ? c.observado.unidad : null;
-  const pedido = formatearMedida(c.esperado) + (unidad && typeof c.esperado === "number" ? ` ${unidad}` : "");
-  return { atributo, real: formatearMedida(c.observado), pedido };
+  const unidad = c.esperado && typeof c.esperado === "object" ? c.esperado.unidad : null;
+  return { atributo, real: medidaEnUnidad(c.observado, unidad), pedido: formatearMedida(c.esperado) };
 }
+
+// Desenlaces en los que no hay un producto del que hablar.
+const SIN_PRODUCTO = new Set(["cortada", "sin_resultados"]);
 
 /**
  * El resultado de una corrida terminada, para compararla:
@@ -152,7 +178,7 @@ export function resultadoCorrida(items, { escenario, guardActivo }) {
     escenario: escenario ?? null,
     guardActivo: Boolean(guardActivo),
     clave: fin.clave,
-    producto: cartId && fin.clave !== "cortada" ? nombreDeOferta(ofertas, cartId) : null,
+    producto: cartId && !SIN_PRODUCTO.has(fin.clave) ? nombreDeOferta(ofertas, cartId) : null,
     precio: typeof oferta?.precio === "number" ? oferta.precio : null,
     moneda: oferta?.moneda ?? null,
     hallazgo: hallazgoDe(veredicto),
@@ -182,6 +208,7 @@ function frase(r, otro) {
     case "cortada": return "El filtro cortó la conversación: no se compró nada";
     case "retenida": return "Retenida antes de la firma: decidís vos";
     case "vencida": return "La consulta venció: no se compró nada";
+    case "sin_resultados": return SIN_RESULTADOS;
     default: return null;
   }
 }
@@ -198,12 +225,14 @@ function tono(r, otro) {
     return h ? "crit" : "ok";
   }
   if (r.clave === "frenada" || r.clave === "cortada") return "freno";
+  if (r.clave === "sin_resultados") return "neutro"; // no había nada que comprar
   return "aviso";
 }
 
 /**
  * El tono de cada lado: "crit" (se pagó algo que no cumple), "ok" (se pagó
- * sin hallazgos), "freno" (no se pagó nada), "aviso" (quedó esperándote).
+ * sin hallazgos), "freno" (no se pagó nada), "aviso" (quedó esperándote),
+ * "neutro" (el comercio no tenía nada que cumpliera el pedido).
  */
 export function tonosComparacion(sin, con) {
   return { sin: tono(sin, con), con: tono(con, sin) };
