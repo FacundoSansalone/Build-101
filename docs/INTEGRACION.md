@@ -393,6 +393,26 @@ En esta medición (2026-10-19): una notebook (categoría 328) → `aprobado`; un
 tablet "a tiempo" del comercio general (`general_otra_categoria`) → `escalar`
 por categoría; un pedido en ARS → `bloqueado` por moneda.
 
+### 5.8 Probarlo desde el navegador: la consola web
+
+**Consola web: https://kaiai-motor.vercel.app/consola** (la raíz `/` redirige
+ahí). Hace en el navegador lo mismo que tu agente: pegás tu clave `psg_…`,
+creás la compra (pedido, comercio, tope y moneda, y opcionales cantidad, plazo
+y categoría), buscás, contestás el porqué y la propuesta con su cuenta
+regresiva, pedís el checkout, ves el `guard.veredicto`, aprobás un `escalar`
+y verificás la firma del recibo en el navegador contra `GET /v1/public-key`.
+También tiene una pestaña para probar `/v1/filtrar`.
+
+- **No tiene permisos propios:** cada paso es una llamada a `/v1` o a
+  `/a2a/m/{comercio}` con tu clave, y la API decide igual que con tu agente.
+- **La clave** queda en la memoria de la pestaña (o en `sessionStorage` si
+  marcás "recordar en esta pestaña") y solo viaja a ese mismo origen: la
+  página tiene una CSP con `connect-src 'self'`, sin scripts de terceros.
+- **El comportamiento del comercio simulado** (`demo_scenario`) solo lo
+  entiende el comercio de la simulación; un comercio real lo ignora.
+- Lo que escribe el comercio (por ejemplo `item_label`) se muestra como texto,
+  nunca como HTML: puede traer una inyección.
+
 ## 6. Referencia de la API
 
 Todo es JSON. Los POST exigen `Content-Type: application/json`. Las fechas

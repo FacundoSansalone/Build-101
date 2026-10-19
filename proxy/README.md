@@ -781,6 +781,7 @@ Con `GATEWAY_ESTADO=supabase` y sin las tablas, crear una compra da 503
 | `GATEWAY_MAX_CUERPO_BYTES` | `1048576` | Tope de cuerpo de `/v1` |
 | `GATEWAY_MAX_CUERPO_A2A_BYTES` | `5242880` | Tope de un pedido A2A de integrador |
 | `GATEWAY_COMPRA_TTL_S` | `86400` | Vida de una compra de integrador |
+| `GATEWAY_CONSOLA` | `0` | `1`: la consola web (`/consola`, `proxy/consola/`) en los dos oyentes, sin clave (llama a `/v1` con la que pega el usuario). En Vercel está siempre prendida |
 | `GATEWAY_LATIDO_S` | apagado | Latido de un pedido A2A retenido en `/a2a/m/{comercio}`: si la respuesta no está a los N segundos, sale `200` y un espacio cada N antes del JSON (en `message/stream`, un comentario `: latido`); un error final va como error JSON-RPC con `data.http_status`. Más de 0 y hasta 60; `0` u `off`, apagado. En Vercel, 15 (hasta 30; no se apaga) |
 | *(nombres libres)* | — | Secretos de webhook, los que nombra `secreto_env` |
 
@@ -890,6 +891,7 @@ intención queda apagada (pedido literal).
 | `api_v1.py` | Rutas `/v1`, validación estricta (ficha con tope, requisitos que el Guard sabe chequear) y errores |
 | `vistas.py` | Lo que ve el integrador de una compra (`VistaCompra`), sin texto del vendedor |
 | `openapi.py` | OpenAPI 3.1 de `/v1` y la página `/v1/docs` (HTML sin scripts) |
+| `consola/` | La consola web (`/consola`, y `/` → 307): `rutas_consola()` sirve `index.html`, `app.js` (la vista), `logica.mjs` (lógica pura: cuerpos de `/v1`, JSON-RPC, lectura con latido, veredicto y verificación del recibo con WebCrypto) y `estilo.css`, sin clave, con CSP estricta, `nosniff`, `no-referrer` y `no-store`. Hace lo del agente de un integrador con la clave que pega el usuario; no tiene permisos propios. La prende `create_app(..., consola=True)` (Vercel; en `python -m proxy`, `GATEWAY_CONSOLA=1`). Consola web: https://kaiai-motor.vercel.app/consola |
 | `claves.py` | Claves `psg_` (sha256), registro de integradores, middleware `AutenticacionGateway` y la CLI `python -m proxy.claves` |
 | `comercios.py` | Registro de comercios (`/a2a/m/{id}`, sin URL libre) y la política con sus `merchant_ids` |
 | `webhooks.py` | `Despachador`: webhooks firmados (HMAC con `t`), reintentos, SSRF con IP fijada; `verificar_firma` para el receptor |
