@@ -17,7 +17,9 @@ de una notebook) no aplica: no tiene evidencia.
 
 Cuando una fuente tiene el dato, la oferta verificada usa el dato de la
 fuente (decisión 4 del paso 0). El precio y la moneda siguen siendo los del
-ap2.cart (lo que se cobra); se comparan con los de la fuente.
+ap2.cart (lo que se cobra); se comparan con los de la fuente. El `amount`
+es el total y el `price` de la fuente es por unidad: con `cantidad` > 1 se
+compara con el precio por la cantidad (`total_publico`).
 
 Categorías variadas: el GTIN (solo contra fuentes por SKU: el fabricante se
 busca por GTIN y no puede verificarlo), la categoría de la taxonomía de
@@ -117,6 +119,9 @@ def verificar_con_rotulos(
     for atributo, clave in CLAVE_CATALOGO_COBRO.items():
         cobrado = _o_none(getattr(oferta, atributo))
         publico, _ = _primero(fuentes, lambda p, c=clave, a=atributo: _valor_publico(p, c, a))
+        if atributo == "precio":
+            # El amount es el total; el precio de la fuente, por unidad (H1).
+            publico = total_publico(publico, oferta.cantidad)
         if publico is None:
             estado = "solo_declarado"
         else:
@@ -170,6 +175,18 @@ def verificar_todas(
 ) -> list[Oferta]:
     nombres = list(atributos)
     return [verificar(o, catalogo, nombres) for o in ofertas]
+
+
+def total_publico(unitario: float | None, cantidad: int | None) -> float | None:
+    """Lo que tendría que cobrarse según la fuente: el precio por unidad por la
+    cantidad declarada si es > 1; si no (o sin precio), el precio tal cual.
+
+    El redondeo a 6 decimales saca el ruido del float (19.99 × 3) sin tocar
+    centavos ni milésimos.
+    """
+    if unitario is None or cantidad is None or cantidad <= 1:
+        return unitario
+    return round(unitario * cantidad, 6)
 
 
 def _primero(fuentes: list[Fuente], extraer: Callable[[dict], Any]) -> tuple[Any, Fuente | None]:
