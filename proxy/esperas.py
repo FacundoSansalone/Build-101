@@ -168,6 +168,9 @@ class EsperaLocal:
 @dataclass
 class _Retenida:
     espera_id: str
+    # La compra que trabaja la búsqueda retenida: la que está al día (la de
+    # memoria del registro puede ser otra copia, de otro pedido).
+    compra: Compra
     # Lo pone `responder` cuando la respuesta llega a esta misma instancia.
     despertar: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -193,6 +196,14 @@ class EsperaCompartida:
 
     def retiene(self, compra_id: str) -> bool:
         return compra_id in self._retenidas
+
+    def retenida(self, compra_id: str) -> Compra | None:
+        """La compra cuya espera retiene esta instancia: el mismo objeto que
+        trabaja la búsqueda retenida (con el estado de espera, la pregunta u
+        oportunidad y `vence`). Quien lee la compra en esta instancia tiene
+        que usar esta, no otra copia."""
+        retenida = self._retenidas.get(compra_id)
+        return retenida.compra if retenida is not None else None
 
     # -- abrir (A) --------------------------------------------------------------
 
@@ -224,7 +235,7 @@ class EsperaCompartida:
             return "ocupada"
         # Antes de escribir: con la espera retenida acá, el núcleo escribe la
         # fila con el `espera_id` nuevo.
-        self._retenidas[compra.id] = _Retenida(espera_id)
+        self._retenidas[compra.id] = _Retenida(espera_id, compra)
         compra.espera_id = espera_id
         try:
             escrita = await self._escribir(compra, estado_previo, compra.espera_guardada)

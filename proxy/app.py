@@ -1084,10 +1084,11 @@ class ProxyGuard:
     async def _hidratar_varias(self, compra_id: str) -> Compra | None:
         esperas = self.esperas_compartidas
         assert esperas is not None
-        if esperas.retiene(compra_id):
-            retenida = self.compras.get(compra_id)
-            if retenida is not None:
-                return retenida
+        retenida = esperas.retenida(compra_id)
+        if retenida is not None:
+            # La que trabaja la búsqueda retenida, no la del registro: un GET
+            # anterior pudo dejar ahí otra copia (sin la espera).
+            return self.compras.reemplazar(retenida)
         fila = await self.almacen.cargar_compra(compra_id)
         if fila is None:
             return None
@@ -1103,10 +1104,11 @@ class ProxyGuard:
         if self.esperas_compartidas is None:
             return Compra.desde_fila(fila)
         compra_id = fila.get("id") if isinstance(fila, dict) else None
-        if isinstance(compra_id, str) and self.esperas_compartidas.retiene(compra_id):
-            retenida = self.compras.get(compra_id)
-            if retenida is not None:
-                return retenida
+        retenida = (
+            self.esperas_compartidas.retenida(compra_id) if isinstance(compra_id, str) else None
+        )
+        if retenida is not None:
+            return retenida
         return await self.esperas_compartidas.compra_de_fila(fila)
 
     async def atar_contexto_api(
@@ -1672,8 +1674,14 @@ class ProxyGuard:
                 self._emitir_pregunta(llamada, compra, EstadoIntake(), vence=vence)
                 if not esperas.compartida:
                     self.guardar_compra(compra)
+                else:
+                    self.compras.reemplazar(compra)  # la de memoria es la que espera
                 fin = await esperas.esperar(compra, "porque")
                 respuesta, vencido = fin.valor, fin.vencida
+                if esperas.compartida and compra.estado == "esperando_contexto":
+                    # Como en memoria al responder: mientras se arma el
+                    # contexto, quien la lea acá ya no ve la pregunta.
+                    compra.estado = "negociando"
                 if respuesta:
                     turnos = [Turno(pregunta=compra.pregunta, respuesta=respuesta)]
                     contexto = await self._contexto_turno(
@@ -2902,6 +2910,8 @@ class ProxyGuard:
             return self._accion_resuelta(compra, result) or ("pasar", None)
         if not esperas.compartida:
             self.guardar_compra(compra)
+        elif apertura == "abierta":
+            self.compras.reemplazar(compra)  # la de memoria es la que espera
         decision = None
         cortada = False
         try:
