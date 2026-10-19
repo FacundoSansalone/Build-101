@@ -801,3 +801,37 @@ def test_index_sin_configurar_responde_503():
     assert resultado["tipo"] == "AppNoConfigurada"
     assert resultado["openapi"] == 503 and resultado["public_key"][0] == 503
     assert resultado["intentos"] == [] and resultado["red"] == [] and resultado["escrituras"] == []
+
+
+# -- la prueba local documentada (deploy/vercel) ------------------------------------------
+
+
+def _script_deploy(nombre: str) -> Any:
+    import importlib.util
+
+    ruta = RAIZ / "deploy" / "vercel" / f"{nombre}.py"
+    spec = importlib.util.spec_from_file_location(f"_d2_deploy_{nombre}", ruta)
+    assert spec and spec.loader
+    modulo = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = modulo  # dataclasses lo busca ahí
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+def test_la_prueba_local_sin_supabase_arma_el_motor(tmp_path, capsys):
+    """`generar_secretos.py` + `local_sin_supabase.env.ejemplo` (lo que dice
+    el README) pasan todos los chequeos de `crear_app_serverless`."""
+    assert _script_deploy("generar_secretos").main(["--carpeta", str(tmp_path)]) == 0
+    capsys.readouterr()
+    leer_env = _script_deploy("local_multi").leer_env
+    env = {
+        **leer_env(tmp_path / "vercel.env"),
+        **leer_env(RAIZ / "deploy" / "vercel" / "local_sin_supabase.env.ejemplo"),
+    }
+    assert env["SUPABASE_URL"] == "http://127.0.0.1:54321"
+    app = vercel.crear_app_serverless(
+        env, almacen=EstadoSupabase(env["SUPABASE_URL"], "x", transport=BaseFalsa().transporte())
+    )
+    assert not isinstance(app, vercel.AppNoConfigurada), getattr(app, "motivo", "")
+    assert app.state.proxy.config.presupuesto_llamada_s == vercel.PRESUPUESTO_LLAMADA_S
+    _sin_secretos(capsys.readouterr().out)

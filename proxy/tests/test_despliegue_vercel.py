@@ -532,7 +532,7 @@ def _script(nombre: str) -> ModuleType:
 @pytest.mark.parametrize("ruta", [
     "deploy/vercel/local_multi.py", "deploy/vercel/tunel_router.py",
     "deploy/vercel/verificar_supabase.py", "deploy/vercel/generar_secretos.py",
-    "proxy/scripts/smoke_v1_pausas.py",
+    "deploy/vercel/postgrest_local.py", "proxy/scripts/smoke_v1_pausas.py",
 ])
 def test_cada_script_tiene_ayuda(ruta):
     """`python <ruta> --help` desde la raíz, como dice el README."""
@@ -542,6 +542,49 @@ def test_cada_script_tiene_ayuda(ruta):
     )
     assert resultado.returncode == 0, resultado.stderr
     assert "usage" in resultado.stdout
+
+
+# -- postgrest_local: la base compartida sin Supabase ---------------------------------
+
+
+@pytest.mark.anyio
+async def test_postgrest_local_comparte_la_base_entre_instancias():
+    """Dos `EstadoSupabase` (dos instancias) contra el mismo PostgREST falso
+    por HTTP: lo que escribe una lo lee la otra, y los índices únicos deciden
+    igual que en la base (gana el primero que ata el contexto)."""
+    from proxy.estado import EstadoSupabase
+    from proxy.tests.postgrest_falso import BaseFalsa
+    from proxy.tests.test_estado import CMP1, fila_compra
+
+    servidor = _script("postgrest_local").PostgrestLocal(BaseFalsa())
+
+    def instancia() -> EstadoSupabase:
+        return EstadoSupabase(
+            "http://127.0.0.1:54321", "local-sin-supabase",
+            transport=httpx.ASGITransport(app=servidor),
+        )
+
+    a, b = instancia(), instancia()
+    otra = "cmp-00000000000000ff"
+    await a.guardar_compra(fila_compra(CMP1))
+    await b.guardar_compra(fila_compra(otra))
+    assert (await b.cargar_compra(CMP1))["id"] == CMP1
+    assert await a.atar_contexto("ctx-1", CMP1, "merchant_1") == CMP1
+    assert await b.atar_contexto("ctx-1", otra, "merchant_1") == CMP1  # gana el primero
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=servidor), base_url="http://127.0.0.1:54321"
+    ) as c:
+        tablas = (await c.get("/__tablas")).json()
+        otra_ruta = await c.get("/no-existe")
+    assert tablas["gw_compras"] == 2 and tablas["gw_contextos"] == 1
+    assert otra_ruta.status_code == 404
+    await a.cerrar()
+    await b.cerrar()
+
+
+def test_postgrest_local_solo_escucha_en_loopback(capsys):
+    assert _script("postgrest_local").main(["--host", "0.0.0.0"]) == 2
+    assert "loopback" in capsys.readouterr().err
 
 
 # -- local_multi: entorno -----------------------------------------------------------
