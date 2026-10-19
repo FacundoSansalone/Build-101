@@ -2309,17 +2309,22 @@ class ProxyGuard:
         """Otra búsqueda de la misma compra retiene la espera (en esta o en
         otra instancia): se lee la compra del almacén hasta que ya no espera
         nada (ni la fila está esperando ni hay una espera abierta). Lo acota
-        lo mismo que en memoria: el plazo de la espera más el margen, nunca
-        más que la llamada. Una espera huérfana se cierra al leerla
-        (`hidratar_compra`). La compra leída queda en `llamada.compra`. True
-        si terminó."""
+        lo mismo que en memoria: el plazo de la espera (el de la compra o, si
+        la fila todavía no lo tiene, el de la espera abierta) más el margen,
+        nunca más que la llamada. Una espera huérfana (pasada su gracia) se
+        cierra al encontrarla, en la compra (`hidratar_compra`) o sola
+        (`EsperaCompartida.abierta_viva`). La compra leída queda en
+        `llamada.compra`. True si terminó."""
         esperas = self.esperas_compartidas
         assert esperas is not None
         paso = esperas.sondeo_s
+        vence_espera: datetime | None = None  # la de la espera abierta, si la fila no tiene
         while True:
             tramo = self._restante(llamada)
-            if compra.vence is not None:
-                tramo = min(tramo, compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
+            vence = compra.vence or vence_espera
+            if vence is not None:
+                restante = (vence - datetime.now(timezone.utc)).total_seconds()
+                tramo = min(tramo, max(0.0, restante) + _MARGEN_ESPERA_SECUNDARIA_S)
             if tramo <= 0:
                 return False
             await asyncio.sleep(min(paso, tramo))
@@ -2331,8 +2336,10 @@ class ProxyGuard:
                 llamada.compra = compra = fresca
                 if compra.estado in ESTADOS_ESPERANDO:
                     continue
-                if await self.almacen.espera_abierta_de(compra.id) is None:
+                abierta = await esperas.abierta_viva(compra.id)
+                if abierta is None:
                     return True
+                vence_espera = _fecha_o_none(abierta.get("vence"))
             except ErrorAlmacen as e:
                 logger.warning("No se pudo leer la compra %s mientras espera: %s", compra.id, e)
 
@@ -3932,6 +3939,16 @@ def _leer_del_comercio(contenido: bytes | str) -> tuple[Any, str | None]:
     if error is None and a2a.anidado_de_mas(body, a2a.PROFUNDIDAD_MAXIMA):
         return None, f"la respuesta tiene más de {a2a.PROFUNDIDAD_MAXIMA} niveles de anidamiento"
     return body, error
+
+
+def _fecha_o_none(valor: Any) -> datetime | None:
+    if not isinstance(valor, str):
+        return None
+    try:
+        fecha = datetime.fromisoformat(valor)
+    except ValueError:
+        return None
+    return fecha if fecha.tzinfo is not None else fecha.replace(tzinfo=timezone.utc)
 
 
 async def _con_plazo(trozos: AsyncIterator[bytes], fin: float) -> AsyncIterator[bytes]:
