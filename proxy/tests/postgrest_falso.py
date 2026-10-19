@@ -60,7 +60,12 @@ class Tabla:
 
 
 def _proteger_compra(vieja: dict[str, Any], nueva: dict[str, Any]) -> dict[str, Any] | None:
-    """`gw_compras_proteger` (004): return null descarta la escritura."""
+    """`gw_compras_proteger` (004): return null descarta la escritura. El paso
+    a un terminal entra siempre, con la `actualizada` mayor."""
+    if nueva["estado"] in TERMINALES and vieja["estado"] not in TERMINALES:
+        if _a_fecha(nueva["actualizada"]) < _a_fecha(vieja["actualizada"]):
+            nueva = {**nueva, "actualizada": vieja["actualizada"]}
+        return nueva
     if _a_fecha(nueva["actualizada"]) < _a_fecha(vieja["actualizada"]):
         return None
     if vieja["estado"] in TERMINALES and nueva["estado"] != vieja["estado"]:

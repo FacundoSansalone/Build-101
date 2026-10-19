@@ -84,11 +84,20 @@ create index if not exists gw_entregas_por_enviar_idx
 --    vencida (`vencida`, los terminales de proxy/compras.py) no revive. La
 --    escritura se descarta sin error (return null): el upsert responde bien,
 --    y el PATCH con `return=representation` devuelve cero filas.
+--    El paso a un estado terminal entra siempre, antes del chequeo de
+--    `actualizada`: si una copia vieja (con un reloj adelantado) llegó antes
+--    que el corte, descartar el corte dejaría seguir la conversación que había
+--    que cortar. `actualizada` no retrocede (se queda con la mayor).
+--    Si 004 ya estaba aplicada, se vuelve a correr este `create or replace`.
 create or replace function public.gw_compras_proteger() returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
+  if new.estado in ('bloqueada', 'vencida') and old.estado not in ('bloqueada', 'vencida') then
+    new.actualizada := greatest(new.actualizada, old.actualizada);
+    return new;
+  end if;
   if new.actualizada < old.actualizada then
     return null;
   end if;

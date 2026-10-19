@@ -16,7 +16,8 @@ con la misma interfaz (`Esperas`):
      await (`esperando_*`, `espera_id`, la pregunta o la oportunidad) y
      recién ahí el núcleo emite el evento y el webhook. Si algo falla, el
      núcleo va al lado seguro: el porqué sigue literal y la oportunidad
-     queda vencida.
+     queda vencida. Si el insert quedó pero falló la respuesta (o no se pudo
+     escribir la compra), la espera se cierra.
   2. **Responder** (cualquier instancia, por `/v1`): un PATCH condicionado a
      que la espera siga abierta y no haya vencido. Gana una sola respuesta.
      Quien responde no escribe la compra: con una espera abierta, la fila de
@@ -30,7 +31,10 @@ con la misma interfaz (`Esperas`):
      espera queda abierta. Quien lea la compra después de `vence +
      gracia_espera_s` la cierra del lado seguro (`compra_de_fila`): cierra la
      espera y escribe la compra condicionada a su estado y su `espera_id`.
-     Antes de eso la compra se muestra esperando.
+     Antes de eso la compra se muestra esperando. Una espera abierta que la
+     compra ni menciona (quedó a medio abrir) también se cierra pasada su
+     gracia (`abierta_viva`): si no, el índice de una abierta por compra la
+     trabaría para siempre.
 
 El silencio no es autorización: una decisión que no llegó (o que no se pudo
 leer) es `vencida`. Este módulo no emite eventos ni webhooks: lo hace el
@@ -201,14 +205,23 @@ class EsperaCompartida:
                 compra.id, tipo, compra.vence, creada=_ahora(),
                 oportunidad_id=oportunidad_id if tipo == "decision" else None,
             )
+        except ErrorAlmacen:
+            return "fallo"
+        espera_id = fila["id"]
+        try:
             abierta = await self._almacen.abrir_espera(fila)
+            if abierta is None and await self.abierta_viva(compra.id) is None:
+                # La que estaba abierta era una huérfana y se cerró: otra vez.
+                abierta = await self._almacen.abrir_espera(fila)
         except ErrorAlmacen as e:
             logger.error("No se pudo abrir la espera de la compra %s: %s", compra.id, e)
+            # El insert pudo quedar en la base aunque la respuesta no llegó:
+            # se cierra, si no la compra queda con una abierta que nadie retiene.
+            await self._cerrar_sin_falla(espera_id)
             return "fallo"
         if abierta is None:
             logger.info("La compra %s ya tiene una espera abierta en otra búsqueda", compra.id)
             return "ocupada"
-        espera_id = fila["id"]
         # Antes de escribir: con la espera retenida acá, el núcleo escribe la
         # fila con el `espera_id` nuevo.
         self._retenidas[compra.id] = _Retenida(espera_id)
@@ -220,15 +233,36 @@ class EsperaCompartida:
             escrita = False
         if escrita:
             return "abierta"
-        # Sin la fila de la compra nadie puede contestar: se cierra la espera
-        # (si tampoco se puede, vence sola y nadie la puede responder después).
+        # Sin la fila de la compra nadie puede contestar: se cierra la espera.
+        # Si tampoco se puede, queda abierta hasta `vence + gracia` y la cierra
+        # quien la encuentre después (`abierta_viva`).
         self._retenidas.pop(compra.id, None)
         compra.espera_id = None
+        await self._cerrar_sin_falla(espera_id)
+        return "fallo"
+
+    async def abierta_viva(self, compra_id: str, *, ahora: datetime | None = None) -> dict[str, Any] | None:
+        """La espera abierta de la compra si sigue viva. Una abierta con
+        `vence + gracia` ya pasado es huérfana (la instancia que la abrió murió
+        o no pudo escribir la compra): se cierra acá y da None, así no traba
+        la compra para siempre (el índice de una abierta por compra no mira
+        `vence`). `ErrorAlmacen` si el almacén falla."""
+        espera = await self._almacen.espera_abierta_de(compra_id)
+        if espera is None:
+            return None
+        ahora = ahora or _ahora()
+        vence = _fecha(espera.get("vence"))
+        if vence is not None and ahora < vence + timedelta(seconds=self.gracia_s):
+            return espera
+        logger.warning("Compra %s: se cierra una espera abierta huérfana", compra_id)
+        await self._almacen.vencer_espera(espera["id"], ahora)
+        return None
+
+    async def _cerrar_sin_falla(self, espera_id: str) -> None:
         try:
             await self._almacen.vencer_espera(espera_id, _ahora())
         except ErrorAlmacen as e:
             logger.error("No se pudo cerrar la espera %s: %s", espera_id, e)
-        return "fallo"
 
     # -- esperar (A) ------------------------------------------------------------
 
