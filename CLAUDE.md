@@ -433,6 +433,37 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     (`heurísticas + modelo …` o `solo heurísticas`). Sale en la línea de
     arranque del proxy y en `GET /guard/state`. Solo informa.
 
+- **Etapa 3: producto general, sin hardcodeos (2026-10-19, ramas `etapa3/*`).**
+  Objetivo: cualquier pedido, cualquier día, cualquier comportamiento del
+  comercio. Los escenarios fijos quedan para el benchmark y los tests.
+  - **Comercio general** (`demo_world`): busca en un dataset propio
+    (`demo_world/data/productos.json`, marcas inventadas y GTIN del rango de
+    circulación restringida de GS1) según `catalog_search`, sin LLM, y aplica
+    un `comportamiento` (`honesto`, `inyeccion`, `otra_categoria_a_tiempo`,
+    `dato_falso`, `miente_categoria`, `precio_inflado`, `entrega_partes`,
+    `sin_stock`, `sin_resultados`). Presets en `scenarios.json` con
+    `"tipo": "general"`. Fechas relativas a hoy; `cart_id` único por contexto.
+  - **Una sola fuente de verdad:** catálogo público y ficha del fabricante
+    salen del mismo dataset, antes de las mentiras del comercio.
+  - **Manda la ficha que confirmó el usuario:** `PROXY_FICHA_DEMO=0` por
+    defecto; la del escenario solo con `PROXY_FICHA_DEMO=1` (grabación,
+    benchmark por el proxy). Un escenario sin `intent` propio no cae a
+    zapatillas.
+  - **Categoría en el Guard** (`guard/categorias.py`, sin LLM): con
+    `Ficha.categoria_taxonomia`, la oferta tiene que caer en la rama (igual o
+    descendiente) con fuente independiente; fuera de la rama, más general o
+    sin dato → `escalar`; dentro de la rama solo declarado → aviso. La ficha
+    siempre lleva categoría: clasificador o, si no hay,
+    `taxonomia.palabras.categoria_por_palabras` (tabla determinística).
+  - **Precio por unidad:** con `cantidad` > 1 se verifica amount ≈ precio del
+    catálogo × cantidad. Una oferta con varias unidades y una ficha sin
+    cantidad → `escalar`.
+  - **`DEMO_HOY`** queda solo para reproducir grabaciones.
+  - **Subconjunto de la taxonomía** ampliado a 18 ramas (computadoras,
+    monitores, TV, proyectores, periféricos, almacenamiento, impresoras,
+    celulares, consolas, routers, cámaras, muebles de oficina, sillas,
+    mochilas, cafeteras, audio y calzado).
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh
