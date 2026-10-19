@@ -520,8 +520,14 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   - **Topes de Hobby:** presupuesto de 270 s por llamada, porqué de 60 s,
     decisión de 150 s y cuerpos de 4 MB. Webhooks en línea (2 intentos)
     antes de responder; la cola persistente queda para después.
-  - **Base:** `proxy/sql/004_serverless.sql` va después de 003. Ninguna de
-    las dos está aplicada; se aplican a mano y con confirmación del equipo.
+  - **Base:** `proxy/sql/004_serverless.sql` va después de 003. El motor de
+    Vercel (https://kaiai-motor.vercel.app) usa un proyecto de Supabase
+    propio (`liylqznfyqvyppuupqra`), no el del equipo, con 003 y 004
+    aplicadas por `deploy/vercel/aplicar_migraciones.py` (2026-10-19). En el
+    proyecto del equipo no están aplicadas.
+  - **Túnel de la demo:** cloudflared rápido + `tunel_router.py` con prefijo
+    secreto. La URL cambia en cada arranque: hay que actualizar
+    `GATEWAY_COMERCIOS_JSON` en Vercel y redesplegar.
   - **Prueba local sin Supabase:** `deploy/vercel/postgrest_local.py`,
     `local_multi.py` (balanceador por pedido, como Vercel) y
     `proxy/scripts/smoke_v1_pausas.py`.
