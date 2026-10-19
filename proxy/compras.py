@@ -26,6 +26,11 @@ almacén (`proxy/estado.py`) con `Compra.a_fila()` y volver con
 `desde_fila` las cierra del lado seguro: el porqué pendiente se da por
 omitido (sigue el pedido literal) y la oportunidad pendiente queda `vencida`.
 Este módulo no persiste nada por su cuenta: decide el núcleo.
+
+Con varias instancias (`Config.instancias="varias"`) la espera de una
+compra de integrador vive en el almacén (`proxy/esperas.py`) y la retiene
+otra instancia: `desde_fila(fila, viva_hasta=...)` no la cierra mientras
+siga viva, y la fila lleva el `espera_id` (`a_fila(espera=True)`).
 """
 
 from __future__ import annotations
@@ -42,7 +47,7 @@ from typing import Any, Literal, get_args
 from pydantic import ValidationError
 
 from contracts import Contexto, Ficha, Oportunidad, Requisito
-from proxy.tipos_gateway import ID_COMPRA_RE, ErrorAlmacen, FotoCompra, es_id
+from proxy.tipos_gateway import ID_COMPRA_RE, ID_ESPERA_RE, ErrorAlmacen, FotoCompra, es_id
 
 EstadoCompra = Literal[
     "creada",              # compra de API: todavía no llegó el primer find_products
@@ -65,6 +70,8 @@ MAX_CONTEXTOS_POR_COMPRA = 20
 # activa para el límite del integrador.
 ESTADOS_TERMINALES_API = frozenset({"bloqueada", "vencida"})
 ESTADOS_COMPRA: frozenset[str] = frozenset(get_args(EstadoCompra))
+# Una compra en estos estados tiene una espera abierta (el porqué o la decisión).
+ESTADOS_ESPERANDO = frozenset({"esperando_contexto", "esperando_decision"})
 
 
 class CompraDesconocida(LookupError):
@@ -148,6 +155,12 @@ class Compra:
     actualizada: datetime | None = None
     veredictos: list[dict[str, Any]] = field(default_factory=list)  # vista_veredicto
     aprobacion_pendiente: dict[str, Any] | None = None
+    # -- varias instancias (proxy/esperas.py) ---------------------------------
+    # `espera_id`: la espera abierta de la compra (`gw_esperas`), la que va en
+    # la fila con `a_fila(espera=True)`. `espera_guardada`: la que esta
+    # instancia sabe que tiene la fila (la condición de la próxima escritura).
+    espera_id: str | None = None
+    espera_guardada: str | None = None
 
     @property
     def requisitos(self) -> list[Requisito]:
@@ -212,15 +225,20 @@ class Compra:
         del self.veredictos[:-MAX_VEREDICTOS_POR_COMPRA]
         self.tocar()
 
-    def a_fila(self) -> dict[str, Any]:
+    def a_fila(self, *, espera: bool = False) -> dict[str, Any]:
         """La fila de `gw_compras` (proxy/sql/003_gateway.sql): las columnas por
         las que se filtra van aparte y el resto, en `datos` (jsonb). Los
-        `Future` y los `Event` no se guardan: son del proceso."""
+        `Future` y los `Event` no se guardan: son del proceso.
+
+        `espera=True` (varias instancias) suma la columna `espera_id` de
+        004_serverless.sql, también en None (así se borra la de la fila). Sin
+        eso la fila es la de siempre: con una sola instancia la base puede
+        tener solo 003, sin esa columna."""
 
         def _json(modelo: Any) -> Any:
             return modelo.model_dump(mode="json") if modelo is not None else None
 
-        return {
+        fila: dict[str, Any] = {
             "id": self.id,
             "integrador_id": self.integrador_id,
             "comercio_id": self.comercio_id,
@@ -252,10 +270,26 @@ class Compra:
                 "aprobacion_pendiente": copy.deepcopy(self.aprobacion_pendiente),
             },
         }
+        if espera:
+            fila["espera_id"] = self.espera_id
+        return fila
 
     @classmethod
-    def desde_fila(cls, fila: dict[str, Any]) -> Compra:
+    def desde_fila(
+        cls,
+        fila: dict[str, Any],
+        *,
+        viva_hasta: datetime | None = None,
+        ahora: datetime | None = None,
+    ) -> Compra:
         """La compra de una fila de `gw_compras`, después de un reinicio.
+
+        `viva_hasta` (varias instancias): hasta cuándo sigue viva la espera
+        de la fila (su vencimiento más la gracia, `proxy/esperas.py`). Si la
+        compra está esperando y todavía no llegó ese instante, la espera la
+        retiene otra instancia: se lee tal cual (estado, pregunta u
+        oportunidad, `vence` y `espera_id`) y sin poner `resuelta`. Sin
+        `viva_hasta` (una sola instancia), lo de siempre:
 
         Requiere un loop corriendo (crea los `Future`). Nadie quedó esperando
         del otro lado del reinicio, así que las esperas se cierran del lado
@@ -276,12 +310,81 @@ class Compra:
         compra vacía.
         """
         try:
-            return cls._desde_fila(fila)
+            compra = cls._desde_fila(fila)
         except ErrorAlmacen:
             raise
         except (KeyError, TypeError, ValueError, ValidationError) as e:
             # Sin el contenido de la fila en el mensaje: puede traer texto del pedido.
             raise ErrorAlmacen(f"fila de compra inválida ({type(e).__name__})") from None
+        viva = (
+            viva_hasta is not None
+            and compra.estado in ESTADOS_ESPERANDO
+            and (ahora or _ahora()) < viva_hasta
+        )
+        if viva:
+            # La retiene otra instancia: nada se cierra. El porqué ya pasó si
+            # se está esperando la decisión.
+            if compra.estado == "esperando_decision":
+                compra.contexto_listo.set()
+            return compra
+        compra.cerrar_espera_al_leer()
+        return compra
+
+    def cerrar_espera_al_leer(self) -> None:
+        """Cierra del lado seguro la espera de una compra que nadie retiene
+        (un reinicio con una sola instancia; con varias, una huérfana).
+
+        Deja `espera_guardada` como estaba: la próxima escritura se
+        condiciona a lo que tiene la fila y borra el `espera_id`."""
+        if self.estado == "esperando_contexto":
+            self.cerrar_porque()
+        elif self.estado == "esperando_decision":
+            self.estado = self.decision = "vencida"
+            self.vence = None
+        else:
+            self.vence = None
+        self.espera_id = None
+        if self.estado != "creada":
+            self.contexto_listo.set()
+        self.resuelta.set()
+
+    def cerrar_porque(self) -> None:
+        """El porqué que nadie contestó (o que no se va a procesar): sigue el
+        pedido literal, sin contexto ni pregunta (docs/FLUJO.md)."""
+        self.estado = "negociando"
+        self.contexto = None
+        self.pregunta = ""
+        self.vence = None
+
+    def aplicar_decision(self, decision: Decision | None) -> None:
+        """La decisión del usuario sobre la oportunidad consultada.
+
+        - `aceptar`: los parámetros autorizados pasan a ser los propuestos.
+          Los que cambian salen de la oferta del comercio: van marcados
+          `aceptado` para que la vista de /v1 y los webhooks los filtren
+          (`vistas._ficha_publica`); los que no cambian siguen siendo del
+          pedido;
+        - `rechazar`: siguen los parámetros originales;
+        - None (venció, o no se pudo esperar): `vencida`. El silencio no es
+          autorización."""
+        oportunidad = self.oportunidad
+        if decision == "aceptar" and oportunidad is not None:
+            originales = list(self.ficha.requisitos) if self.ficha else []
+            self.requisitos_autorizados = [
+                r if r in originales else r.model_copy(update={"origen": "aceptado"})
+                for r in oportunidad.requisitos_propuestos
+            ]
+            self.ficha = Ficha(
+                pedido_original=self.pedido,
+                requisitos=self.requisitos_autorizados,
+                confirmada=True,
+                categoria_taxonomia=self.ficha.categoria_taxonomia if self.ficha else None,
+            )
+            self.estado = self.decision = "aceptada"
+        elif decision == "rechazar":
+            self.estado = self.decision = "rechazada"
+        else:
+            self.estado = self.decision = "vencida"
 
     @classmethod
     def _desde_fila(cls, fila: dict[str, Any]) -> Compra:
@@ -314,6 +417,9 @@ class Compra:
         requisitos = datos.get("requisitos_autorizados")
         if requisitos is not None and not isinstance(requisitos, list):
             raise TypeError("requisitos autorizados inválidos")
+        espera_id = fila.get("espera_id")  # 004: no está en una fila de solo 003
+        if espera_id is not None and not es_id(ID_ESPERA_RE, espera_id):
+            raise ValueError("espera_id inválido")
 
         loop = asyncio.get_running_loop()
         compra = cls(
@@ -345,21 +451,11 @@ class Compra:
             actualizada=_fecha(fila["actualizada"]) if fila.get("actualizada") else None,
             veredictos=copy.deepcopy(veredictos[-MAX_VEREDICTOS_POR_COMPRA:]),
             aprobacion_pendiente=copy.deepcopy(pendiente),
+            espera_id=espera_id,
+            espera_guardada=espera_id,
         )
-        # Las esperas no cruzan un reinicio (fail-closed).
-        if compra.estado == "esperando_contexto":
-            compra.estado = "negociando"
-            compra.contexto = None
-            compra.pregunta = ""
-            compra.vence = None
-        elif compra.estado == "esperando_decision":
-            compra.estado = compra.decision = "vencida"
-            compra.vence = None
-        else:
-            compra.vence = None
-        if compra.estado != "creada":
-            compra.contexto_listo.set()
-        compra.resuelta.set()
+        # Las esperas no cruzan un reinicio (fail-closed): las cierra
+        # `desde_fila`, salvo que siga viva en otra instancia.
         return compra
 
     def foto(
@@ -432,6 +528,19 @@ class Compra:
             return None
         finally:
             self.vence = None
+
+    def responder_en_memoria(self, respuesta: str | None) -> None:
+        """Resuelve el `Future` del porqué (una sola instancia). None = omitir."""
+        if self.estado != "esperando_contexto" or self._respuesta.done():
+            raise EstadoInvalido(self.estado)
+        self._respuesta.set_result(respuesta)
+        self.estado = "negociando"
+
+    def decidir_en_memoria(self, decision: Decision) -> None:
+        """Resuelve el `Future` de la decisión (una sola instancia)."""
+        if self.estado != "esperando_decision" or self._decision.done():
+            raise EstadoInvalido(self.estado)
+        self._decision.set_result(decision)
 
 
 def _fecha(valor: Any) -> datetime:
@@ -586,6 +695,16 @@ class RegistroCompras:
         actual = self._compras.get(compra.id)
         if actual is not None:
             return actual
+        return self.reemplazar(compra)
+
+    def reemplazar(self, compra: Compra) -> Compra:
+        """Pone en memoria la compra recién leída del almacén, aunque ya haya
+        otra con ese id (varias instancias: la fila manda, salvo que esta
+        instancia retenga su espera, y eso lo decide el núcleo antes).
+
+        Las ataduras son por id, así que las de memoria siguen valiendo. Un
+        pedido en curso que tenga la anterior la sigue usando: sus
+        escrituras van con su propia copia."""
         self._compras[compra.id] = compra
         if compra.contexto_id and compra.contexto_id not in self._por_contexto:
             self._por_contexto[compra.contexto_id] = compra.id
@@ -639,17 +758,12 @@ class RegistroCompras:
     def responder(self, compra_id: str, respuesta: str | None) -> Compra:
         """La respuesta del porqué (None = omitir)."""
         compra = self._buscar(compra_id)
-        if compra.estado != "esperando_contexto" or compra._respuesta.done():
-            raise EstadoInvalido(compra.estado)
-        compra._respuesta.set_result(respuesta)
-        compra.estado = "negociando"
+        compra.responder_en_memoria(respuesta)
         return compra
 
     def decidir(self, compra_id: str, decision: Decision) -> Compra:
         compra = self._buscar(compra_id)
-        if compra.estado != "esperando_decision" or compra._decision.done():
-            raise EstadoInvalido(compra.estado)
-        compra._decision.set_result(decision)
+        compra.decidir_en_memoria(decision)
         return compra
 
     def _buscar(self, compra_id: str) -> Compra:

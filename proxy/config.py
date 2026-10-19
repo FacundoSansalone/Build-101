@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 logger = logging.getLogger("proxy.config")
@@ -26,6 +27,14 @@ MAX_SUSCRIPTORES_SSE = 20
 MAX_CUERPO_V1_BYTES = 1024 * 1024
 MAX_CUERPO_A2A_BYTES = 5 * 1024 * 1024
 COMPRA_TTL_S = 24 * 3600
+# Varias instancias (lote C del plan de Vercel). Los defaults dejan la demo
+# local igual que siempre: una instancia y los webhooks en segundo plano.
+PRESUPUESTO_LLAMADA_S = 570.0  # el agente del sample espera hasta 600 s por llamada
+SONDEO_S = 1.0
+GRACIA_ESPERA_S = 30.0
+BARRERA_S = 10.0
+INSTANCIAS = ("una", "varias")
+PERFILES_WEBHOOKS = ("fondo", "en_linea")
 
 
 def _bool(valor: str, nombre: str) -> bool:
@@ -113,6 +122,35 @@ class Config:
     max_cuerpo_v1: int = MAX_CUERPO_V1_BYTES
     max_cuerpo_a2a: int = MAX_CUERPO_A2A_BYTES
     compra_ttl_s: int = COMPRA_TTL_S
+    # -- varias instancias sin memoria compartida (Vercel) --------------------
+    # `una` (la demo local, `python -m proxy`): las esperas son Futures en
+    # memoria y las escrituras al almacén van en segundo plano, como siempre.
+    # `varias` (GATEWAY_INSTANCIAS=varias): las esperas de las compras de
+    # integrador viven en el almacén (`proxy/esperas.py`), cada pedido lee la
+    # compra de la base y, antes de responder, se espera lo que se escribió.
+    instancias: Literal["una", "varias"] = "una"
+    # Lo que puede durar una llamada A2A con sus esperas (el porqué antes de
+    # reenviar, la decisión después) y la llamada al comercio.
+    presupuesto_llamada_s: float = PRESUPUESTO_LLAMADA_S
+    # Cada cuánto se mira la espera en el almacén (con retroceso hasta 2 s).
+    sondeo_s: float = SONDEO_S
+    # Una espera abierta que pasó su vencimiento más esto se da por huérfana
+    # (la instancia que la retenía murió) y la cierra del lado seguro quien la lea.
+    gracia_espera_s: float = GRACIA_ESPERA_S
+    # Tope de la barrera antes de responder (escrituras y webhooks en vuelo).
+    barrera_s: float = BARRERA_S
+    # `fondo`: reintentos con backoff en segundo plano (hasta ~7 min). `en_linea`:
+    # pocos intentos cortos que se esperan antes de responder (sin `waitUntil`).
+    webhooks_perfil: Literal["fondo", "en_linea"] = "fondo"
+
+    def __post_init__(self) -> None:
+        # Fail-closed también con `dataclasses.replace` (el arranque de Vercel
+        # fuerza estos campos así): un valor fuera de rango no arma la config.
+        _validar_varias(self)
+
+    @property
+    def varias_instancias(self) -> bool:
+        return self.instancias == "varias"
 
     @property
     def jsonl_privado(self) -> Path | None:
@@ -236,6 +274,24 @@ class Config:
             compra_ttl_s=_entero_positivo(
                 env.get("GATEWAY_COMPRA_TTL_S"), base.compra_ttl_s, "GATEWAY_COMPRA_TTL_S"
             ),
+            instancias=_opcion(env.get("GATEWAY_INSTANCIAS"), INSTANCIAS, "GATEWAY_INSTANCIAS"),
+            presupuesto_llamada_s=_segundos(
+                env.get("PROXY_PRESUPUESTO_LLAMADA_S"), base.presupuesto_llamada_s,
+                "PROXY_PRESUPUESTO_LLAMADA_S",
+            ),
+            sondeo_s=_en_rango(
+                env.get("GATEWAY_SONDEO_S"), base.sondeo_s, "GATEWAY_SONDEO_S", *_RANGO_SONDEO
+            ),
+            gracia_espera_s=_en_rango(
+                env.get("GATEWAY_GRACIA_ESPERA_S"), base.gracia_espera_s,
+                "GATEWAY_GRACIA_ESPERA_S", *_RANGO_GRACIA,
+            ),
+            barrera_s=_en_rango(
+                env.get("GATEWAY_BARRERA_S"), base.barrera_s, "GATEWAY_BARRERA_S", *_RANGO_BARRERA
+            ),
+            webhooks_perfil=_opcion(
+                env.get("GATEWAY_WEBHOOKS_PERFIL"), PERFILES_WEBHOOKS, "GATEWAY_WEBHOOKS_PERFIL"
+            ),
         )
 
 
@@ -246,6 +302,76 @@ def _segundos(valor: str | None, defecto: float, nombre: str) -> float:
     if not 0 < segundos < 600:
         raise ValueError(f"{nombre} tiene que estar entre 0 y 600 segundos, no {valor!r}")
     return segundos
+
+
+# (mínimo, máximo, ¿vale el mínimo?) de los campos de varias instancias.
+_RANGO_PRESUPUESTO = (0.0, 600.0, False)
+_RANGO_SONDEO = (0.0, 10.0, False)
+_RANGO_GRACIA = (0.0, 3600.0, True)
+_RANGO_BARRERA = (0.0, 60.0, False)
+
+
+def _en_rango(
+    valor: str | None,
+    defecto: float,
+    nombre: str,
+    minimo: float,
+    maximo: float,
+    vale_minimo: bool,
+) -> float:
+    if valor is None or not valor.strip():
+        return defecto
+    try:
+        numero = float(valor.strip())
+    except ValueError:
+        raise ValueError(f"{nombre} tiene que ser un número, no {valor!r}") from None
+    _chequear_rango(numero, nombre, minimo, maximo, vale_minimo)
+    return numero
+
+
+def _chequear_rango(
+    numero: Any, nombre: str, minimo: float, maximo: float, vale_minimo: bool
+) -> None:
+    """Un número finito en el rango (NaN e infinito no: un NaN da falso en
+    toda comparación y dejaría una espera o una barrera sin tope)."""
+    valido = (
+        isinstance(numero, (int, float))
+        and not isinstance(numero, bool)
+        and math.isfinite(numero)
+        and (numero >= minimo if vale_minimo else numero > minimo)
+        and numero <= maximo
+    )
+    if not valido:
+        desde = "desde" if vale_minimo else "más de"
+        raise ValueError(
+            f"{nombre} tiene que ser {desde} {minimo:g} y hasta {maximo:g}, no {numero!r}"
+        )
+
+
+def _opcion(valor: str | None, opciones: tuple[str, ...], nombre: str) -> Any:
+    """Una de `opciones` (sin valor, la primera: la de la demo local)."""
+    normalizado = (valor or "").strip().lower() or opciones[0]
+    if normalizado not in opciones:
+        raise ValueError(f"{nombre} tiene que ser {' o '.join(opciones)}, no {valor!r}")
+    return normalizado
+
+
+def _validar_varias(config: Config) -> None:
+    """Los campos de varias instancias, también cuando llegan por `replace`."""
+    if config.instancias not in INSTANCIAS:
+        raise ValueError(f"instancias tiene que ser una o varias, no {config.instancias!r}")
+    if config.webhooks_perfil not in PERFILES_WEBHOOKS:
+        raise ValueError(
+            f"webhooks_perfil tiene que ser fondo o en_linea, no {config.webhooks_perfil!r}"
+        )
+    presupuesto = config.presupuesto_llamada_s
+    _chequear_rango(presupuesto, "presupuesto_llamada_s", *_RANGO_PRESUPUESTO)
+    if presupuesto >= _RANGO_PRESUPUESTO[1]:
+        # Como `_segundos`: menos que el DEFAULT_TIMEOUT (600 s) del agente.
+        raise ValueError(f"presupuesto_llamada_s tiene que ser menos de 600, no {presupuesto!r}")
+    _chequear_rango(config.sondeo_s, "sondeo_s", *_RANGO_SONDEO)
+    _chequear_rango(config.gracia_espera_s, "gracia_espera_s", *_RANGO_GRACIA)
+    _chequear_rango(config.barrera_s, "barrera_s", *_RANGO_BARRERA)
 
 
 def _jsonl_privado(principal: Path, pedido: Path | None) -> Path:

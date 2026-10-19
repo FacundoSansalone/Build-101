@@ -18,11 +18,24 @@ dependen del estado del proxy:
   y el total firmado, y es de un solo uso).
 
 No lee el entorno: todo sale del `ProxyGuard` que arma `create_app`.
+
+**Varias instancias** (`Config.instancias="varias"`): cada método lee la
+compra del almacén (salvo que esta instancia retenga su espera), responder
+el porqué o decidir una oportunidad es un PATCH condicionado sobre la espera
+(`proxy/esperas.py`: gana una sola respuesta, la otra da 409 `estado`) y
+quien responde no escribe la compra: devuelve la foto con el estado que va a
+tener. Las aprobaciones se crean en el almacén (una por contexto, cart y
+total firmado: un segundo POST en otra instancia devuelve la misma) y los
+contextos, las aprobaciones de la foto y las entregas de webhooks salen del
+almacén. Los métodos que escriben terminan con la barrera
+(`ProxyGuard.barrera`): si no quedó guardado, 503.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
+import dataclasses
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -30,12 +43,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from contracts import Evento
 from proxy import sin_estado
-from proxy.aprobaciones import SinEscalar
+from proxy.aprobaciones import Aprobacion, SinEscalar, aprobacion_desde_fila
 from proxy.comercios import politica_de
-from proxy.compras import Compra, EstadoInvalido
+from proxy.compras import ESTADOS_ESPERANDO, Compra, EstadoInvalido
+from proxy.esperas import EsperaCompartida
 from proxy.estado import fila_aprobacion_gw
 from proxy.evaluador import clave_publica
 from proxy.tipos_gateway import (
+    ID_ESPERA_RE,
     Comercio,
     ErrorAlmacen,
     ErrorApi,
@@ -44,9 +59,12 @@ from proxy.tipos_gateway import (
     SolicitudCompra,
     SolicitudEvaluar,
     SolicitudFiltrar,
+    es_id,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
     from proxy.app import ProxyGuard
 
 logger = logging.getLogger("proxy.gateway")
@@ -60,6 +78,12 @@ _NORMALIZADA_DESDE = {"negociando": "esperando_contexto", "vencida": "esperando_
 # decisión antes de armar la vista (en la práctica, unas vueltas del loop).
 ESPERA_RESOLUCION_S = 2.0
 _PASO_RESOLUCION_S = 0.01
+# Con varias instancias la búsqueda retenida puede estar en otra: se mira la
+# compra en el almacén hasta esto (si no llegó, la foto con el estado que va
+# a tener).
+ESPERA_RESOLUCION_COMPARTIDA_S = 3.0
+# Fotos del listado armadas a la vez (cada una son dos lecturas al almacén).
+_FOTOS_A_LA_VEZ = 8
 
 
 def _no_disponible() -> ErrorApi:
@@ -88,6 +112,35 @@ class NucleoProxy:
         # se pasan todos del límite de compras activas.
         self._candados_creacion: dict[str, asyncio.Lock] = {}
         self.espera_resolucion_s = ESPERA_RESOLUCION_S
+        self.espera_resolucion_compartida_s = ESPERA_RESOLUCION_COMPARTIDA_S
+
+    @property
+    def _compartidas(self) -> EsperaCompartida | None:
+        return self.proxy.esperas_compartidas
+
+    async def _con_barrera(self, coro: Awaitable[Any]) -> Any:
+        """Corre un método que escribe y, antes de responder, la barrera
+        (varias instancias o webhooks en línea; si no, nada cambia). Si una
+        escritura decisiva no quedó, 503: el integrador reintenta (crear una
+        aprobación o responder dos veces no duplica nada)."""
+        proxy = self.proxy
+        if not proxy.con_barrera:
+            return await coro
+        with proxy.en_fondo.ambito():
+            resultado = await coro
+            try:
+                await proxy.barrera()
+            except ErrorAlmacen as e:
+                logger.error("El estado no quedó guardado antes de responder: %s", e)
+                raise _no_disponible() from None
+            return resultado
+
+    async def _foto(self, compra: Compra) -> FotoCompra:
+        try:
+            return await self.proxy.foto_actual(compra)
+        except ErrorAlmacen as e:
+            logger.error("No se pudo armar la foto de la compra %s: %s", compra.id, e)
+            raise _no_disponible() from None
 
     # -- comercios -------------------------------------------------------------
 
@@ -126,8 +179,9 @@ class NucleoProxy:
         candado = self._candados_creacion.setdefault(integrador.id, asyncio.Lock())
         async with candado:
             # El conteo y la escritura de la compra nueva, juntos: la próxima
-            # creación de este integrador ya la cuenta.
-            return await self._crear_compra(integrador, solicitud, comercio)
+            # creación de este integrador ya la cuenta. (Con varias instancias
+            # el candado es de cada una: el límite es aproximado.)
+            return await self._con_barrera(self._crear_compra(integrador, solicitud, comercio))
 
     async def _crear_compra(
         self, integrador: Integrador, solicitud: SolicitudCompra, comercio: Comercio
@@ -176,13 +230,15 @@ class NucleoProxy:
         return proxy.foto(compra)
 
     async def obtener_compra(self, integrador: Integrador, compra_id: str) -> FotoCompra:
-        return self.proxy.foto(await self._compra_de(integrador, compra_id))
+        return await self._foto(await self._compra_de(integrador, compra_id))
 
     async def listar_compras(
         self, integrador: Integrador, *, limite: int, estado: str | None
     ) -> list[FotoCompra]:
         """Del almacén (la lista completa), con la instancia de memoria cuando
         existe (tiene las esperas vivas y puede estar más al día)."""
+        if self._compartidas is not None:
+            return await self._listar_compartidas(integrador, limite=limite, estado=estado)
         proxy = self.proxy
         try:
             filas = await proxy.almacen.listar_compras(integrador.id, limite=limite, estado=estado)
@@ -218,10 +274,55 @@ class NucleoProxy:
         compras.sort(key=lambda c: (c.creada, c.id), reverse=True)  # mismo orden que el almacén
         return [proxy.foto(c) for c in compras[:limite]]
 
+    async def _listar_compartidas(
+        self, integrador: Integrador, *, limite: int, estado: str | None
+    ) -> list[FotoCompra]:
+        """El listado con varias instancias: una espera viva de otra instancia
+        se ve esperando (no se cierra); una huérfana se cierra al leerla. Los
+        contextos y las aprobaciones de cada foto salen del almacén."""
+        proxy = self.proxy
+        try:
+            filas = await proxy.almacen.listar_compras(integrador.id, limite=limite, estado=estado)
+            desde = _NORMALIZADA_DESDE.get(estado) if estado is not None else None
+            if desde is not None:
+                # Una huérfana se lee con la espera cerrada: también es de este estado.
+                filas = [
+                    *filas,
+                    *await proxy.almacen.listar_compras(
+                        integrador.id, limite=limite, estado=desde
+                    ),
+                ]
+            compras: list[Compra] = []
+            for fila in filas:
+                compra = await proxy.compra_de_fila(fila)
+                if compra.integrador_id != integrador.id:
+                    continue
+                if estado is not None and compra.estado != estado:
+                    continue
+                compras.append(compra)
+            compras.sort(key=lambda c: (c.creada, c.id), reverse=True)
+            semaforo = asyncio.Semaphore(_FOTOS_A_LA_VEZ)
+
+            async def foto(compra: Compra) -> FotoCompra:
+                async with semaforo:
+                    return await proxy.foto_actual(compra)
+
+            return list(await asyncio.gather(*(foto(c) for c in compras[:limite])))
+        except ErrorAlmacen as e:
+            logger.error("No se pudieron listar las compras de %s: %s", integrador.id, e)
+            raise _no_disponible() from None
+
     async def responder_porque(
         self, integrador: Integrador, compra_id: str, respuesta: str | None
     ) -> FotoCompra:
+        return await self._con_barrera(self._responder_porque(integrador, compra_id, respuesta))
+
+    async def _responder_porque(
+        self, integrador: Integrador, compra_id: str, respuesta: str | None
+    ) -> FotoCompra:
         compra = await self._compra_de(integrador, compra_id)
+        if self._compartidas is not None:
+            return await self._responder_compartida(integrador, compra, respuesta)
         try:
             self.proxy.compras.responder(compra.id, respuesta)
         except EstadoInvalido as e:
@@ -229,7 +330,42 @@ class NucleoProxy:
         logger.info("Compra %s: el integrador %s respondió el porqué", compra.id, integrador.id)
         return self.proxy.foto(compra)
 
+    async def _responder_compartida(
+        self, integrador: Integrador, compra: Compra, respuesta: str | None
+    ) -> FotoCompra:
+        """El porqué con varias instancias: gana una sola respuesta (PATCH
+        condicionado sobre la espera). No se escribe la compra: la escribe la
+        instancia que retiene la búsqueda. La foto es la del estado que va a
+        tener (`negociando`)."""
+        esperas = self._compartidas
+        assert esperas is not None
+        if compra.estado != "esperando_contexto" or not es_id(ID_ESPERA_RE, compra.espera_id):
+            raise _estado(compra.estado)
+        try:
+            ganada = await esperas.responder(compra, "porque", respuesta)
+        except ErrorAlmacen as e:
+            logger.error("No se pudo responder la espera de la compra %s: %s", compra.id, e)
+            raise _no_disponible() from None
+        if not ganada:
+            # Ya la contestaron (otra instancia) o venció: el porqué ya no
+            # cambia nada, la compra sigue (o va a seguir) negociando.
+            raise _estado("negociando")
+        logger.info("Compra %s: el integrador %s respondió el porqué", compra.id, integrador.id)
+        foto = await self._foto(compra)
+        return dataclasses.replace(foto, estado="negociando", pregunta=None, vence=None)
+
     async def decidir_oportunidad(
+        self,
+        integrador: Integrador,
+        compra_id: str,
+        oportunidad_id: str,
+        decision: Literal["aceptar", "rechazar"],
+    ) -> FotoCompra:
+        return await self._con_barrera(
+            self._decidir_oportunidad(integrador, compra_id, oportunidad_id, decision)
+        )
+
+    async def _decidir_oportunidad(
         self,
         integrador: Integrador,
         compra_id: str,
@@ -243,6 +379,8 @@ class NucleoProxy:
             raise ErrorApi(
                 409, "oportunidad_distinta", "Esa no es la oportunidad que está esperando."
             )
+        if self._compartidas is not None:
+            return await self._decidir_compartida(integrador, compra, oportunidad_id, decision)
         try:
             self.proxy.compras.decidir(compra.id, decision)
         except EstadoInvalido as e:
@@ -253,6 +391,64 @@ class NucleoProxy:
         )
         await self._esperar_resolucion(compra)
         return self.proxy.foto(compra)
+
+    async def _decidir_compartida(
+        self,
+        integrador: Integrador,
+        compra: Compra,
+        oportunidad_id: str,
+        decision: Literal["aceptar", "rechazar"],
+    ) -> FotoCompra:
+        """La decisión con varias instancias: gana una sola (PATCH condicionado
+        a la espera abierta, sin vencer y de esa oportunidad). No se escribe
+        la compra: la aplica la búsqueda retenida, en la instancia que la
+        tenga. Para devolver el estado real se mira la compra unos segundos;
+        si no llegó, la foto con la decisión ya aplicada sobre una copia."""
+        esperas = self._compartidas
+        assert esperas is not None
+        if not es_id(ID_ESPERA_RE, compra.espera_id):
+            raise _estado(compra.estado)
+        try:
+            ganada = await esperas.responder(
+                compra, "decision", decision, oportunidad_id=oportunidad_id
+            )
+        except ErrorAlmacen as e:
+            logger.error("No se pudo responder la espera de la compra %s: %s", compra.id, e)
+            raise _no_disponible() from None
+        if not ganada:
+            raise _estado(await self._estado_tras_perder(compra))
+        logger.warning(
+            "Compra %s: el integrador %s decidió %s la oportunidad %s",
+            compra.id, integrador.id, decision, oportunidad_id,
+        )
+        fila = await esperas.sondear_compra(
+            compra.id,
+            lambda f: f.get("estado") not in ESTADOS_ESPERANDO,
+            self.espera_resolucion_compartida_s,
+        )
+        if fila is not None:
+            try:
+                return await self._foto(Compra.desde_fila(fila))
+            except ErrorAlmacen:
+                logger.warning("La fila de la compra %s no se pudo leer: foto proyectada", compra.id)
+        proyectada = copy.copy(compra)
+        proyectada.aplicar_decision(decision)
+        proyectada.vence = None
+        return await self._foto(proyectada)
+
+    async def _estado_tras_perder(self, compra: Compra) -> str:
+        """El estado que va a tener una compra cuya decisión ya no se pudo
+        responder: la de la respuesta que ganó o, si venció, `vencida`."""
+        esperas = self._compartidas
+        assert esperas is not None
+        try:
+            espera = await self.proxy.almacen.leer_espera(compra.espera_id)  # type: ignore[arg-type]
+        except ErrorAlmacen:
+            return "vencida"
+        fin = esperas.fin(espera, "decision", compra)
+        if fin.vencida:
+            return "vencida"
+        return "aceptada" if fin.valor == "aceptar" else "rechazada"
 
     async def _esperar_resolucion(self, compra: Compra) -> None:
         """Hasta que la búsqueda retenida aplique la decisión (o el tope).
@@ -290,9 +486,21 @@ class NucleoProxy:
         firmado exacto. Si ya existe una pendiente para el mismo monto, se
         devuelve esa (200). Con almacén durable se guarda con await; si falla,
         no queda aprobada en ningún lado (503).
+
+        Con varias instancias, el último veredicto y las aprobaciones de la
+        compra se leen del almacén y la aprobación se crea ahí (una pendiente
+        por contexto, cart y total firmado): un segundo POST, en esta o en otra
+        instancia, devuelve la misma.
         """
+        return await self._con_barrera(self._aprobar(integrador, compra_id, cart_id, contexto_id))
+
+    async def _aprobar(
+        self, integrador: Integrador, compra_id: str, cart_id: str, contexto_id: str | None
+    ) -> tuple[dict[str, Any], bool]:
         proxy = self.proxy
         compra = await self._compra_de(integrador, compra_id)
+        if self._compartidas is not None:
+            return await self._aprobar_compartida(integrador, compra, cart_id, contexto_id)
         pendiente = compra.aprobacion_pendiente
         if not isinstance(pendiente, dict):
             previa = self._aprobacion_ya_creada(compra, cart_id, contexto_id)
@@ -361,9 +569,93 @@ class NucleoProxy:
                 return previa.a_json()
         return None
 
+    async def _aprobar_compartida(
+        self, integrador: Integrador, compra: Compra, cart_id: str, contexto_id: str | None
+    ) -> tuple[dict[str, Any], bool]:
+        """`aprobar` con varias instancias: las mismas reglas, con el último
+        veredicto del almacén, y la pendiente creada en el almacén
+        (`crear_aprobacion_pendiente`: si otra instancia ya la creó para el
+        mismo contexto, cart y total firmado, devuelve esa)."""
+        proxy = self.proxy
+        sin_escalar = ErrorApi(
+            409, "sin_escalar", "El último veredicto de ese checkout no es escalar."
+        )
+        try:
+            pendiente = compra.aprobacion_pendiente
+            if not isinstance(pendiente, dict):
+                previa = await self._aprobacion_ya_creada_compartida(compra, cart_id, contexto_id)
+                if previa is not None:
+                    return previa, False
+                raise ErrorApi(409, "sin_escalar", "No hay un checkout retenido para aprobar.")
+            ctx = pendiente.get("contexto_id")
+            if pendiente.get("cart_id") != cart_id or (
+                contexto_id is not None and contexto_id != ctx
+            ):
+                raise ErrorApi(
+                    409, "cart_distinto", "El checkout retenido es de otro cart o contexto."
+                )
+            if not isinstance(ctx, str):
+                raise ErrorApi(409, "sin_escalar", "No hay un checkout retenido para aprobar.")
+            # El último veredicto de ese checkout, de la base (el checkout pudo
+            # pasar por otra instancia): status y total firmado exacto.
+            ultimo = await proxy.almacen.cargar_ultimo_veredicto(ctx, cart_id)
+            if not isinstance(ultimo, dict) or ultimo.get("status") != "escalar":
+                raise sin_escalar
+            centavos, moneda = ultimo.get("centavos"), ultimo.get("moneda")
+            if not isinstance(centavos, int) or isinstance(centavos, bool):
+                raise sin_escalar
+            if not isinstance(moneda, str) or not moneda:
+                raise sin_escalar
+            nueva = Aprobacion(
+                id=f"apr-{uuid.uuid4().hex[:12]}",
+                contexto_id=ctx,
+                cart_id=cart_id,
+                centavos=centavos,
+                moneda=moneda,
+                creada=datetime.now(timezone.utc).isoformat(),
+                via_api=True,
+            )
+            fila, creada = await proxy.almacen.crear_aprobacion_pendiente(
+                fila_aprobacion_gw(nueva, integrador_id=integrador.id, compra_id=compra.id)
+            )
+            aprobacion = aprobacion_desde_fila(fila)
+        except ErrorAlmacen as e:
+            logger.error("No se pudo aprobar en el almacén la compra %s: %s", compra.id, e)
+            raise _no_disponible() from None
+        # En memoria también: el dashboard de esta instancia no la puede aprobar.
+        proxy.aprobaciones.registrar_veredicto(ctx, cart_id, "escalar", centavos, moneda, de_api=True)
+        if creada and proxy.persistencia is not None:
+            proxy.persistencia.guardar_aprobacion(aprobacion)  # auditoría, como el dashboard
+        compra.aprobacion_pendiente = None
+        proxy.guardar_compra(compra)
+        logger.warning(
+            "Aprobación humana %s del integrador %s: compra %s, contexto %s, %s, %s centavos%s",
+            aprobacion.id, integrador.id, compra.id, ctx, cart_id, aprobacion.centavos,
+            "" if creada else " (ya estaba creada)",
+        )
+        return aprobacion.a_json(), creada
+
+    async def _aprobacion_ya_creada_compartida(
+        self, compra: Compra, cart_id: str, contexto_id: str | None
+    ) -> dict[str, Any] | None:
+        """La pendiente que ya se creó para esta compra, del almacén (la pudo
+        crear otra instancia): la más nueva de ese cart (y contexto)."""
+        filas = await self.proxy.almacen.aprobaciones_de_compra(compra.id)
+        for fila in reversed(filas):
+            if fila.get("estado") != "pendiente" or fila.get("cart_id") != cart_id:
+                continue
+            if contexto_id is not None and fila.get("contexto_id") != contexto_id:
+                continue
+            return aprobacion_desde_fila(fila).a_json()
+        return None
+
     # -- servicios sin estado --------------------------------------------------
 
     async def evaluar(self, integrador: Integrador, solicitud: SolicitudEvaluar) -> dict[str, Any]:
+        # La barrera: el registro del veredicto en Supabase antes de responder.
+        return await self._con_barrera(self._evaluar(integrador, solicitud))
+
+    async def _evaluar(self, integrador: Integrador, solicitud: SolicitudEvaluar) -> dict[str, Any]:
         proxy = self.proxy
         comercio = (
             self._comercio_permitido(integrador, solicitud.comercio_id)
@@ -445,10 +737,18 @@ class NucleoProxy:
     def _sin_webhook(self) -> ErrorApi:
         return ErrorApi(409, "sin_webhook", "Esta clave no tiene un webhook configurado.")
 
-    def entregas_webhook(self, integrador: Integrador, limite: int) -> list[dict[str, Any]]:
+    async def entregas_webhook(self, integrador: Integrador, limite: int) -> list[dict[str, Any]]:
+        """Las últimas entregas del integrador. Con varias instancias, del
+        almacén (cada instancia tiene en memoria solo las que hizo ella)."""
         despachador = self.proxy.despachador
         if despachador is None or integrador.webhook is None:
             raise self._sin_webhook()
+        if self.proxy.varias:
+            try:
+                return await self.proxy.almacen.listar_entregas(integrador.id, limite=limite)
+            except ErrorAlmacen as e:
+                logger.error("No se pudieron leer las entregas de %s: %s", integrador.id, e)
+                raise _no_disponible() from None
         return despachador.entregas(integrador.id, limite)
 
     async def probar_webhook(self, integrador: Integrador) -> dict[str, Any]:

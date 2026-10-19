@@ -7,6 +7,7 @@ sin estado y los webhooks). Sin I/O.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
@@ -285,7 +286,10 @@ class NucleoGateway(Protocol):
     async def evaluar(self, integrador: Integrador, solicitud: SolicitudEvaluar) -> dict[str, Any]: ...
     async def filtrar(self, integrador: Integrador, solicitud: SolicitudFiltrar) -> dict[str, Any]: ...
     def clave_publica(self) -> dict[str, Any] | None: ...
-    def entregas_webhook(self, integrador: Integrador, limite: int) -> list[dict[str, Any]]: ...
+    # Una lista o, si las lee del almacén (varias instancias), un awaitable.
+    def entregas_webhook(
+        self, integrador: Integrador, limite: int
+    ) -> list[dict[str, Any]] | Awaitable[list[dict[str, Any]]]: ...
     async def probar_webhook(self, integrador: Integrador) -> dict[str, Any]: ...
 
 

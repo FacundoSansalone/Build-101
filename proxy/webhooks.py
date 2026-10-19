@@ -22,6 +22,11 @@ Reglas (diseño del gateway, §1.6):
   mientras el proceso vive). El integrador reconstruye con
   `GET /v1/compras/{id}`. El registro de entregas guarda las últimas 500 por
   integrador y, si hay almacén, una copia en segundo plano.
+- **Perfiles** (`GATEWAY_WEBHOOKS_PERFIL`). `fondo` (el default): lo de
+  arriba, con los reintentos en segundo plano. `en_linea` (varias
+  instancias sin `waitUntil`, Vercel): 2 intentos de 5 s con 1 s entre
+  medio, y el núcleo espera las entregas en vuelo antes de responder
+  (`barrera`): lo que quede en vuelo al responder se puede perder.
 
 No lee el entorno: todo llega por parámetros (`GATEWAY_WEBHOOKS_INSEGUROS` lo
 traduce la integración a `permitir_inseguro`).
@@ -78,8 +83,27 @@ MAX_PENDIENTES = 1000               # entregas en vuelo, entre todos los integra
 MAX_PENDIENTES_POR_INTEGRADOR = 200
 JITTER = (0.8, 1.2)
 STATUS_REINTENTABLES_4XX = frozenset({408, 429})
+TIMEOUT_S = 10.0
+
+
+@dataclasses.dataclass(frozen=True)
+class PerfilWebhooks:
+    """Intentos, espera entre intentos y tope de cada intento."""
+
+    max_intentos: int
+    backoff_s: tuple[float, ...]
+    timeout_s: float
+
+
+PERFILES: dict[str, PerfilWebhooks] = {
+    # Reintentos en segundo plano (~7 min en total): un proceso que sigue vivo.
+    "fondo": PerfilWebhooks(MAX_INTENTOS, BACKOFF_S, TIMEOUT_S),
+    # Se esperan antes de responder (Vercel): 5 s + 1 s + 5 s como mucho.
+    "en_linea": PerfilWebhooks(2, (1.0,), 5.0),
+}
 
 Resolver = Callable[[str, int], Awaitable[list[str]]]
+Antes = Callable[[], Awaitable[None]]
 
 
 class DestinoNoPermitido(ValueError):
@@ -353,12 +377,23 @@ class Despachador:
         reloj: Callable[[], float] = time.time,
         dormir: Callable[[float], Awaitable[None]] = asyncio.sleep,
         azar: Callable[[], float] = random.random,
-        max_intentos: int = MAX_INTENTOS,
-        backoff_s: tuple[float, ...] = BACKOFF_S,
+        max_intentos: int | None = None,
+        backoff_s: tuple[float, ...] | None = None,
         max_pendientes: int = MAX_PENDIENTES,
         max_pendientes_por_integrador: int = MAX_PENDIENTES_POR_INTEGRADOR,
-        timeout_s: float = 10.0,
+        timeout_s: float | None = None,
+        perfil: str = "fondo",
     ) -> None:
+        """`perfil` (`fondo` o `en_linea`, ver `PERFILES`) da los intentos,
+        el backoff y el tope de cada intento; los que se pasan explícitos
+        mandan sobre los del perfil."""
+        if perfil not in PERFILES:
+            raise ValueError(f"perfil de webhooks desconocido: {perfil!r}")
+        base = PERFILES[perfil]
+        max_intentos = base.max_intentos if max_intentos is None else max_intentos
+        backoff_s = base.backoff_s if backoff_s is None else backoff_s
+        timeout_s = base.timeout_s if timeout_s is None else timeout_s
+        self.perfil = perfil
         self._integradores = integradores
         self._almacen = almacen
         self._permitir_inseguro = permitir_inseguro
@@ -401,8 +436,15 @@ class Despachador:
         tipo: str,
         compra: dict[str, Any] | None,
         datos: dict[str, Any] | None = None,
+        *,
+        antes: Antes | None = None,
     ) -> str | None:
         """Programa la entrega y devuelve su id (None si no hay webhook).
+
+        `antes`: lo que se espera antes del primer intento, con el tope de un
+        intento (con varias instancias, que se escriba la compra: el
+        integrador que recibe el webhook y pide el GET en otra instancia la
+        ve al día). Si falla o tarda de más, la entrega sale igual.
 
         Nunca lanza: un webhook que no sale no puede cortar la compra, que
         sigue su curso y se puede consultar por GET.
@@ -436,7 +478,9 @@ class Despachador:
                 self._terminar(entrega, "descartada", "cola_llena")
                 return entrega.id
             tarea = loop.create_task(
-                self._entregar(entrega, webhook.url, webhook.secreto, cuerpo, self._max_intentos)
+                self._entregar(
+                    entrega, webhook.url, webhook.secreto, cuerpo, self._max_intentos, antes
+                )
             )
             self._tareas[tarea] = entrega
             tarea.add_done_callback(self._tarea_terminada)
@@ -444,6 +488,30 @@ class Despachador:
         except Exception:
             logger.exception("No se pudo programar el webhook %s para %s", tipo, integrador_id)
             return None
+
+    async def barrera(self, timeout_s: float) -> bool:
+        """Espera hasta `timeout_s` las entregas y las copias al almacén que
+        estaban en vuelo (perfil `en_linea`: antes de responder). No cancela
+        nada. True si terminaron todas."""
+        loop = asyncio.get_running_loop()
+        fin = loop.time() + max(0.0, timeout_s)
+        vistas: set[asyncio.Task[None]] = set()
+        while True:
+            # Una entrega que termina deja su copia al almacén en vuelo: se
+            # vuelve a mirar hasta que no quede nada nuevo (o el tope).
+            pendientes = {*self._tareas, *self._guardados} - vistas
+            if not pendientes:
+                return True
+            _, sin_terminar = await asyncio.wait(
+                pendientes, timeout=max(0.0, fin - loop.time())
+            )
+            await asyncio.sleep(0)  # los done callbacks antes de volver
+            if sin_terminar:
+                logger.warning(
+                    "Quedaron %d entregas de webhook en vuelo al responder", len(sin_terminar)
+                )
+                return False
+            vistas |= pendientes
 
     def entregas(self, integrador_id: str, limite: int = 50) -> list[dict[str, Any]]:
         """Las últimas entregas del integrador, la más reciente primero."""
@@ -589,8 +657,16 @@ class Despachador:
         secreto: bytes,
         cuerpo: bytes,
         max_intentos: int,
+        antes: Antes | None = None,
     ) -> None:
         try:
+            if antes is not None:
+                try:
+                    await asyncio.wait_for(antes(), self._timeout_s)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - la entrega sale igual
+                    logger.warning("La entrega %s no esperó la escritura de la compra", entrega.id)
             while True:
                 entrega.intentos += 1
                 entrega.actualizada = self._ahora()
