@@ -490,6 +490,82 @@ async def test_sin_puertos_publicos_todo_es_local(clave_y_registro):
     assert resp.json()["oyente"] == "local"
 
 
+# -- todo_publico (Vercel: sin puerto propio, todo viene de afuera) -------------
+
+
+def _app_todo_publico(registro: RegistroIntegradores) -> AutenticacionGateway:
+    return AutenticacionGateway(
+        _app(registro, puertos=set()).app, registro=registro, todo_publico=True
+    )
+
+
+async def test_todo_publico_sin_mirar_el_puerto(clave_y_registro):
+    """Con `todo_publico=True` cualquier puerto (o ninguno) es el oyente
+    público: lo que en el local pasaría como anónimo, acá pide clave."""
+    clave, registro = clave_y_registro
+    mw = _app_todo_publico(registro)
+    for base in (LOCAL, PUBLICO, "https://kaiai.vercel.app"):
+        async with _cliente(mw, base) as c:
+            anonimo = await c.post("/a2a/merchant_agent", json={})
+            guard = await c.get("/guard/state")
+            otra = await c.get("/otra")
+            v1 = await c.get("/v1/compras")
+            abierta = await c.get("/v1/openapi.json")
+            con = await c.post("/a2a/m/merchant_1", json={},
+                               headers={"Authorization": f"Bearer {clave}"})
+        assert anonimo.status_code == 401, base
+        assert anonimo.json()["error"]["codigo"] == "no_autenticado"
+        assert guard.status_code == 404 and otra.status_code == 404, base
+        assert v1.status_code == 401, base
+        assert abierta.json() == {"oyente": "publico", "integrador": None, "authorization": None}
+        assert con.json()["oyente"] == "publico" and con.json()["integrador"] == "acme"
+
+
+async def test_todo_publico_sin_server_en_el_scope(clave_y_registro):
+    """En serverless puede no haber `scope["server"]`: igual es público."""
+    _, registro = clave_y_registro
+    vistos: list[dict[str, Any]] = []
+
+    async def app_interna(scope, receive, send):  # pragma: no cover - no se llega
+        vistos.append(dict(scope["state"]))
+
+    mw = AutenticacionGateway(app_interna, registro=registro, todo_publico=True)
+    enviados: list[dict[str, Any]] = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(mensaje):
+        enviados.append(mensaje)
+
+    scope = {"type": "http", "method": "GET", "path": "/a2a/merchant_agent", "headers": [],
+             "query_string": b"", "server": None}
+    await mw(scope, receive, send)
+    assert vistos == [] and enviados[0]["status"] == 401
+    assert scope["state"] == {"oyente": "publico", "integrador": None}
+
+
+def test_todo_publico_por_defecto_es_false(clave_y_registro):
+    _, registro = clave_y_registro
+    mw = AutenticacionGateway(_eco, registro=registro, puertos_publicos={PUERTO_PUBLICO})
+    assert mw.todo_publico is False
+    assert mw.oyente({"server": ("127.0.0.1", 8010)}) == "local"
+    assert mw.oyente({"server": ("gw.test", PUERTO_PUBLICO)}) == "publico"
+    sin_puertos = AutenticacionGateway(_eco, registro=registro)  # puertos_publicos=()
+    assert sin_puertos.oyente({"server": ("gw.test", PUERTO_PUBLICO)}) == "local"
+    todo = AutenticacionGateway(_eco, registro=registro, todo_publico=True)
+    assert todo.oyente({"server": ("127.0.0.1", 8010)}) == "publico"
+    assert todo.oyente({}) == "publico"
+
+
+async def test_todo_publico_sin_claves_activas_nadie_pasa():
+    """Fail-closed: con el registro vacío todo `/a2a` y `/v1` protegido da 401."""
+    mw = _app_todo_publico(RegistroIntegradores.vacio())
+    async with _cliente(mw, "https://kaiai.vercel.app") as c:
+        assert (await c.post("/a2a/m/merchant_1", json={})).status_code == 401
+        assert (await c.get("/v1/compras")).status_code == 401
+
+
 async def test_la_clave_no_se_loguea(clave_y_registro, caplog):
     clave, registro = clave_y_registro
     with caplog.at_level("DEBUG"):

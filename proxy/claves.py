@@ -12,10 +12,11 @@
   inexistente se compara contra un hash ficticio fijo, para que el tiempo de
   respuesta no diga qué `kid` existen.
 - **Middleware (`AutenticacionGateway`):** el más externo. Reconoce el oyente
-  por el puerto local de la conexión y aplica las reglas por ruta del diseño:
-  en el oyente público solo existen `/a2a/*` y `/v1/*`, y piden clave; en el
-  local nada cambia para la demo (`/a2a/*` anónimo sigue andando) salvo que
-  una clave `psg_` presente tiene que ser válida.
+  por el puerto local de la conexión (o, con `todo_publico=True`, trata todo
+  como público: en Vercel no hay puerto) y aplica las reglas por ruta del
+  diseño: en el oyente público solo existen `/a2a/*` y `/v1/*`, y piden
+  clave; en el local nada cambia para la demo (`/a2a/*` anónimo sigue
+  andando) salvo que una clave `psg_` presente tiene que ser válida.
 
 Nunca se loguea la clave ni el header `Authorization`. Middleware ASGI puro
 (como `ControlLocal`) para no interferir con el SSE.
@@ -390,6 +391,11 @@ class AutenticacionGateway:
     - `oyente`: "local" | "publico";
     - `integrador`: el `Integrador` autenticado, o None si el pedido es
       anónimo (solo posible en el oyente local, fuera de `/v1` protegido).
+
+    El oyente sale del puerto local de la conexión (`puertos_publicos`). Con
+    `todo_publico=True` todo pedido es del oyente público, sin mirar el
+    puerto: en un despliegue serverless (Vercel) no hay puerto propio ni
+    oyente local, y lo que llega viene de afuera.
     """
 
     def __init__(
@@ -397,17 +403,25 @@ class AutenticacionGateway:
         app: ASGIApp,
         *,
         registro: RegistroIntegradores,
-        puertos_publicos: Iterable[int],
+        puertos_publicos: Iterable[int] = (),
+        todo_publico: bool = False,
     ) -> None:
         self.app = app
         self.registro = registro
         self.puertos_publicos = frozenset(puertos_publicos)
+        self.todo_publico = bool(todo_publico)
+
+    def oyente(self, scope: Scope) -> Oyente:
+        """"publico" siempre con `todo_publico`; si no, por el puerto."""
+        if self.todo_publico:
+            return "publico"
+        return oyente_de(scope, self.puertos_publicos)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        oyente = oyente_de(scope, self.puertos_publicos)
+        oyente = self.oyente(scope)
         estado = scope.setdefault("state", {})
         estado["oyente"] = oyente
         estado["integrador"] = None
