@@ -146,11 +146,14 @@ def categoria_nombrada(textos: Iterable[str]) -> str | None:
     """La categoría que nombran los textos, en orden: el primero que nombre
     una manda (el pedido antes que las respuestas: "un monitor" + "para la
     notebook" es un monitor)."""
-    from taxonomia import categoria_por_palabras as por_palabras
+    # `nombradas` saltea complementos ("mochila para la notebook" es una
+    # mochila, no una notebook); devuelve de la mejor a la peor.
+    from taxonomia.palabras import nombradas
 
     arbol = _arbol()
     for texto in textos:
-        categoria = por_palabras(texto or "", arbol) if isinstance(texto, str) else None
+        candidatas = nombradas(texto or "", arbol) if isinstance(texto, str) else []
+        categoria = candidatas[0][0] if candidatas else None
         if categoria is not None and categoria in arbol:
             return categoria
     return None

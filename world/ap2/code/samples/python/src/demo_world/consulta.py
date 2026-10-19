@@ -116,7 +116,9 @@ def categoria_de(texto: str) -> str | None:
   if modulo is None:
     return None
   try:
-    return modulo.categoria_por_palabras(texto, modulo.cargar_subconjunto())
+    # `nombradas` saltea complementos ("mochila para la notebook").
+    candidatas = modulo.palabras.nombradas(texto, modulo.cargar_subconjunto())
+    return candidatas[0][0] if candidatas else None
   except Exception:  # noqa: BLE001
     logger.exception("demo_world: falló la categoría por palabras")
     return None

@@ -794,3 +794,11 @@ async def test_sin_resultados_la_busqueda_pasa_sin_oportunidad_ni_errores(
     assert final["estado"] == "sin_oportunidad"
     assert vistas in ([], [[]])  # nada que proponer
     assert not [e for e in evs if e["tipo"] in ("error", "oportunidad", "bloqueado")]
+
+
+def test_la_categoria_de_la_ficha_saltea_complementos():
+    # "mochila para la notebook" es una mochila (100), no una notebook (328).
+    from proxy.fuentes import categoria_nombrada
+
+    assert categoria_nombrada(["Quiero una mochila para la notebook"]) == "100"
+    assert categoria_nombrada(["un monitor de 27 pulgadas"]) == "305"
