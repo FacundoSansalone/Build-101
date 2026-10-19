@@ -83,6 +83,8 @@ from proxy.comercios import (
     url_publica_comercio,
 )
 from proxy.compras import (
+    ESTADOS_COMPRA,
+    ESTADOS_ESPERANDO,
     ESTADOS_TERMINALES_API,
     LARGO_MAXIMO_RESPUESTA,
     MAX_CONTEXTOS_POR_COMPRA,
@@ -92,6 +94,7 @@ from proxy.compras import (
     RegistroCompras,
 )
 from proxy.config import Config
+from proxy.esperas import Apertura, EsperaCompartida, EsperaLocal, Esperas
 from proxy.estado import (
     EstadoMemoria,
     TareasEnFondo,
@@ -129,6 +132,7 @@ from proxy.tipos_gateway import (
     AlmacenEstado,
     Comercio,
     ErrorAlmacen,
+    EscrituraDecisivaFallida,
     FotoCompra,
     Integrador,
     es_id,
@@ -250,9 +254,16 @@ _MOTIVO_CONTEXTO_AJENO = (
     "La respuesta del proveedor usa el contexto de otra compra: no se reenvía."
 )
 # El agente del cliente espera hasta 600 s por llamada (DEFAULT_TIMEOUT del
-# sample) y las dos esperas caen en la misma: presupuesto con margen.
-_PRESUPUESTO_LLAMADA_S = 570.0
+# sample) y las dos esperas caen en la misma: presupuesto con margen. El
+# presupuesto es `Config.presupuesto_llamada_s` (570 s en la demo local; en
+# Vercel, menos que el máximo de la función).
 _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
+# Motivos fijos cuando el estado no quedó guardado antes de responder
+# (varias instancias, `ProxyGuard.barrera`).
+_MOTIVO_SIN_ESTADO = "el estado del gateway no quedó guardado"
+_MOTIVO_SIN_ESPERA = (
+    "No se pudo guardar la espera en el almacén: la alternativa no se autoriza."
+)
 # Una repregunta del intake solo si queda al menos esto de la llamada (si
 # no, sigue con lo que tiene: la consulta de una oportunidad también espera).
 _MINIMO_REPREGUNTA_S = 30.0
@@ -534,6 +545,9 @@ class EstadoStream:
     pendiente: list[bytes] | None = None  # eventos retenidos hasta el final
     cortado: bool = False
     resuelto: bool = False
+    # Varias instancias: el evento final ya llegó y la barrera ya se hizo.
+    final_visto: bool = False
+    barrera_hecha: bool = False
 
 
 class ProxyGuard:
@@ -634,6 +648,21 @@ class ProxyGuard:
         self.despachador = despachador
         # Candado y escrituras en vuelo por compra (`_escribir_compra`).
         self._escrituras_compra: dict[str, list[Any]] = {}
+        # Las esperas (proxy/esperas.py). Con una instancia, los Future de
+        # siempre; con varias, las de compras de integrador van al almacén
+        # (las de la demo siguen en memoria: las contesta el dashboard local).
+        self.varias = config.varias_instancias
+        self.esperas_locales = EsperaLocal()
+        self.esperas_compartidas: EsperaCompartida | None = (
+            EsperaCompartida(
+                self.almacen,
+                self._escribir_condicionada,
+                sondeo_s=config.sondeo_s,
+                gracia_s=config.gracia_espera_s,
+            )
+            if self.varias
+            else None
+        )
         # Lo que es de compras de integrador, para no mostrarlo en los GET de
         # /guard/* sin el token (`_visible`): los ids de sus eventos y los
         # contextos que se ataron a una (aunque la compra salga de memoria).
@@ -692,7 +721,7 @@ class ProxyGuard:
             _recordar(self._eventos_privados, evento.id, True, _MAX_MARCAS_PRIVADAS)
         if self.persistencia is not None:
             self.persistencia.guardar_evento(evento)  # solo los `veredicto`
-        self._notificar_webhook(evento)
+        self._notificar_webhook(evento, llamada)
         return evento
 
     def _es_de_integrador_evento(
@@ -721,12 +750,18 @@ class ProxyGuard:
         reenvían sin autenticar. /v1 aísla a cada integrador; esto también."""
         return evento.id not in self._eventos_privados or self._con_token(request)
 
-    def _notificar_webhook(self, evento: Evento) -> None:
+    def _notificar_webhook(self, evento: Evento, llamada: Llamada | None = None) -> None:
         """El webhook del integrador dueño de la compra del evento (§1.6).
 
         Solo compras de API con despachador. El cuerpo es la `VistaCompra` del
         momento (la misma que da el GET): nada del vendedor que el GET no
         muestre. Nunca lanza: un webhook que no sale no corta la compra.
+
+        Con varias instancias, la compra es la del pedido que emite (en
+        memoria puede haber otra copia más vieja, de otro pedido) y la entrega
+        espera a que se escriba lo que esta instancia tenía en vuelo de esa
+        compra: el integrador que recibe el webhook y pide el GET en otra
+        instancia ya lo ve en la base.
         """
         if self.despachador is None:
             return
@@ -735,18 +770,35 @@ class ProxyGuard:
             if tipo is None:
                 return
             compra_id = evento.datos.get("compra_id") if isinstance(evento.datos, dict) else None
-            compra = (
-                self.compras.get(compra_id) if isinstance(compra_id, str) else None
-            ) or self.compras.de_contexto(evento.contexto_id)
+            compra = None
+            propia = llamada.compra if llamada is not None else None
+            if propia is not None and propia.origen == "api":
+                otra = self.compras.de_contexto(evento.contexto_id)
+                if compra_id in (None, propia.id) and (otra is None or otra.id == propia.id):
+                    compra = propia
+            if compra is None:
+                compra = (
+                    self.compras.get(compra_id) if isinstance(compra_id, str) else None
+                ) or self.compras.de_contexto(evento.contexto_id)
             if compra is None or compra.origen != "api" or not compra.integrador_id:
                 return
+            antes = functools.partial(self._hasta_escrita, compra.id) if self.varias else None
             self.despachador.notificar(
                 compra.integrador_id,
                 tipo,
                 vistas.vista_compra(self.foto(compra), a2a_url=self.url_a2a(compra.comercio_id)),
+                antes=antes,
             )
         except Exception:  # noqa: BLE001 - el webhook nunca rompe el flujo
             logger.exception("No se pudo programar el webhook del evento %s", evento.tipo)
+
+    async def _hasta_escrita(self, compra_id: str) -> None:
+        """Espera las escrituras de esa compra que ya estaban en vuelo (el
+        candado de `_escribir_compra` es FIFO)."""
+        par = self._escrituras_compra.get(compra_id)
+        if par is not None:
+            async with par[0]:
+                pass
 
     # -- gateway: compras de integrador -----------------------------------------
 
@@ -771,6 +823,30 @@ class ProxyGuard:
         ]
         return compra.foto(contextos=contextos, aprobaciones=aprobaciones)
 
+    async def foto_actual(self, compra: Compra) -> FotoCompra:
+        """La foto para la API `/v1`. Con una instancia, la de `foto`. Con
+        varias, los contextos y las aprobaciones de la compra salen del
+        almacén: en la memoria de esta instancia hay solo los que pasaron por
+        acá. `ErrorAlmacen` si el almacén falla (503)."""
+        if not self.varias:
+            return self.foto(compra)
+        contextos, filas = await asyncio.gather(
+            self.almacen.contextos_de_compra(compra.id),
+            self.almacen.aprobaciones_de_compra(compra.id),
+        )
+        aprobaciones = [aprobacion_desde_fila(f).a_json() for f in filas]
+        return compra.foto(contextos=list(contextos), aprobaciones=aprobaciones)
+
+    def _esperas_de(self, compra: Compra) -> Esperas:
+        """Las compras de integrador, con varias instancias, esperan en el
+        almacén; el resto (la demo y una sola instancia), en memoria."""
+        if self.esperas_compartidas is not None and compra.origen == "api":
+            return self.esperas_compartidas
+        return self.esperas_locales
+
+    def _retenida_aca(self, compra: Compra) -> bool:
+        return self.esperas_compartidas is not None and self.esperas_compartidas.retiene(compra.id)
+
     def guardar_compra(self, compra: Compra, *, tocar: bool = True) -> None:
         """Solo compras de API: marca el cambio y la guarda en segundo plano
         (si se pierde y hay un reinicio, falta el dato y se bloquea).
@@ -778,7 +854,10 @@ class ProxyGuard:
         El paso a un estado terminal (`bloqueada`, `vencida`) no se descarta
         por el tope de escrituras en vuelo: perderlo haría revivir la compra
         después de un reinicio. `tocar=False` guarda sin mover `actualizada`
-        (una normalización al leer, no un cambio de la compra)."""
+        (una normalización al leer, no un cambio de la compra).
+
+        Con varias instancias es una escritura decisiva: la barrera la espera
+        antes de responder y, si falló, el pedido no sigue (503 o bloqueo)."""
         if compra.origen != "api":
             return
         if tocar:
@@ -787,7 +866,20 @@ class ProxyGuard:
             self._escribir_compra(compra),
             "compra",
             obligatoria=compra.estado in ESTADOS_TERMINALES_API,
+            decisiva=self.varias,
         )
+
+    def _candado_compra(self, compra_id: str) -> list[Any]:
+        par = self._escrituras_compra.get(compra_id)
+        if par is None:
+            par = self._escrituras_compra[compra_id] = [asyncio.Lock(), 0]
+        par[1] += 1
+        return par
+
+    def _soltar_candado(self, compra_id: str, par: list[Any]) -> None:
+        par[1] -= 1
+        if par[1] == 0:
+            self._escrituras_compra.pop(compra_id, None)
 
     async def _escribir_compra(self, compra: Compra) -> None:
         """Las escrituras de una misma compra, de a una y en orden (el
@@ -795,17 +887,79 @@ class ProxyGuard:
         escribe**: en PostgREST gana el upsert que llega último, así que dos
         en vuelo podían pisar `bloqueada` con un `negociando` más viejo. Así
         la última escritura es siempre el estado más nuevo."""
-        par = self._escrituras_compra.get(compra.id)
-        if par is None:
-            par = self._escrituras_compra[compra.id] = [asyncio.Lock(), 0]
-        par[1] += 1
+        par = self._candado_compra(compra.id)
         try:
             async with par[0]:
-                await self.almacen.guardar_compra(compra.a_fila())
+                if self.varias:
+                    await self._escribir_varias(compra)
+                else:
+                    await self.almacen.guardar_compra(compra.a_fila())
         finally:
-            par[1] -= 1
-            if par[1] == 0:
-                self._escrituras_compra.pop(compra.id, None)
+            self._soltar_candado(compra.id, par)
+
+    async def _escribir_varias(self, compra: Compra) -> bool:
+        """La escritura de la compra con varias instancias (dentro del candado).
+
+        Con una espera abierta, la fila de la compra solo la escribe la
+        instancia que la retiene: las demás no la pisan (ni con su copia, que
+        puede ser de antes de abrirla). Por eso:
+
+        - el paso a un estado terminal se escribe siempre (el trigger de 004
+          no deja salir de `bloqueada` ni de `vencida`);
+        - si la compra tiene una espera que retiene otra instancia, no se
+          escribe (queda en el log);
+        - si no, se escribe condicionada a que la fila tenga el `espera_id`
+          que esta instancia sabe que tiene (`espera_guardada`): una espera
+          que se abrió en otra instancia mientras tanto no se pisa.
+
+        True si la fila quedó escrita."""
+        fila = compra.a_fila(espera=True)
+        if compra.estado in ESTADOS_TERMINALES_API:
+            await self.almacen.guardar_compra(fila)
+            compra.espera_guardada = compra.espera_id
+            return True
+        if compra.espera_id is not None and not self._retenida_aca(compra):
+            logger.warning(
+                "Compra %s: no se escribe, la espera la retiene otra instancia", compra.id
+            )
+            return False
+        escrita = await self.almacen.guardar_compra_condicionada(
+            fila, estado_esperado=ESTADOS_COMPRA, espera_id_esperado=compra.espera_guardada
+        )
+        if escrita:
+            compra.espera_guardada = compra.espera_id
+        else:
+            logger.warning(
+                "Compra %s: la fila cambió en otra instancia (otra espera o un estado "
+                "terminal): esta escritura no se aplica", compra.id,
+            )
+        return escrita
+
+    async def _escribir_condicionada(
+        self, compra: Compra, estado_esperado: Any, espera_esperada: str | None
+    ) -> bool:
+        """Escritura con await de la compra, condicionada a que la fila siga en
+        `estado_esperado` y con `espera_esperada` (abrir una espera o cerrar
+        una huérfana: `proxy/esperas.py`). Marca el cambio. En el mismo
+        candado que las de segundo plano, así van en orden."""
+        # Una vuelta del loop: las escrituras de segundo plano ya programadas
+        # de esta compra toman el candado antes (el candado es FIFO por orden
+        # de llegada, y una tarea recién creada todavía no llegó).
+        await asyncio.sleep(0)
+        compra.tocar()
+        par = self._candado_compra(compra.id)
+        try:
+            async with par[0]:
+                escrita = await self.almacen.guardar_compra_condicionada(
+                    compra.a_fila(espera=True),
+                    estado_esperado=estado_esperado,
+                    espera_id_esperado=espera_esperada,
+                )
+                if escrita:
+                    compra.espera_guardada = compra.espera_id
+                return escrita
+        finally:
+            self._soltar_candado(compra.id, par)
 
     def _compra_api(self, llamada: Llamada | None, contexto_id: str | None) -> Compra | None:
         """La compra de integrador de esa llamada o de ese contexto (o None)."""
@@ -817,7 +971,14 @@ class ProxyGuard:
     async def hidratar_compra(self, compra_id: str) -> Compra | None:
         """La compra de memoria o, si no está, la del almacén (restaurada en
         memoria con las esperas cerradas del lado seguro). `ErrorAlmacen` si
-        el almacén falla: quien llama responde 503 y no sigue."""
+        el almacén falla: quien llama responde 503 y no sigue.
+
+        Con varias instancias cada pedido la lee de la base (otra instancia
+        pudo cambiarla), salvo que esta instancia retenga su espera: esa es la
+        que está al día. Una espera viva de otra instancia no se cierra; una
+        huérfana (pasó `vence + gracia`) sí, del lado seguro."""
+        if self.esperas_compartidas is not None:
+            return await self._hidratar_varias(compra_id)
         compra = self.compras.get(compra_id)
         if compra is not None:
             return compra
@@ -833,6 +994,34 @@ class ProxyGuard:
             self.guardar_compra(compra, tocar=False)
         return restaurada
 
+    async def _hidratar_varias(self, compra_id: str) -> Compra | None:
+        esperas = self.esperas_compartidas
+        assert esperas is not None
+        if esperas.retiene(compra_id):
+            retenida = self.compras.get(compra_id)
+            if retenida is not None:
+                return retenida
+        fila = await self.almacen.cargar_compra(compra_id)
+        if fila is None:
+            return None
+        compra = await esperas.compra_de_fila(fila)
+        if compra.origen != "api":
+            return compra  # en el almacén solo hay compras de integrador; por las dudas
+        return self.compras.reemplazar(compra)
+
+    async def compra_de_fila(self, fila: dict[str, Any]) -> Compra:
+        """La compra de una fila ya leída (el listado de `/v1`), sin ponerla en
+        memoria: con varias instancias, la de memoria si esta instancia
+        retiene su espera y si no, la de la fila (sin cerrar esperas vivas)."""
+        if self.esperas_compartidas is None:
+            return Compra.desde_fila(fila)
+        compra_id = fila.get("id") if isinstance(fila, dict) else None
+        if isinstance(compra_id, str) and self.esperas_compartidas.retiene(compra_id):
+            retenida = self.compras.get(compra_id)
+            if retenida is not None:
+                return retenida
+        return await self.esperas_compartidas.compra_de_fila(fila)
+
     async def atar_contexto_api(
         self, compra: Compra, contexto_id: Any, comercio_id: str
     ) -> Literal["ok", "ajeno", "error"]:
@@ -845,9 +1034,16 @@ class ProxyGuard:
         dueno = self.compras.de_contexto(contexto_id)
         if dueno is not None:
             return "ok" if dueno.id == compra.id else "ajeno"
-        if len(self.compras.contextos_de(compra.id)) >= MAX_CONTEXTOS_POR_COMPRA:
-            return "ajeno"
         try:
+            if self.varias:
+                # El tope es de la compra, no de esta instancia: en su memoria
+                # están solo los contextos que pasaron por acá. Uno que ya ató
+                # otra instancia a esta compra no cuenta como nuevo.
+                atados = await self.almacen.contextos_de_compra(compra.id)
+                if contexto_id not in atados and len(atados) >= MAX_CONTEXTOS_POR_COMPRA:
+                    return "ajeno"
+            elif len(self.compras.contextos_de(compra.id)) >= MAX_CONTEXTOS_POR_COMPRA:
+                return "ajeno"
             dueno_id = await self.almacen.atar_contexto(contexto_id, compra.id, comercio_id)
         except ErrorAlmacen as e:
             logger.error("No se pudo atar el contexto de la compra %s: %s", compra.id, e)
@@ -1078,7 +1274,78 @@ class ProxyGuard:
 
     # -- JSON-RPC ------------------------------------------------------------
 
+    @property
+    def con_barrera(self) -> bool:
+        """¿Hay que esperar escrituras o webhooks antes de responder? Con
+        varias instancias (sin `waitUntil`, lo que queda en vuelo al responder
+        se puede perder) o con los webhooks en línea. Con una instancia y los
+        webhooks en segundo plano (la demo local), nunca: como siempre."""
+        return self.varias or self.config.webhooks_perfil == "en_linea"
+
+    async def barrera(self) -> None:
+        """Antes de responder (diseño 2.7): espera hasta `barrera_s` las
+        escrituras en vuelo y, con los webhooks en línea, sus entregas (y las
+        del registro de Supabase). Si una escritura decisiva de este pedido
+        falló o no terminó, `EscrituraDecisivaFallida` (un `ErrorAlmacen`):
+        quien llama no responde como si hubiera quedado guardada. Los
+        webhooks se esperan igual: ya salieron del núcleo."""
+        if not self.con_barrera:
+            return
+        loop = asyncio.get_running_loop()
+        fin = loop.time() + self.config.barrera_s
+        try:
+            if self.varias:
+                await self.en_fondo.barrera(self.config.barrera_s)
+        finally:
+            if self.config.webhooks_perfil == "en_linea" and self.despachador is not None:
+                await self.despachador.barrera(max(0.0, fin - loop.time()))
+            if self.varias and self.persistencia is not None:
+                try:
+                    # Es solo registro: si no termina a tiempo, sigue.
+                    await asyncio.wait_for(
+                        asyncio.shield(self.persistencia.esperar()), max(0.0, fin - loop.time())
+                    )
+                except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                    logger.warning("El registro de Supabase no terminó antes de responder")
+
     async def rpc(self, request: Request) -> Response:
+        if not self.con_barrera:
+            return await self._rpc(request)
+        # Las escrituras decisivas de este pedido, aparte de las de otros.
+        with self.en_fondo.ambito():
+            respuesta = await self._rpc(request)
+            llamada = getattr(request.state, "kaiai_llamada", None)
+            try:
+                await self.barrera()
+            except EscrituraDecisivaFallida as e:
+                return await self._sin_estado_guardado(llamada, respuesta, e)
+            return respuesta
+
+    async def _sin_estado_guardado(
+        self, llamada: Llamada | None, respuesta: Response, e: EscrituraDecisivaFallida
+    ) -> Response:
+        """Lo que no quedó guardado no se entrega (fail-closed): un checkout
+        se bloquea y el resto es 503 `estado_no_disponible` (las ofertas de un
+        find_products cuyo registro no quedó no se reenvían)."""
+        if isinstance(respuesta, StreamingResponse) and respuesta.background is not None:
+            await respuesta.background()  # la respuesta del comercio queda cerrada
+        if llamada is None:
+            return _error_a2a(None, "estado_no_disponible")
+        self._error(llamada, f"Estado no disponible antes de responder: {e}")
+        cuerpo = getattr(respuesta, "body", b"") or b""
+        de_checkout = llamada.pedido.tipo == "create_checkout" or (
+            isinstance(cuerpo, (bytes, bytearray)) and a2a.CHECKOUT_KEY.encode() in cuerpo
+        )
+        if llamada.guard_activo and de_checkout:
+            bloqueo = self._bloqueo_sintetico(llamada, _MOTIVO_SIN_ESTADO)
+            return Response(bloqueo, status_code=200, media_type="application/json")
+        return _error_a2a(llamada.pedido.rpc_id, "estado_no_disponible")
+
+    def _fin_llamada(self, llamada: Llamada) -> float:
+        """El instante (reloj monotónico) en que se acaba el presupuesto."""
+        return llamada.inicio + self.config.presupuesto_llamada_s
+
+    async def _rpc(self, request: Request) -> Response:
         comercio = self._comercio_de(request)
         integrador = _integrador(request)
         if comercio is None and integrador is None:
@@ -1109,6 +1376,7 @@ class ProxyGuard:
             integrador=integrador,
             oyente=_oyente(request),
         )
+        request.state.kaiai_llamada = llamada  # para la barrera de `rpc`
         pedido = llamada.pedido
         if integrador is None:
             # Tráfico anónimo (la demo): nunca en el contexto de una compra de
@@ -1145,8 +1413,18 @@ class ProxyGuard:
             content=raw,  # los bytes tal cual: los mandatos no se tocan
             headers=_filtrar(request.headers, excluidos),
         )
+        # La llamada al comercio, con lo que queda del presupuesto (lo que ya
+        # se esperó el porqué también cuenta): pasado eso, el agente del
+        # cliente (o la plataforma) ya cortó.
+        fin = self._fin_llamada(llamada)
         try:
-            resp = await self.client.send(upstream, stream=True)
+            resp = await asyncio.wait_for(
+                self.client.send(upstream, stream=True), max(0.0, fin - time.monotonic())
+            )
+        except asyncio.TimeoutError:
+            return self._sin_respuesta(
+                llamada, "el comercio no respondió", "se agotó el tiempo de la llamada"
+            )
         except httpx.HTTPError as e:
             return self._sin_respuesta(
                 llamada, "el comercio no respondió", f"{type(e).__name__}: {e}"
@@ -1166,7 +1444,7 @@ class ProxyGuard:
             )
         try:
             contenido = await a2a.leer_acotado(
-                resp.aiter_bytes(), self.config.max_respuesta_bytes
+                _con_plazo(resp.aiter_bytes(), fin), self.config.max_respuesta_bytes
             )
         except a2a.LimiteExcedido as e:
             return self._respuesta_excedida(llamada, e)
@@ -1215,8 +1493,13 @@ class ProxyGuard:
             if atadura == "ajeno":
                 return _error_a2a(pedido.rpc_id, "contexto_ajeno")
         contexto_id = pedido.contexto_id
-        if pedido.tipo == "create_checkout" and contexto_id and contexto_id not in self._ofertas:
-            # Después de un reinicio: las ofertas que vio el proxy en find_products.
+        if pedido.tipo == "create_checkout" and contexto_id and (
+            self.varias or contexto_id not in self._ofertas
+        ):
+            # Después de un reinicio: las ofertas que vio el proxy en
+            # find_products. Con varias instancias, siempre de la base: el
+            # find_products pudo pasar por otra, y solo vale lo que quedó
+            # guardado (sin fila, el checkout se bloquea).
             try:
                 fila = await self.almacen.cargar_ofertas(contexto_id)
             except ErrorAlmacen as e:
@@ -1225,6 +1508,8 @@ class ProxyGuard:
             guardadas = _ofertas_de_fila(fila)
             if guardadas is not None:
                 _recordar(self._ofertas, contexto_id, guardadas)
+            elif self.varias:
+                self._ofertas.pop(contexto_id, None)
         llamada.compra = compra
         return None
 
@@ -1240,6 +1525,13 @@ class ProxyGuard:
 
         Corre una sola vez por compra. Otra búsqueda que llega mientras tanto
         espera lo mismo (`contexto_listo`). Si el agente falla, sigue literal.
+
+        Con varias instancias la espera va al almacén (`proxy/esperas.py`): la
+        respuesta puede llegar por cualquier instancia. Si la espera no se
+        puede abrir, el porqué sigue literal (lado seguro) y la fila queda
+        como estaba; si ya la tiene otra búsqueda, se espera esa. Si la
+        llamada se corta (la instancia muere), no se escribe nada: la espera
+        la cierra del lado seguro quien lea la compra pasada la gracia.
         """
         compra = llamada.compra
         assert compra is not None
@@ -1253,6 +1545,9 @@ class ProxyGuard:
         pedido = llamada.pedido
         hoy = self.hoy()
         contexto = None
+        esperas = self._esperas_de(compra)
+        propia = True  # esta búsqueda corrió la etapa: escribe la compra al final
+        cortada = False
         try:
             if self.agente is None or not compra.intencion_activa:
                 return
@@ -1280,9 +1575,19 @@ class ProxyGuard:
                     )
                     texto = _PREGUNTA_POR_DEFECTO
                 compra.nueva_espera(texto)
-                self._emitir_pregunta(llamada, compra, EstadoIntake())
-                self.guardar_compra(compra)
-                respuesta, vencido = await compra.esperar_respuesta()
+                vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_contexto_s))
+                apertura = await esperas.abrir(compra, "porque", estado_previo="creada")
+                if apertura != "abierta":
+                    propia = False
+                    await self._sin_espera_porque(llamada, compra, apertura)
+                    return
+                # Con varias instancias la fila ya está escrita: recién ahora
+                # el evento y el webhook (el integrador puede contestar ya).
+                self._emitir_pregunta(llamada, compra, EstadoIntake(), vence=vence)
+                if not esperas.compartida:
+                    self.guardar_compra(compra)
+                fin = await esperas.esperar(compra, "porque")
+                respuesta, vencido = fin.valor, fin.vencida
                 if respuesta:
                     turnos = [Turno(pregunta=compra.pregunta, respuesta=respuesta)]
                     contexto = await self._contexto_turno(
@@ -1304,13 +1609,43 @@ class ProxyGuard:
                 escenario=pedido.escenario,
                 llamada=llamada,
             )
+        except asyncio.CancelledError:
+            cortada = True
+            raise
         finally:
             # También si se cancela la llamada: ninguna compra queda colgada.
+            esperas.soltar(compra)
+            compra.espera_id = None
             if compra.estado == "esperando_contexto":
                 compra.estado = "negociando"
             compra.contexto = contexto
             compra.contexto_listo.set()
-            self.guardar_compra(compra)
+            # Con varias instancias, una llamada cortada no escribe: esta
+            # instancia puede estar muriendo (la cierra quien la lea después).
+            if propia and not (cortada and esperas.compartida):
+                self.guardar_compra(compra)
+
+    async def _sin_espera_porque(
+        self, llamada: Llamada, compra: Compra, apertura: Apertura
+    ) -> None:
+        """La espera del porqué no se abrió (varias instancias).
+
+        - `ocupada`: otra búsqueda de la misma compra ya la tiene abierta: se
+          espera esa, como cualquier otra búsqueda que llega mientras tanto;
+        - `fallo`: el almacén no pudo; el porqué sigue literal (lado seguro),
+          sin pregunta ni webhook."""
+        compra.cerrar_porque()
+        if apertura == "ocupada":
+            await self._esperar_otra_instancia(llamada, compra)
+            return
+        self._error(
+            llamada, "No se pudo guardar la espera del porqué: sigue el pedido literal"
+        )
+
+    def _plazo(self, llamada: Llamada, segundos: float) -> float:
+        """El plazo de una espera: el configurado, si entra en lo que queda de
+        la llamada (con margen para el LLM y la respuesta)."""
+        return min(segundos, self._restante(llamada) - _MARGEN_S)
 
     def _eventos_del_pedido(self, llamada: Llamada) -> None:
         pedido = llamada.pedido
@@ -1503,11 +1838,32 @@ class ProxyGuard:
     async def _sse(self, resp: httpx.Response, llamada: Llamada) -> AsyncIterator[bytes]:
         est = EstadoStream()
         falla: str | None = None
+        # Varias instancias: una búsqueda de integrador por stream se retiene
+        # hasta el evento final y la barrera. Las ofertas solo salen si su
+        # registro quedó guardado (el checkout puede caer en otra instancia).
+        retener = (
+            self.varias and llamada.de_integrador and llamada.pedido.tipo == "find_products"
+        )
+        retenidos: list[bytes] = []
         try:
-            lineas = a2a.lineas_acotadas(resp.aiter_bytes(), self.config.max_respuesta_bytes)
+            lineas = a2a.lineas_acotadas(
+                _con_plazo(resp.aiter_bytes(), self._fin_llamada(llamada)),
+                self.config.max_respuesta_bytes,
+            )
             async for evento in a2a.leer_sse(lineas):
-                for bloque in await self._sse_evento(evento, llamada, est):
+                bloques = await self._sse_evento(evento, llamada, est)
+                if est.final_visto and not est.cortado and not est.barrera_hecha:
+                    # Antes del evento final, lo que se escribió (las ofertas, el
+                    # veredicto): si no quedó guardado, no se entrega.
+                    bloques = await self._sse_barrera(llamada, est, bloques)
+                    if est.cortado:
+                        retenidos.clear()  # las ofertas sin registro no salen
+                if retener and not est.barrera_hecha and not est.cortado:
+                    retenidos.extend(bloques)
+                    continue
+                for bloque in [*retenidos, *bloques]:
                     yield bloque
+                retenidos.clear()
                 if est.cortado:
                     break
         except a2a.LimiteExcedido as e:
@@ -1518,6 +1874,21 @@ class ProxyGuard:
             falla = f"un evento del comercio no se pudo reenviar ({type(e).__name__})"
         finally:
             await resp.aclose()
+
+        if retenidos and not est.cortado:
+            # El stream terminó sin evento final: las ofertas se registran acá
+            # y salen solo si quedaron guardadas.
+            if not est.ofertas_registradas:
+                est.ofertas_registradas = True
+                if not self._registrar_ofertas(est.ofertas, llamada):
+                    retenidos = self._sse_cortar_etapa2(llamada, est, _MOTIVO_CONTEXTO_AJENO)
+            if not est.cortado:
+                error = await self._sse_barrera(llamada, est, [])
+                if est.cortado:
+                    retenidos = error
+            for bloque in retenidos:
+                yield bloque
+            retenidos = []
 
         if falla is not None and not est.cortado:
             for bloque in self._sse_falla(llamada, est, falla):
@@ -1553,6 +1924,35 @@ class ProxyGuard:
         if not est.resuelto and not est.cortado:
             metodo = "create_checkout" if est.checkouts else None
             self._emitir_reenviado(llamada, est.contexto_id, metodo=metodo)
+        if self.con_barrera:
+            # Lo que se escribió después del evento final (o de un corte): el
+            # stream sigue abierto hasta que quede guardado.
+            try:
+                await self.barrera()
+            except EscrituraDecisivaFallida as e:
+                self._error(llamada, f"Estado no disponible al cerrar el stream: {e}")
+
+    async def _sse_barrera(
+        self, llamada: Llamada, est: EstadoStream, bloques: list[bytes]
+    ) -> list[bytes]:
+        """La barrera antes del evento final de un stream (varias instancias).
+        Si una escritura decisiva falló: un checkout se bloquea y una búsqueda
+        termina con el error `estado_no_disponible` (como el 503 del JSON)."""
+        est.barrera_hecha = True
+        if not self.con_barrera:
+            return bloques
+        try:
+            await self.barrera()
+            return bloques
+        except EscrituraDecisivaFallida as e:
+            self._error(llamada, f"Estado no disponible antes de responder: {e}")
+        if llamada.guard_activo and (self._es_de_checkout(llamada) or est.checkouts):
+            return self._sse_cortar(llamada, est, _MOTIVO_SIN_ESTADO)
+        est.cortado = True
+        est.resuelto = True
+        est.pendiente = None
+        est.ofertas_registradas = True  # sin ofertas: un checkout después falla cerrado
+        return [a2a.bloque_sse(_cuerpo_error_a2a(llamada.pedido.rpc_id, "estado_no_disponible"))]
 
     async def _sse_evento(
         self, evento: a2a.EventoSSE, llamada: Llamada, est: EstadoStream
@@ -1612,6 +2012,7 @@ class ProxyGuard:
         ctx = result.get("contextId")
         est.contexto_id = ctx if isinstance(ctx, str) else est.contexto_id
         final = a2a.es_final(result)
+        est.final_visto = est.final_visto or final
 
         if n == 0:
             if pedido.tipo == "find_products":
@@ -1784,7 +2185,9 @@ class ProxyGuard:
         if contexto_id:
             _recordar(self._ofertas, contexto_id, guardadas)
             if llamada.de_integrador:
-                # Para evaluar el create_checkout aunque haya un reinicio.
+                # Para evaluar el create_checkout aunque haya un reinicio. Con
+                # varias instancias es decisiva: el checkout puede caer en otra
+                # y sin la fila se bloquea, así que sin ella no se reenvían.
                 self.en_fondo.programar(
                     self.almacen.guardar_ofertas(
                         fila_ofertas(
@@ -1793,6 +2196,7 @@ class ProxyGuard:
                         )
                     ),
                     "ofertas",
+                    decisiva=self.varias,
                 )
         logger.info(
             "← ofertas: contexto=%s escenario=%s carts=%s",
@@ -1859,7 +2263,7 @@ class ProxyGuard:
     def _restante(self, llamada: Llamada) -> float:
         """Lo que queda del presupuesto de la llamada: el agente del cliente
         espera hasta 600 s y las dos esperas caen en la misma llamada."""
-        return max(0.0, _PRESUPUESTO_LLAMADA_S - (time.monotonic() - llamada.inicio))
+        return max(0.0, self._fin_llamada(llamada) - time.monotonic())
 
     async def _esperar_a_la_otra(
         self, llamada: Llamada, compra: Compra, evento: asyncio.Event
@@ -1875,7 +2279,18 @@ class ProxyGuard:
 
         Sin plazo (`vence` None: la primera todavía arma la pregunta con el
         LLM, o ya pasó la espera y sigue con el LLM de después) no hay nada
-        que acote salvo la llamada: el tramo es lo que le queda a la llamada."""
+        que acote salvo la llamada: el tramo es lo que le queda a la llamada.
+
+        Con varias instancias, si la espera la retiene otra instancia, se
+        mira el almacén (`_esperar_otra_instancia`) y la compra al día queda
+        en `llamada.compra`."""
+        if (
+            not evento.is_set()
+            and self.esperas_compartidas is not None
+            and compra.origen == "api"
+            and not self.esperas_compartidas.retiene(compra.id)
+        ):
+            return await self._esperar_otra_instancia(llamada, compra)
         while not evento.is_set():
             tramo = self._restante(llamada)
             if compra.vence is not None:
@@ -1889,6 +2304,37 @@ class ProxyGuard:
                 if compra.vence == plazo:
                     return False
         return True
+
+    async def _esperar_otra_instancia(self, llamada: Llamada, compra: Compra) -> bool:
+        """Otra búsqueda de la misma compra retiene la espera (en esta o en
+        otra instancia): se lee la compra del almacén hasta que ya no espera
+        nada (ni la fila está esperando ni hay una espera abierta). Lo acota
+        lo mismo que en memoria: el plazo de la espera más el margen, nunca
+        más que la llamada. Una espera huérfana se cierra al leerla
+        (`hidratar_compra`). La compra leída queda en `llamada.compra`. True
+        si terminó."""
+        esperas = self.esperas_compartidas
+        assert esperas is not None
+        paso = esperas.sondeo_s
+        while True:
+            tramo = self._restante(llamada)
+            if compra.vence is not None:
+                tramo = min(tramo, compra.restante() + _MARGEN_ESPERA_SECUNDARIA_S)
+            if tramo <= 0:
+                return False
+            await asyncio.sleep(min(paso, tramo))
+            paso = min(paso * 1.5, max(esperas.sondeo_s, 2.0))
+            try:
+                fresca = await self.hidratar_compra(compra.id)
+                if fresca is None:
+                    return False
+                llamada.compra = compra = fresca
+                if compra.estado in ESTADOS_ESPERANDO:
+                    continue
+                if await self.almacen.espera_abierta_de(compra.id) is None:
+                    return True
+            except ErrorAlmacen as e:
+                logger.warning("No se pudo leer la compra %s mientras espera: %s", compra.id, e)
 
     async def _llm(self, funcion: Any, *args: Any) -> Any:
         """Una llamada al agente de intención, en un hilo (el pool del LLM) y
@@ -2068,11 +2514,19 @@ class ProxyGuard:
             self._intakes.popitem(last=False)
         return estado
 
-    def _emitir_pregunta(self, llamada: Llamada, compra: Compra, estado: EstadoIntake) -> None:
-        """`pedido_detectado` de un turno (el primero es el porqué)."""
-        vence = compra.fijar_plazo(
-            min(self.config.espera_contexto_s, self._restante(llamada) - _MARGEN_S)
-        )
+    def _emitir_pregunta(
+        self,
+        llamada: Llamada,
+        compra: Compra,
+        estado: EstadoIntake,
+        *,
+        vence: datetime | None = None,
+    ) -> None:
+        """`pedido_detectado` de un turno (el primero es el porqué). Sin
+        `vence`, fija el plazo acá (el intake de la demo); con `vence`, ya lo
+        fijó quien abrió la espera."""
+        if vence is None:
+            vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_contexto_s))
         r = estado.resultado
         estado.confirmar = r is not None and r.siguiente == "confirmar"
         datos: dict[str, Any] = {
@@ -2279,17 +2733,12 @@ class ProxyGuard:
 
         if compra.estado == "esperando_decision":
             listo = await self._esperar_a_la_otra(llamada, compra, compra.resuelta)
+            compra = llamada.compra or compra  # varias instancias: la leída del almacén
             if not listo or compra.estado == "esperando_decision":
                 return "vencida", None  # sin decisión: el silencio no autoriza
-        if compra.estado == "aceptada" and compra.oportunidad and compra.requisitos_autorizados:
-            artefacto = self._artefacto_parametros(
-                compra.oportunidad.cart_id, compra.oportunidad.id, compra.requisitos_autorizados
-            )
-            return "con_parametros", a2a.tarea_con_artefacto(result, artefacto)
-        if compra.estado in ("vencida", "bloqueada"):
-            return compra.estado, None
-        if compra.estado != "negociando":
-            return "pasar", None  # sin_oportunidad o rechazada: sigue el pedido original
+        resuelta = self._accion_resuelta(compra, result)
+        if resuelta is not None:
+            return resuelta
         if compra.contexto is None or compra.ficha is None or self.agente is None:
             compra.estado = "sin_oportunidad"
             self.guardar_compra(compra)
@@ -2335,56 +2784,64 @@ class ProxyGuard:
         # lo asegura el proxy, cualquiera sea el agente.
         oportunidad = _con_titulo_publico(oportunidad, ofertas)
 
+        estado_previo = compra.estado
         compra.oportunidad = oportunidad
         # Las otras búsquedas esperan esta decisión (`resuelta`). Puede venir
         # puesta: `Compra.desde_fila` la deja así al hidratar después de un
         # reinicio, y otra búsqueda pasaba sin la decisión del usuario.
         compra.resuelta.clear()
         compra.estado = "esperando_decision"
-        vence = compra.fijar_plazo(
-            min(self.config.espera_decision_s, self._restante(llamada) - _MARGEN_S)
-        )
-        self.guardar_compra(compra)
-        self._emitir(
-            "oportunidad",
-            {
-                "compra_id": compra.id,
-                "oportunidad": oportunidad.model_dump(mode="json"),
-                "vence": vence.isoformat(),
-            },
-            guard_activo=True,
-            contexto_id=contexto_id,
-            escenario=escenario,
-            llamada=llamada,
-        )
+        vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_decision_s))
+        esperas = self._esperas_de(compra)
+        # Con varias instancias, la espera y la fila de la compra quedan
+        # escritas antes del evento y del webhook (el integrador puede decidir
+        # por cualquier instancia apenas le llega).
+        apertura = await esperas.abrir(compra, "decision", estado_previo=estado_previo)
+        if apertura == "ocupada":
+            # Otra búsqueda de esta compra ya consulta al usuario: esta espera
+            # su decisión (como en memoria) y recibe lo mismo.
+            compra.estado, compra.oportunidad, compra.vence = estado_previo, None, None
+            compra.resuelta.set()
+            listo = await self._esperar_otra_instancia(llamada, compra)
+            compra = llamada.compra or compra
+            if not listo or compra.estado == "esperando_decision":
+                return "vencida", None
+            return self._accion_resuelta(compra, result) or ("pasar", None)
+        if not esperas.compartida:
+            self.guardar_compra(compra)
         decision = None
+        cortada = False
         try:
-            decision = await compra.esperar_decision()
+            if apertura == "abierta":
+                self._emitir(
+                    "oportunidad",
+                    {
+                        "compra_id": compra.id,
+                        "oportunidad": oportunidad.model_dump(mode="json"),
+                        "vence": vence.isoformat(),
+                    },
+                    guard_activo=True,
+                    contexto_id=contexto_id,
+                    escenario=escenario,
+                    llamada=llamada,
+                )
+                decision = (await esperas.esperar(compra, "decision")).valor
+            else:
+                # No quedó guardada: nadie la puede contestar. Lado seguro.
+                self._error(llamada, _MOTIVO_SIN_ESPERA, contexto_id)
+        except asyncio.CancelledError:
+            cortada = True
+            raise
         finally:
             # También si se cancela la llamada: sin decisión, vencida.
-            if decision == "aceptar":
-                # Los que cambian salen de la oferta del comercio: van marcados
-                # `aceptado` para que la vista de /v1 y los webhooks los filtren
-                # (`vistas._ficha_publica`). Los que no cambian siguen siendo
-                # del pedido.
-                originales = list(compra.ficha.requisitos) if compra.ficha else []
-                compra.requisitos_autorizados = [
-                    r if r in originales else r.model_copy(update={"origen": "aceptado"})
-                    for r in oportunidad.requisitos_propuestos
-                ]
-                compra.ficha = Ficha(
-                    pedido_original=compra.pedido,
-                    requisitos=compra.requisitos_autorizados,
-                    confirmada=True,
-                    categoria_taxonomia=compra.ficha.categoria_taxonomia if compra.ficha else None,
-                )
-                compra.estado = compra.decision = "aceptada"
-            elif decision == "rechazar":
-                compra.estado = compra.decision = "rechazada"
-            else:
-                compra.estado = compra.decision = "vencida"
+            esperas.soltar(compra)
+            compra.espera_id = None
+            compra.aplicar_decision(decision)
             compra.resuelta.set()
-            self.guardar_compra(compra)
+            # Con varias instancias, una llamada cortada no escribe: esta
+            # instancia puede estar muriendo (la cierra quien la lea después).
+            if not (cortada and esperas.compartida):
+                self.guardar_compra(compra)
         logger.warning("Oportunidad %s: %s", oportunidad.id, compra.decision)
         self._emitir(
             "oportunidad_decidida",
@@ -2411,6 +2868,22 @@ class ProxyGuard:
         if compra.decision == "rechazada":
             return "pasar", None
         return "vencida", None
+
+    def _accion_resuelta(
+        self, compra: Compra, result: dict[str, Any]
+    ) -> tuple[AccionEtapa2, dict[str, Any] | None] | None:
+        """Qué recibe una búsqueda de una compra que ya decidió (o no va a
+        decidir): None si la compra sigue negociando (hay que analizar)."""
+        if compra.estado == "aceptada" and compra.oportunidad and compra.requisitos_autorizados:
+            artefacto = self._artefacto_parametros(
+                compra.oportunidad.cart_id, compra.oportunidad.id, compra.requisitos_autorizados
+            )
+            return "con_parametros", a2a.tarea_con_artefacto(result, artefacto)
+        if compra.estado in ("vencida", "bloqueada"):
+            return compra.estado, None  # type: ignore[return-value]
+        if compra.estado != "negociando":
+            return "pasar", None  # sin_oportunidad o rechazada: sigue el pedido original
+        return None
 
     def _cortar_etapa2(
         self, accion: AccionEtapa2, llamada: Llamada, result: dict[str, Any]
@@ -2842,6 +3315,8 @@ class ProxyGuard:
                     veredicto, contexto_id=contexto_id, ts=ahora, evaluador=self.evaluador.nombre
                 )
             )
+            # Con varias instancias es decisiva: la aprobación por /v1 puede
+            # llegar a otra instancia y lee el último veredicto de la base.
             self.en_fondo.programar(
                 self.almacen.guardar_ultimo_veredicto(
                     fila_ultimo_veredicto(
@@ -2849,6 +3324,7 @@ class ProxyGuard:
                     )
                 ),
                 "último veredicto",
+                decisiva=self.varias,
             )
             self.guardar_compra(compra_api)
         self._emitir(
@@ -2872,7 +3348,7 @@ class ProxyGuard:
         por_aprobar = False
         reclamada = None
         if veredicto.status == "escalar":
-            if compra_api is not None and self.almacen.durable:
+            if compra_api is not None and (self.almacen.durable or self.varias):
                 reclamada = await self._reclamar_aprobacion(
                     contexto_id, cart_id, centavos, moneda
                 )
@@ -2914,7 +3390,15 @@ class ProxyGuard:
         memoria no la quema sin que pase ninguno.
 
         Si después el stream se corta, la aprobación queda gastada y hay que
-        aprobar de nuevo (fail-closed)."""
+        aprobar de nuevo (fail-closed).
+
+        Con varias instancias la pendiente se lee siempre del almacén (la de
+        memoria puede ser vieja: otra instancia la pudo usar, o el dueño
+        aprobar de nuevo en otra) y se reclama ahí."""
+        if self.varias:
+            return await self._reclamar_aprobacion_compartida(
+                contexto_id, cart_id, centavos, moneda
+            )
         if self.aprobaciones.pendiente(contexto_id, cart_id) is None:
             try:
                 fila = await self.almacen.cargar_aprobacion_pendiente(contexto_id, cart_id)
@@ -2938,6 +3422,36 @@ class ProxyGuard:
         if not reclamada:
             # Ya la usó otro (otro proceso o antes de un reinicio): fuera de memoria.
             self.aprobaciones.descartar(aprobacion.id)
+            logger.warning("La aprobación %s ya estaba usada: se retiene", aprobacion.id)
+            return None
+        return aprobacion
+
+    async def _reclamar_aprobacion_compartida(
+        self, contexto_id: str, cart_id: str, centavos: int | None, moneda: str | None
+    ) -> Aprobacion | None:
+        if centavos is None or moneda is None:
+            return None  # sin total firmado exacto no hay aprobación que valga
+        try:
+            fila = await self.almacen.cargar_aprobacion_pendiente(
+                contexto_id, cart_id, centavos=centavos, moneda=moneda
+            )
+            if fila is None:
+                return None
+            aprobacion = aprobacion_desde_fila(fila)
+            if (aprobacion.contexto_id, aprobacion.cart_id) != (contexto_id, cart_id) or (
+                aprobacion.centavos, aprobacion.moneda
+            ) != (centavos, moneda):
+                return None
+            reclamada = await self.almacen.reclamar_aprobacion(
+                aprobacion.id, usada=datetime.now(timezone.utc).isoformat(), task_id=None
+            )
+        except ErrorAlmacen as e:
+            logger.error("No se pudo reclamar la aprobación de %s: %s", contexto_id, e)
+            return None
+        previa = self.aprobaciones.pendiente(contexto_id, cart_id)
+        if previa is not None:
+            self.aprobaciones.descartar(previa.id)  # la de memoria ya no manda
+        if not reclamada:
             logger.warning("La aprobación %s ya estaba usada: se retiene", aprobacion.id)
             return None
         return aprobacion
@@ -3420,6 +3934,24 @@ def _leer_del_comercio(contenido: bytes | str) -> tuple[Any, str | None]:
     return body, error
 
 
+async def _con_plazo(trozos: AsyncIterator[bytes], fin: float) -> AsyncIterator[bytes]:
+    """Los trozos de la respuesta del comercio hasta `fin` (reloj monotónico):
+    pasado el presupuesto de la llamada, `httpx.ReadTimeout` (quien lee ya
+    trata un corte de red: fail-closed)."""
+    iterador = trozos.__aiter__()
+    while True:
+        restante = fin - time.monotonic()
+        if restante <= 0:
+            raise httpx.ReadTimeout("se agotó el tiempo de la llamada")
+        try:
+            trozo = await asyncio.wait_for(iterador.__anext__(), restante)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            raise httpx.ReadTimeout("se agotó el tiempo de la llamada") from None
+        yield trozo
+
+
 def _busqueda_completa(result: Any) -> bool:
     """¿El comercio dio la búsqueda por terminada? Una tarea o el
     status-update final en `completed` (no `failed`, ni un mensaje suelto)."""
@@ -3447,10 +3979,15 @@ def _pedido_legible(raw: bytes) -> bool:
 def _error_a2a(rpc_id: Any, codigo: str) -> Response:
     """Un error del tráfico A2A de integrador antes de reenviar (§1.2): HTTP
     con status y un error JSON-RPC con mensaje fijo y `data.codigo`."""
-    status, mensaje = _ERRORES_A2A[codigo]
+    status, _ = _ERRORES_A2A[codigo]
+    return JSONResponse(_cuerpo_error_a2a(rpc_id, codigo), status_code=status)
+
+
+def _cuerpo_error_a2a(rpc_id: Any, codigo: str) -> dict[str, Any]:
+    _, mensaje = _ERRORES_A2A[codigo]
     cuerpo = a2a.error_jsonrpc(rpc_id, f"KaiAI: {mensaje}", code=_CODIGO_ERROR_A2A)
     cuerpo["error"]["data"] = {"codigo": codigo}
-    return JSONResponse(cuerpo, status_code=status)
+    return cuerpo
 
 
 def _ofertas_de_fila(fila: Any) -> OfertasGuardadas | None:
@@ -3511,7 +4048,14 @@ def create_app(
     oyente público por `config.gateway_port`), `comercios` (registro de
     comercios; sin él, el comercio de siempre), `almacen` (estado de las
     compras de integrador; sin él, en memoria) y `despachador` (webhooks;
-    sin él, se arma uno si algún integrador tiene webhook).
+    sin él, se arma uno si algún integrador tiene webhook, con el perfil de
+    `config.webhooks_perfil`).
+
+    Varias instancias (`config.instancias="varias"`): las esperas de las
+    compras de integrador van al almacén (`proxy/esperas.py`), cada pedido
+    lee la compra de la base y, antes de responder, una barrera espera lo
+    que se escribió (`ProxyGuard.barrera`). Con `una` (el default), todo
+    como siempre.
     """
     from proxy.gateway import NucleoProxy  # gateway importa este módulo
 
@@ -3529,7 +4073,8 @@ def create_app(
     almacen = almacen if almacen is not None else EstadoMemoria()
     if despachador is None and any(i.webhook is not None for i in integradores.todos()):
         despachador = Despachador(
-            integradores.get, almacen=almacen, permitir_inseguro=config.webhooks_inseguros
+            integradores.get, almacen=almacen, permitir_inseguro=config.webhooks_inseguros,
+            perfil=config.webhooks_perfil,
         )
     proxy = ProxyGuard(
         config, client, evaluador, ping_segundos,
