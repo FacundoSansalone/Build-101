@@ -489,6 +489,45 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     proceso; con `--gateway` y `KAIAI_CLAVE` apunta a uno ya levantado.
     `--esperado` sale con error si el status no es ese.
 
+- **Motor en Vercel (2026-10-19, ramas `vercel/*`).** Se despliega solo el
+  motor (`contracts`, `guard`, `filtro`, `intencion`, `decisiones`,
+  `taxonomia`, `fabricante`, `proxy`) en Vercel Hobby, con estado en
+  Supabase. La simulación (`world/`, `dashboard/`) queda afuera: en la vida
+  real los agentes son externos, y para probar se expone por túnel. Guía:
+  `deploy/vercel/README.md`.
+  - **Frontera:** `[tool.kaiai.motor]` en el `pyproject.toml` raíz. La
+    simulación entra solo por `create_app(..., demo=FuentesDemo())`
+    (`proxy/demo_local.py`), desde `python -m proxy`; lo exige
+    `proxy/tests/test_frontera_motor.py`.
+  - **Entrada:** `index.py` → `proxy/vercel.py` (`crear_app_serverless`).
+    Solo expone `/a2a/m/{id}` y `/v1/*`: no hay `/guard/*` ni nada en disco.
+    Si la configuración está incompleta o trae una variable prohibida, da
+    503 `motor_no_configurado` a todo.
+  - **Secretos por entorno:** `GUARD_SIGNING_KEY_PEM_B64` (en Vercel nunca se
+    crea una clave), `GATEWAY_CLAVES_JSON` y `GATEWAY_COMERCIOS_JSON`
+    (`proxy/arranque.py`, `ClaveRecibo`).
+  - **Varias instancias** (`GATEWAY_INSTANCIAS=varias`, forzado en Vercel).
+    Reemplaza "una sola instancia" del gateway:
+    - el porqué y la decisión esperan en `gw_esperas`, con PATCH
+      condicionados: gana una sola respuesta;
+    - la compra se escribe antes de avisar, y hay una barrera antes de
+      responder: si una escritura decisiva falla, 503 o bloqueado;
+    - las escrituras se fusionan con lo que ya está en la base;
+    - una espera huérfana se cierra del lado seguro después de
+      `vence + GATEWAY_GRACIA_ESPERA_S`.
+
+    Con `una` (la demo local) no cambia nada.
+  - **Topes de Hobby:** presupuesto de 270 s por llamada, porqué de 60 s,
+    decisión de 150 s y cuerpos de 4 MB. Webhooks en línea (2 intentos)
+    antes de responder; la cola persistente queda para después.
+  - **Base:** `proxy/sql/004_serverless.sql` va después de 003. Ninguna de
+    las dos está aplicada; se aplican a mano y con confirmación del equipo.
+  - **Prueba local sin Supabase:** `deploy/vercel/postgrest_local.py`,
+    `local_multi.py` (balanceador por pedido, como Vercel) y
+    `proxy/scripts/smoke_v1_pausas.py`.
+  - **El porqué de una compra de integrador** no pide lo que ya está en la
+    ficha (tope, moneda): va solo la plantilla del porqué.
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh
