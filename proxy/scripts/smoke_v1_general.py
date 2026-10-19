@@ -201,7 +201,13 @@ async def flujo(http: httpx.AsyncClient, args: argparse.Namespace, salida: Salid
         return _fin(["find_products no devolvió carts"], salida)
 
     if args.cart:
-        cart = next((c for c in carts if c.get("cart_id") == args.cart), None)
+        # El comercio general suma un sufijo por contexto (`cart_1_43a28e`):
+        # `--cart cart_1` elige ese, como en los escenarios fijos.
+        cart = next(
+            (c for c in carts if c.get("cart_id") == args.cart
+             or str(c.get("cart_id", "")).startswith(f"{args.cart}_")),
+            None,
+        )
         por_que = "el pedido por --cart"
         if cart is None:
             return _fin([f"no hay {args.cart} entre los carts"], salida)
