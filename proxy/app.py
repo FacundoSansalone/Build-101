@@ -219,7 +219,16 @@ _ERRORES_A2A: dict[str, tuple[int, str]] = {
     "cuerpo_demasiado_grande": (413, "el pedido supera el tamaño máximo."),
     "pedido_ilegible": (400, "el pedido no es un JSON-RPC legible."),
     "estado_no_disponible": (503, "el estado del gateway no está disponible; reintentá."),
+    # Con latido (el status 200 ya salió): lo que no se pudo entregar.
+    "interno": (500, "el pedido no se pudo completar."),
+    "respuesta_inesperada": (502, "la respuesta del comercio no se pudo entregar."),
+    "error_http": (502, "el pedido no se pudo completar."),
 }
+# Latido de un pedido retenido (`ProxyGuard._rpc_con_latido`): un espacio
+# antes del JSON sigue siendo JSON válido; un comentario SSE se ignora.
+_LATIDO_JSON = b" "
+_LATIDO_SSE = b": latido\n\n"
+_FIN_STREAM = object()
 _CODIGO_ERROR_A2A = -32001
 
 # Etapa 2 (docs/FLUJO.md). Textos fijos: nada del comercio ni del LLM.
@@ -1398,6 +1407,12 @@ class ProxyGuard:
                     logger.warning("El registro de Supabase no terminó antes de responder")
 
     async def rpc(self, request: Request) -> Response:
+        latido = self.config.latido_s
+        if latido is not None and "comercio" in request.path_params:
+            return await self._rpc_con_latido(request, latido)
+        return await self._rpc_completo(request)
+
+    async def _rpc_completo(self, request: Request) -> Response:
         if not self.con_barrera:
             return await self._rpc(request)
         # Las escrituras decisivas de este pedido, aparte de las de otros.
@@ -1429,6 +1444,146 @@ class ProxyGuard:
             bloqueo = self._bloqueo_sintetico(llamada, _MOTIVO_SIN_ESTADO)
             return Response(bloqueo, status_code=200, media_type="application/json")
         return _error_a2a(llamada.pedido.rpc_id, "estado_no_disponible")
+
+    # -- latido de un pedido retenido (Vercel) ----------------------------------
+
+    async def _rpc_con_latido(self, request: Request, latido: float) -> Response:
+        """`/a2a/m/{comercio}` con `latido_s`: entre el cliente y la función
+        (Vercel) una conexión sin bytes se corta a los 60 s, y un pedido
+        retenido (el porqué, una decisión) puede tardar más.
+
+        El pedido corre en su propia tarea, entero (`_rpc_completo`, con la
+        barrera). Si termina antes de `latido` segundos, sale como siempre,
+        con su status. Si no, se empieza a responder ya (200):
+
+        - JSON (`message/send`): un espacio cada `latido` y al final el
+          cuerpo (un espacio antes del JSON sigue siendo JSON válido). Si la
+          respuesta final era un error HTTP, como el status ya salió, va como
+          error JSON-RPC con `data.http_status` (nada que se lea como éxito);
+        - SSE (`message/stream`): un comentario `: latido` cada `latido`
+          mientras no hay eventos (también si el stream ya empezó: una
+          búsqueda se retiene hasta el evento final y la barrera).
+
+        Si el cliente se va, la tarea del pedido sigue y escribe como sin
+        latido (las esperas, la barrera); una respuesta del comercio que ya
+        nadie va a leer se cierra."""
+        comercio = self._comercio_de(request)
+        if comercio is None or not self._permitido(_integrador(request), comercio):
+            return await self._rpc_completo(request)  # el 404/403 de siempre, sin esperar nada
+        try:
+            raw = await a2a.leer_acotado(request.stream(), self.config.max_cuerpo_a2a)
+        except a2a.LimiteExcedido:
+            return _error_a2a(None, "cuerpo_demasiado_grande")
+        pedido = a2a.leer_pedido(raw)
+        stream = pedido.metodo_rpc == "message/stream"
+        # El cuerpo ya leído: la tarea lo relee de acá, sin competir con quien
+        # escucha si el cliente se va.
+        tarea = asyncio.create_task(self._rpc_completo(Request(request.scope, _reproducir(raw))))
+        tarea.add_done_callback(_reclamar_resultado)
+        listo, _ = await asyncio.wait({tarea}, timeout=latido)
+        if listo:
+            respuesta = tarea.result()
+            if stream and isinstance(respuesta, StreamingResponse):
+                return StreamingResponse(
+                    self._sse_con_latido(respuesta, latido),
+                    status_code=respuesta.status_code,
+                    headers=_cabeceras_del_stream(respuesta),
+                    media_type="text/event-stream",
+                )
+            return respuesta
+        logger.info("Pedido %s retenido: se responde con latido cada %g s", pedido.tipo, latido)
+        if stream:
+            return StreamingResponse(
+                self._sse_retenido(tarea, pedido, latido),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+        return StreamingResponse(
+            self._json_retenido(tarea, pedido, latido),
+            media_type="application/json",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def _json_retenido(
+        self, tarea: asyncio.Task[Response], pedido: a2a.Pedido, latido: float
+    ) -> AsyncIterator[bytes]:
+        consumida = False
+        try:
+            yield _LATIDO_JSON  # el status y el primer byte salen ya
+            while not await _terminada(tarea, latido):
+                yield _LATIDO_JSON
+            consumida = True
+            yield await self._cuerpo_final_json(tarea, pedido)
+        finally:
+            if not consumida:
+                _cerrar_al_terminar(tarea)
+
+    async def _cuerpo_final_json(self, tarea: asyncio.Task[Response], pedido: a2a.Pedido) -> bytes:
+        respuesta = _resultado(tarea)
+        if respuesta is None:
+            return a2a.dumps(_error_con_status(b"", 500, pedido.rpc_id, "interno"))
+        if isinstance(respuesta, StreamingResponse):
+            # Un stream para un message/send ya no entra en un JSON: fail-closed.
+            if respuesta.background is not None:
+                await respuesta.background()
+            return a2a.dumps(_error_con_status(b"", 502, pedido.rpc_id, "respuesta_inesperada"))
+        cuerpo = bytes(respuesta.body)
+        if 200 <= respuesta.status_code < 300:
+            return cuerpo
+        return a2a.dumps(_error_con_status(cuerpo, respuesta.status_code, pedido.rpc_id))
+
+    async def _sse_retenido(
+        self, tarea: asyncio.Task[Response], pedido: a2a.Pedido, latido: float
+    ) -> AsyncIterator[bytes]:
+        consumida = False
+        try:
+            yield _LATIDO_SSE
+            while not await _terminada(tarea, latido):
+                yield _LATIDO_SSE
+            consumida = True
+            respuesta = _resultado(tarea)
+            if isinstance(respuesta, StreamingResponse):
+                async for trozo in self._sse_con_latido(respuesta, latido):
+                    yield trozo
+                return
+            yield a2a.bloque_sse(_evento_final(respuesta, pedido.rpc_id))
+        finally:
+            if not consumida:
+                _cerrar_al_terminar(tarea)
+
+    async def _sse_con_latido(
+        self, respuesta: StreamingResponse, latido: float
+    ) -> AsyncIterator[bytes]:
+        """Los eventos del stream del pedido y, cuando pasa `latido` sin
+        ninguno, un comentario. El stream lo recorre una sola tarea (sus
+        escrituras y su barrera, en un mismo contexto); si el cliente se va,
+        termina igual y cierra la respuesta del comercio."""
+        cola: asyncio.Queue[Any] = asyncio.Queue()
+
+        async def producir() -> None:
+            try:
+                async for trozo in respuesta.body_iterator:
+                    await cola.put(trozo)
+            except Exception:  # noqa: BLE001 - el stream termina sin evento final
+                logger.exception("El stream del pedido falló")
+            finally:
+                try:
+                    if respuesta.background is not None:
+                        await respuesta.background()
+                finally:
+                    await cola.put(_FIN_STREAM)
+
+        productor = asyncio.create_task(producir())
+        productor.add_done_callback(_reclamar_resultado)
+        while True:
+            try:
+                trozo = await asyncio.wait_for(cola.get(), latido)
+            except asyncio.TimeoutError:
+                yield _LATIDO_SSE
+                continue
+            if trozo is _FIN_STREAM:
+                return
+            yield trozo
 
     def _fin_llamada(self, llamada: Llamada) -> float:
         """El instante (reloj monotónico) en que se acaba el presupuesto."""
@@ -4119,6 +4274,105 @@ def _cuerpo_error_a2a(rpc_id: Any, codigo: str) -> dict[str, Any]:
     cuerpo = a2a.error_jsonrpc(rpc_id, f"KaiAI: {mensaje}", code=_CODIGO_ERROR_A2A)
     cuerpo["error"]["data"] = {"codigo": codigo}
     return cuerpo
+
+
+# -- latido de un pedido retenido ------------------------------------------------
+
+
+def _reproducir(raw: bytes) -> Any:
+    """Un `receive` de ASGI que entrega el cuerpo ya leído (y después, que el
+    cliente se fue: nadie más lo pide)."""
+    entregado = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal entregado
+        if not entregado:
+            entregado = True
+            return {"type": "http.request", "body": raw, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    return receive
+
+
+def _reclamar_resultado(tarea: asyncio.Task[Any]) -> None:
+    """Una tarea del latido que falló queda en el log (y no como "exception
+    never retrieved" si el cliente se fue y nadie lee su resultado)."""
+    if not tarea.cancelled() and tarea.exception() is not None:
+        logger.error("Un pedido con latido falló", exc_info=tarea.exception())
+
+
+async def _terminada(tarea: asyncio.Task[Any], latido: float) -> bool:
+    """Espera hasta `latido` a la tarea (sin cancelarla). True si terminó."""
+    await asyncio.wait({tarea}, timeout=latido)
+    return tarea.done()
+
+
+def _resultado(tarea: asyncio.Task[Response]) -> Response | None:
+    """La respuesta de la tarea; None si se canceló o falló (ya en el log)."""
+    if tarea.cancelled() or tarea.exception() is not None:
+        return None
+    return tarea.result()
+
+
+def _cerrar_al_terminar(tarea: asyncio.Task[Response]) -> None:
+    """El cliente se fue antes del cuerpo final: si la respuesta es un stream
+    del comercio que ya nadie va a leer, se cierra cuando esté. Lo demás del
+    pedido (esperas, escrituras, la barrera) ya corrió en su tarea."""
+
+    def cerrar(t: asyncio.Task[Response]) -> None:
+        respuesta = _resultado(t)
+        if isinstance(respuesta, StreamingResponse) and respuesta.background is not None:
+            asyncio.ensure_future(respuesta.background())
+
+    if tarea.done():
+        cerrar(tarea)
+    else:
+        tarea.add_done_callback(cerrar)
+
+
+def _error_con_status(
+    cuerpo: bytes, status: int, rpc_id: Any, codigo: str = "error_http"
+) -> dict[str, Any]:
+    """Un error HTTP como error JSON-RPC (con latido, el status 200 ya salió):
+    el error JSON-RPC que traía el cuerpo, si traía uno, o el de `codigo`, y
+    en `data.http_status` el status que iba a tener. Nunca un `result`."""
+    body, error = a2a.parsear_json(cuerpo) if cuerpo else (None, "vacío")
+    original = body.get("error") if error is None and isinstance(body, dict) else None
+    if (
+        isinstance(original, dict)
+        and isinstance(original.get("code"), int)
+        and not isinstance(original.get("code"), bool)
+        and isinstance(original.get("message"), str)
+    ):
+        datos = original.get("data") if isinstance(original.get("data"), dict) else {}
+        return {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {**original, "data": {**datos, "http_status": status}},
+        }
+    nuevo = _cuerpo_error_a2a(rpc_id, codigo)
+    nuevo["error"]["data"]["http_status"] = status
+    return nuevo
+
+
+def _evento_final(respuesta: Response | None, rpc_id: Any) -> dict[str, Any]:
+    """El último evento de un stream retenido cuya respuesta no fue un stream
+    (un error antes de reenviar, o un JSON del comercio)."""
+    if respuesta is None:
+        return _error_con_status(b"", 500, rpc_id, "interno")
+    cuerpo = bytes(respuesta.body)
+    if 200 <= respuesta.status_code < 300:
+        body, error = a2a.parsear_json(cuerpo)
+        if error is None and isinstance(body, dict):
+            return body
+        return _error_con_status(b"", 502, rpc_id, "respuesta_inesperada")
+    return _error_con_status(cuerpo, respuesta.status_code, rpc_id)
+
+
+def _cabeceras_del_stream(respuesta: StreamingResponse) -> dict[str, str]:
+    return {
+        k: v for k, v in respuesta.headers.items() if k.lower() not in ("content-length", "content-type")
+    }
 
 
 def _ofertas_de_fila(fila: Any) -> OfertasGuardadas | None:
