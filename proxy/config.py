@@ -142,6 +142,13 @@ class Config:
     # `fondo`: reintentos con backoff en segundo plano (hasta ~7 min). `en_linea`:
     # pocos intentos cortos que se esperan antes de responder (sin `waitUntil`).
     webhooks_perfil: Literal["fondo", "en_linea"] = "fondo"
+    # Latido de un pedido A2A retenido (GATEWAY_LATIDO_S): si la respuesta no
+    # está a los `latido_s` segundos, se empieza a responder (200) y se manda
+    # un espacio cada `latido_s` (en un stream, un comentario SSE) hasta el
+    # cuerpo final: un proxy en el medio (Vercel) corta una conexión sin
+    # bytes a los 60 s. None (el default, y "0" u "off") = apagado: como
+    # siempre, la respuesta sale entera y con su status.
+    latido_s: float | None = None
 
     def __post_init__(self) -> None:
         # Fail-closed también con `dataclasses.replace` (el arranque de Vercel
@@ -292,6 +299,7 @@ class Config:
             webhooks_perfil=_opcion(
                 env.get("GATEWAY_WEBHOOKS_PERFIL"), PERFILES_WEBHOOKS, "GATEWAY_WEBHOOKS_PERFIL"
             ),
+            latido_s=_latido(env.get("GATEWAY_LATIDO_S")),
         )
 
 
@@ -309,6 +317,18 @@ _RANGO_PRESUPUESTO = (0.0, 600.0, False)
 _RANGO_SONDEO = (0.0, 10.0, False)
 _RANGO_GRACIA = (0.0, 3600.0, True)
 _RANGO_BARRERA = (0.0, 60.0, False)
+_RANGO_LATIDO = (0.0, 60.0, False)
+_LATIDO_APAGADO = frozenset({"0", "off", "no", "false", "apagado"})
+
+
+def _latido(valor: str | None) -> float | None:
+    """`GATEWAY_LATIDO_S`: vacío, "0" u "off" = apagado (None); si no, segundos
+    (más de 0 y hasta 60: el corte de Vercel es a los 60 s sin bytes)."""
+    if valor is None or not valor.strip():
+        return None
+    if valor.strip().lower() in _LATIDO_APAGADO:
+        return None
+    return _en_rango(valor, 0.0, "GATEWAY_LATIDO_S", *_RANGO_LATIDO)
 
 
 def _en_rango(
@@ -372,6 +392,8 @@ def _validar_varias(config: Config) -> None:
     _chequear_rango(config.sondeo_s, "sondeo_s", *_RANGO_SONDEO)
     _chequear_rango(config.gracia_espera_s, "gracia_espera_s", *_RANGO_GRACIA)
     _chequear_rango(config.barrera_s, "barrera_s", *_RANGO_BARRERA)
+    if config.latido_s is not None:
+        _chequear_rango(config.latido_s, "latido_s", *_RANGO_LATIDO)
 
 
 def _jsonl_privado(principal: Path, pedido: Path | None) -> Path:
