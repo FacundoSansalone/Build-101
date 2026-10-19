@@ -397,6 +397,66 @@ async def test_recibo_firmado_verifica(tmp_path):
     assert verificar_recibo(reconstruido, clave) is True
 
 
+async def test_recibo_firmado_con_la_clave_inyectada(tmp_path):
+    """Con una `ClaveRecibo` (la del entorno en Vercel) firma con esa y su kid,
+    se verifica con su JWK pública y no toca ningún archivo."""
+    from guard.recibo import verificar_recibo
+    from proxy.evaluador import ClaveRecibo
+
+    clave = ClaveRecibo(clave=ec.generate_private_key(ec.SECP256R1()), kid="kaiai-env-1")
+    espia, _ = evaluador_espia()  # el stub arma un recibo
+    async with cliente() as c:
+        resp = await sin_estado.evaluar_sin_estado(
+            solicitud(armar_checkout(cart_de("cart_1"))), evaluador=espia, clave=clave,
+            client=c, comercio=None, politica=None, ahora=AHORA,
+        )
+    recibo = resp["recibo"]
+    assert recibo is not None and recibo["kid"] == "kaiai-env-1"
+    payload = json.loads(base64.urlsafe_b64decode(recibo["jws"].split(".")[1] + "=="))
+    reconstruido = Recibo.model_validate(payload).model_copy(
+        update={"firma": recibo["jws"], "kid": recibo["kid"]}
+    )
+    assert verificar_recibo(reconstruido, clave.clave.public_key()) is True
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("con_clave, con_ruta", [(True, True), (False, False)])
+async def test_firmar_pide_clave_o_ruta_exactamente_una(tmp_path, con_clave, con_ruta):
+    """Las dos a la vez son ambiguas y ninguna dejaría los recibos sin firma
+    sin que nadie lo pidiera: es un error de programación, antes de evaluar."""
+    from proxy.evaluador import ClaveRecibo
+
+    espia, llamadas = evaluador_espia("aprobado")
+    extra: dict[str, Any] = {}
+    if con_clave:
+        extra["clave"] = ClaveRecibo(clave=ec.generate_private_key(ec.SECP256R1()))
+    if con_ruta:
+        extra["key_path"] = tmp_path / "guard_key.pem"
+    async with cliente() as c:
+        with pytest.raises(TypeError, match="exactamente uno"):
+            await sin_estado.evaluar_sin_estado(
+                solicitud(armar_checkout(cart_de("cart_1"))), evaluador=espia, client=c,
+                comercio=None, politica=None, ahora=AHORA, **extra,
+            )
+    assert llamadas == []
+
+
+async def test_si_la_clave_inyectada_falla_el_recibo_va_null():
+    class ClaveRota:
+        def firmar_veredicto(self, veredicto):
+            raise RuntimeError("sin clave")
+
+    espia, _ = evaluador_espia()
+    async with cliente() as c:
+        resp = await sin_estado.evaluar_sin_estado(
+            solicitud(armar_checkout(cart_de("cart_1"))), evaluador=espia,
+            clave=ClaveRota(),  # type: ignore[arg-type]
+            client=c, comercio=None, politica=None, ahora=AHORA,
+        )
+    assert resp["recibo"] is None
+    assert resp["status"] in {"aprobado", "con_avisos", "escalar", "bloqueado"}
+
+
 async def test_si_no_se_puede_firmar_el_recibo_va_null(tmp_path, monkeypatch):
     def falla(*_: Any, **__: Any) -> Any:
         raise OSError("sin disco")

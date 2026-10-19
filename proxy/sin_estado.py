@@ -42,7 +42,7 @@ from contracts import (
     Veredicto,
 )
 from proxy import a2a
-from proxy.evaluador import EvaluadorCargado, firmar_recibo
+from proxy.evaluador import ClaveRecibo, EvaluadorCargado, firmar_recibo
 from proxy.fuentes import cargar_catalogo, skus_de
 from proxy.tipos_gateway import (
     ID_SEGURO_RE,
@@ -284,11 +284,29 @@ def _respuesta(
     return vista
 
 
+def firmar_veredicto(
+    veredicto: Veredicto, *, clave: ClaveRecibo | None, key_path: Path | None
+) -> Veredicto:
+    """El veredicto con el recibo firmado por `clave` (la `ClaveRecibo`
+    inyectada: del entorno con varias instancias) o, si no hay, por la del
+    archivo `key_path` (lo de siempre, `guard.recibo.cargar_o_crear_clave`).
+
+    Exactamente una de las dos: las dos a la vez son ambiguas (¿con cuál se
+    firmó?) y ninguna dejaría los recibos sin firma sin que nadie lo pidiera.
+    Las fallas de la firma las maneja quien llama (recibo null)."""
+    if (clave is None) == (key_path is None):
+        raise TypeError("firmar el recibo pide clave= o key_path= (exactamente uno)")
+    if clave is not None:
+        return clave.firmar_veredicto(veredicto)
+    return firmar_recibo(veredicto, key_path)
+
+
 async def evaluar_sin_estado(
     solicitud: SolicitudEvaluar,
     *,
     evaluador: EvaluadorCargado,
-    key_path: Path,
+    key_path: Path | None = None,
+    clave: ClaveRecibo | None = None,
     client: httpx.AsyncClient,
     comercio: Comercio | None,
     politica: Politica | None,
@@ -313,7 +331,13 @@ async def evaluar_sin_estado(
       Guard (fecha del recibo y `exp`/`iat` del JWT). Sin `ahora`, el reloj
       se lee una vez acá.
     - `ejecutor`: dónde corren las consultas al fabricante (None = el del loop).
+    - El recibo lo firma `clave` (una `ClaveRecibo`, la del entorno con varias
+      instancias) o, si no se pasa, la del archivo `key_path` (lo de siempre).
+      Exactamente uno de los dos (`TypeError` antes de evaluar); si la firma
+      falla, el recibo va null.
     """
+    if (clave is None) == (key_path is None):
+        raise TypeError("evaluar_sin_estado pide clave= o key_path= (exactamente uno)")
     ts = ahora or datetime.now(UTC)
     visto, cart_id = _validar_checkout(solicitud.checkout)
     checkout = solicitud.checkout
@@ -378,7 +402,7 @@ async def evaluar_sin_estado(
         return bloqueado(MOTIVO_EVALUAR_FALLA)
 
     try:
-        veredicto = firmar_recibo(veredicto, key_path)
+        veredicto = firmar_veredicto(veredicto, clave=clave, key_path=key_path)
     except Exception as e:  # noqa: BLE001 - sin firma, la respuesta va con recibo null
         logger.error("No se pudo firmar el recibo en /v1/evaluar: %s", type(e).__name__)
     return _respuesta(veredicto, firmado=firmado, ts=ts, evaluador=evaluador.nombre)
