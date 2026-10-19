@@ -49,6 +49,9 @@ franja). Un `evaluar()` sin `checkout=` no se usa nunca, ni con el permiso.
 | `GUARD_EVENTS_JSONL` | `.logs/guard_events.jsonl` | Copia de los eventos (relativo a la raíz del repo; se crea con modo 0600) |
 | `GUARD_EVENTS_JSONL_PRIVADO` | `.logs/guard_events_privados.jsonl` (junto a `GUARD_EVENTS_JSONL`) | Copia de los eventos de compras de integrador (modo 0600). El dashboard no la sirve. Tiene que ser otro archivo que `GUARD_EVENTS_JSONL` (si no, no arranca) |
 | `GUARD_KEY_PATH` | `.temp-db/guard_signing_key.pem` | Clave del recibo (la maneja `guard.recibo`) |
+| `GUARD_SIGNING_KEY_PEM_B64` | — | Clave del recibo por entorno (el PEM EC P-256 en base64), para varias instancias sin disco compartido (Vercel). **Secreta**. `ClaveRecibo.desde_entorno`; con las dos variables a la vez, un PEM inválido o una clave que no es P-256, no arranca. El servidor local la valida pero todavía firma con `GUARD_KEY_PATH` |
+| `GUARD_SIGNING_KEY_PEM` | — | Lo mismo con el PEM directo (saltos reales o escritos `\n`). Una sola de las dos |
+| `GUARD_SIGNING_KID` | `guard-key-1` | El `kid` del recibo y de la JWK publicada (1 a 64 de `A-Za-z0-9._-`) |
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control, nuevo en cada arranque (modo 0600 donde aplica). Lo lee el servidor del dashboard |
 | `PROXY_ALLOW_STUB` | `0` | `1` para arrancar con el stub si no hay `guard.evaluar()` real (solo pruebas) |
 | `PROXY_MAX_RESPUESTA_BYTES` | `5242880` | Tope por respuesta del comercio (5 MB) |
@@ -766,7 +769,9 @@ Con `GATEWAY_ESTADO=supabase` y sin las tablas, crear una compra da 503
 | Variable | Default | Qué es |
 |---|---|---|
 | `GATEWAY_CLAVES_ARCHIVO` | — | Integradores (claves, comercios y webhook). Sin archivo o sin claves activas no hay oyente público |
+| `GATEWAY_CLAVES_JSON` | — | El mismo JSON que `GATEWAY_CLAVES_ARCHIVO`, en la variable (sin disco, como en Vercel). Con el archivo a la vez, vacía, `null` o JSON inválido, no arranca (el mensaje no trae el contenido) |
 | `GATEWAY_COMERCIOS_ARCHIVO` | — | Registro de comercios. Sin archivo, uno solo desde `MERCHANT_UPSTREAM_URL` y `CATALOGO_URL` |
+| `GATEWAY_COMERCIOS_JSON` | — | El mismo JSON que `GATEWAY_COMERCIOS_ARCHIVO`, en la variable. Mismas reglas que `GATEWAY_CLAVES_JSON` y la misma validación cruzada |
 | `GATEWAY_COMERCIO_POR_DEFECTO` | `merchant_1` | Id de ruta del comercio por defecto sin archivo |
 | `GATEWAY_HOST` | `127.0.0.1` | Interfaz del oyente público. Sin claves activas no hay oyente: fuera de loopback solo avisa |
 | `GATEWAY_PORT` | `8030` | Puerto del oyente público (distinto de `PROXY_PORT`) |
@@ -844,7 +849,8 @@ igual contra `http://127.0.0.1:8030` (con el mundo levantado).
 | `a2a.py` | Helpers puros sobre el JSON de A2A (pedido, ofertas, checkouts, `guard.veredicto` ajeno y versión para el agente, tareas bloqueadas, total firmado exacto, huella del checkout, lectura acotada y SSE saneado) |
 | `aprobaciones.py` | Registro de aprobaciones humanas (un solo uso, atadas a contexto, cart y monto) |
 | `seguridad.py` | Middleware de la API de control (`Host`, `Origin`, `Content-Type`, `X-Guard-Token`) y el token por arranque |
-| `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo` |
+| `evaluador.py` | `cargar_evaluador()` (Guard real con `checkout=` o `EvaluadorNoDisponible`; el stub solo con `PROXY_ALLOW_STUB=1`), clave y firma del recibo con `guard.recibo`: `ClaveRecibo` (del entorno o del archivo, `firmar`, `firmar_veredicto`, `jwk_publica`) |
+| `arranque.py` | Los cargadores desde el entorno (intención, filtro, fabricante, integradores y comercios por archivo o `GATEWAY_*_JSON`, validación cruzada, clave del recibo). No importa uvicorn: los usan `python -m proxy` (que los re-exporta) y la entrada serverless |
 | `guard_stub.py` | Stub con la firma de `contracts.Evaluador`: bloquea si el elegido es el último cart |
 | `eventos.py` | Bus de eventos: memoria (200), suscriptores SSE (hasta `PROXY_MAX_SUSCRIPTORES_SSE`) y JSONL (los de compras de integrador, en el privado) |
 | `fuentes.py` | Ficha de un intent (`ficha_del_intent`, con atributos), categoría de la taxonomía de la ficha (`categoria_de_la_ficha`, `ruta_categoria`, `categorias_para_el_pedido`), catálogo público por SKU o entero (con su fuente), `intent_ap2(ficha)` y el protocolo `FuentesDemoProtocolo` (lo que el proxy le pide a la demo). Es del motor: no importa `demo_world` |
