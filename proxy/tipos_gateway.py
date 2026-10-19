@@ -23,6 +23,7 @@ PREFIJO_CLAVE = "psg_"
 
 # -- identificadores ---------------------------------------------------------
 ID_COMPRA_RE = re.compile(r"cmp-[0-9a-f]{16}")
+ID_ESPERA_RE = re.compile(r"esp-[0-9a-f]{16}")                  # esperas (004_serverless.sql)
 ID_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")             # integradores y comercios
 ID_SEGURO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}")  # contexto, cart, task, aprobación, merchant.id
 KID_RE = re.compile(r"[0-9a-f]{12}")
@@ -39,6 +40,8 @@ TipoWebhook = Literal[
     "compra.veredicto", "compra.bloqueada", "ping",
 ]
 EstadoEntrega = Literal["pendiente", "entregada", "fallida", "descartada"]
+TipoEspera = Literal["porque", "decision"]
+EstadoEspera = Literal["abierta", "respondida", "vencida"]
 
 
 def es_id(regex: re.Pattern[str], valor: Any) -> bool:
@@ -97,6 +100,19 @@ class ErrorApi(Exception):
 
 class ErrorAlmacen(RuntimeError):
     """El almacén de estado no respondió o rechazó la operación (fail-closed)."""
+
+
+class EscrituraDecisivaFallida(ErrorAlmacen):
+    """Una escritura decisiva en segundo plano (`TareasEnFondo.programar(...,
+    decisiva=True)`) falló, se descartó o no terminó antes de la barrera.
+
+    Es un `ErrorAlmacen`: quien ya traduce esos errores a 503
+    `estado_no_disponible` no necesita nada más. `fallas` trae las
+    descripciones (fijas, sin datos de la compra)."""
+
+    def __init__(self, fallas: tuple[str, ...]) -> None:
+        super().__init__("escrituras decisivas sin confirmar: " + ", ".join(fallas))
+        self.fallas = fallas
 
 
 # -- solicitudes ya validadas (las arma api_v1) ------------------------------
@@ -194,13 +210,57 @@ class AlmacenEstado(Protocol):
     ) -> dict[str, Any] | None: ...
     async def guardar_aprobacion(self, fila: dict[str, Any]) -> None: ...
     async def cargar_aprobacion_pendiente(
-        self, contexto_id: str, cart_id: str
+        self, contexto_id: str, cart_id: str, *,
+        centavos: int | None = None, moneda: str | None = None,
     ) -> dict[str, Any] | None: ...
     async def reclamar_aprobacion(
         self, aprobacion_id: str, *, usada: str, task_id: str | None
     ) -> bool: ...
     async def guardar_entrega(self, entrega: EntregaWebhook) -> None: ...
     async def cerrar(self) -> None: ...
+
+    # -- varias instancias (proxy/sql/004_serverless.sql) ----------------------
+    # Semántica y retornos: ver `proxy/estado.py` (EstadoMemoria y
+    # EstadoSupabase la cumplen igual). Toda falla es `ErrorAlmacen`.
+    async def guardar_compra_condicionada(
+        self,
+        fila: dict[str, Any],
+        *,
+        estado_esperado: str | tuple[str, ...] | frozenset[str],
+        espera_id_esperado: Any,     # str | None | estado.CUALQUIERA
+        actualizada_esperada: datetime | str | None = None,
+    ) -> bool: ...
+    async def contextos_de_compra(self, compra_id: str) -> list[str]: ...
+    async def ultimos_veredictos_de_contexto(self, contexto_id: str) -> list[dict[str, Any]]: ...
+    async def abrir_espera(self, fila: dict[str, Any]) -> dict[str, Any] | None: ...
+    async def leer_espera(self, espera_id: str) -> dict[str, Any] | None: ...
+    async def espera_abierta_de(self, compra_id: str) -> dict[str, Any] | None: ...
+    async def responder_espera(
+        self, espera_id: str, respuesta: Any, ahora: datetime, *,
+        tipo: str | None = None, oportunidad_id: str | None = None,
+    ) -> bool: ...
+    async def vencer_espera(self, espera_id: str, ahora: datetime) -> dict[str, Any] | None: ...
+    async def crear_aprobacion_pendiente(
+        self, fila: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]: ...
+    async def aprobaciones_de_compra(self, compra_id: str) -> list[dict[str, Any]]: ...
+    async def guardar_evento(self, fila: dict[str, Any]) -> None: ...
+    async def listar_eventos(
+        self, compra_id: str, desde_orden: int = 0, *, limite: int = 100
+    ) -> list[dict[str, Any]]: ...
+    async def listar_entregas(
+        self, integrador_id: str, *, limite: int = 50
+    ) -> list[dict[str, Any]]: ...
+    async def encolar_entrega(
+        self, entrega: EntregaWebhook, cuerpo: bytes, *, proximo_intento: datetime
+    ) -> None: ...
+    async def tomar_entregas(
+        self, ahora: datetime, *, hasta: datetime, limite: int = 10
+    ) -> list[dict[str, Any]]: ...
+    async def marcar_entrega(
+        self, entrega: EntregaWebhook, *, tomada_hasta: datetime | str,
+        proximo_intento: datetime | None = None,
+    ) -> bool: ...
 
 
 # -- núcleo que consume la API /v1 (lo implementa la integración) -----------
