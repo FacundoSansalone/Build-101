@@ -227,6 +227,23 @@ _PREGUNTA_POR_DEFECTO = (
     "¿Para qué necesitás esto? ¿Hay algo que pueda variar, como la cantidad, "
     "las fechas o la marca?"
 )
+
+
+def _pregunta_porque_integrador(pregunta: Any) -> str:
+    """La pregunta del porqué de una compra de integrador.
+
+    La ficha la fijó el integrador al crear la compra: el intake no corre. Si
+    el agente es el del intake (trae `intake`), su pregunta suma lo que le
+    falta al texto del pedido ("me falta saber el tope de precio…"), que acá
+    ya está en la ficha: va solo la plantilla del porqué, en su idioma.
+    """
+    intake = getattr(pregunta, "intake", None)
+    if intake is not None:
+        from intencion.intake import PORQUE
+
+        return PORQUE.get(getattr(intake, "idioma", "es"), PORQUE["es"])
+    texto = pregunta.pregunta if isinstance(pregunta.pregunta, str) else ""
+    return texto.strip() or _PREGUNTA_POR_DEFECTO
 _MOTIVO_FILTRO = (
     "El filtro de seguridad detectó contenido peligroso en la respuesta del "
     "proveedor: la conversación se bloquea y no se reenvía."
@@ -1635,8 +1652,7 @@ class ProxyGuard:
                     pregunta = await self._llm(
                         self.agente.preguntar, compra.pedido, hoy, categorias
                     )
-                    texto = pregunta.pregunta if isinstance(pregunta.pregunta, str) else ""
-                    texto = texto.strip() or _PREGUNTA_POR_DEFECTO
+                    texto = _pregunta_porque_integrador(pregunta)
                 except Exception as e:  # noqa: BLE001 - sin agente, la pregunta por defecto
                     logger.exception("El agente de intención no pudo armar la pregunta")
                     self._error(
