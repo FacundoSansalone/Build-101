@@ -38,8 +38,10 @@ shopper = RetryingLlmAgent(
     1. Find out what the user is interested in purchasing. Ask clarifying
       questions one at a time (item description, preferences, budget).
     2. Once you have enough information, call 'find_products' with a
-      natural language description of what the user wants. The merchant
-      will return product options as cart entries.
+      natural language description of what the user wants, keeping every
+      constraint they gave: quantity, deadline or delivery date, budget and
+      specs (HACKATHON). The merchant will return product options as cart
+      entries.
     3. Choose the best match yourself. Do NOT ask the user to choose and do
       NOT wait for their answer. If 'find_products' returns
       'parameters_authorized_by_the_user', those replace the original
