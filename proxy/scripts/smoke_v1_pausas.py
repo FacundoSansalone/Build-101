@@ -89,9 +89,11 @@ CASOS = (
     "matar-porque", "matar-oportunidad",
 )
 ESPERADOS = (*STATUS, "firma")  # firma = aprobado o con_avisos
+# Con un cronograma concreto: "el resto en los días siguientes" no le da al
+# detector una fecha contra la que medir las entregas ofrecidas.
 RESPUESTA_POR_DEFECTO = (
-    "Es para un aula que arranca el lunes; si llegan la mitad el lunes y el "
-    "resto en los días siguientes, sirve."
+    "Es para un aula que arranca el lunes. Me sirve si llegan 10 el lunes y "
+    "las otras 10 antes del viernes; la cantidad y las fechas pueden variar."
 )
 TEXTO_PAUSA = "en pausa"  # _TEXTO_PAUSA del proxy: "KaiAI: en pausa. …"
 SONDEO_S = 1.0
