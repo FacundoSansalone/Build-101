@@ -3,7 +3,7 @@
 # adentro (deploy/start_all.sh) y solo el dashboard (:8020) publicado.
 #
 #   tenki login                       # una vez (o TENKI_API_KEY=tk_...)
-#   bash deploy/tenki.sh              # escenario notebook_honesto
+#   bash deploy/tenki.sh              # comercio general (preset `general`)
 #   bash deploy/tenki.sh B            # otro escenario (después se cambia desde /demo)
 #
 # Volver a correrlo con TENKI_SESSION=<id> sube el código de nuevo y reinicia
@@ -37,7 +37,7 @@
 
 set -euo pipefail
 
-ESCENARIO="${1:-notebook_honesto}"
+ESCENARIO="${1:-general}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 

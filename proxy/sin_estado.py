@@ -43,7 +43,7 @@ from contracts import (
 )
 from proxy import a2a
 from proxy.evaluador import EvaluadorCargado, firmar_recibo
-from proxy.fuentes import cargar_catalogo
+from proxy.fuentes import cargar_catalogo, skus_de
 from proxy.tipos_gateway import (
     ID_SEGURO_RE,
     Comercio,
@@ -341,7 +341,8 @@ async def evaluar_sin_estado(
     catalogo: dict[str, dict] = {}
     if comercio is not None:
         catalogo, comercio_catalogo, _ = await cargar_catalogo(
-            client, comercio.catalogo_url, comercio.respaldo_fixture
+            client, comercio.catalogo_url, comercio.respaldo_fixture,
+            skus=skus_de(offer_details),  # por SKU; si no alcanza, la lista entera
         )
         if catalogo and comercio_catalogo and firmado and comercio_catalogo != firmado:
             logger.warning(
