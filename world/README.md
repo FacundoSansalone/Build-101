@@ -53,6 +53,11 @@ cd world/ap2 && uv run --no-sync --package ap2-samples python -m demo_world.set_
 
 ## Los escenarios
 
+El **comercio general** (etapa 3) responde a cualquier pedido y cualquier día,
+sin LLM, desde su dataset de 111 productos: es lo que levanta la demo por
+defecto (`bash world/run_world.sh general`). Los escenarios fijos de abajo son
+para el benchmark y los tests.
+
 ### Zapatillas (etapa 1)
 
 El pedido es siempre el mismo: zapatillas de básquet Nike, para exterior,

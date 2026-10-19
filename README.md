@@ -57,13 +57,14 @@ Guard en B, B2 y C, sin falsos positivos en `baseline`. Detalle en
 
 ```sh
 cp .env.example .env                       # poné tu GOOGLE_API_KEY
-bash deploy/start_all.sh computadoras      # → http://localhost:8020/demo
+bash deploy/start_all.sh                   # comercio general → http://localhost:8020/demo
 ```
 
 Levanta los cinco procesos de `world/`, el proxy (`:8010`) y el dashboard
-(`:8020`). Funciona en Linux, macOS y Windows con Git Bash. Escenarios:
-`computadoras` (honesto), `computadoras_malicioso` y los de zapatillas,
-notebooks y auriculares; se cambian desde el selector de `/demo`. Variables,
+(`:8020`). Funciona en Linux, macOS y Windows con Git Bash. Sin argumento, el
+comercio general responde a cualquier pedido, con el comportamiento que elige el
+selector de `/demo`. Los escenarios fijos (zapatillas, notebooks, auriculares,
+computadoras) quedan para el benchmark y se ven con `DEMO_ESCENARIOS_FIJOS=1`. Variables,
 despliegue en Tenki y gateway: [deploy/README.md](deploy/README.md). Guion de la
 demo: [docs/DEMO.md](docs/DEMO.md).
 
