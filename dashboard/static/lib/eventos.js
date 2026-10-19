@@ -304,6 +304,17 @@ export function topeDeFicha(ficha) {
 const esObjeto = (x) => Boolean(x) && typeof x === "object" && !Array.isArray(x);
 
 /**
+ * El escenario del "Momento clave": el que eligió el usuario o, si no eligió,
+ * el de la compra más nueva (con el comercio general, el comportamiento de
+ * esa corrida); sin compras, el de por defecto (un fixture). `compras`, de
+ * la más nueva a la más vieja (agruparCompras).
+ */
+export function escenarioDelMomento({ elegido = null, compras = [], porDefecto = null } = {}) {
+  if (elegido) return elegido;
+  return (compras || []).find((c) => typeof c?.escenario === "string" && c.escenario)?.escenario ?? porDefecto;
+}
+
+/**
  * La ficha de una compra que muestra el panel, y de dónde sale: {ficha, fuente}.
  * Sigue el orden del proxy (`proxy.ficha_de`):
  * - "recibo": la que usó el Guard (`veredicto.recibo.ficha`). Manda siempre.

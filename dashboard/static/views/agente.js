@@ -174,12 +174,22 @@ function listaRequisitos(requisitos) {
   ];
 }
 
+// Con intake, lo que entendió nuestro agente no está autorizado hasta que
+// termina (lo inferido, solo si el usuario confirma); sin intake, el pedido
+// explícito es lo autorizado.
+function rotuloRequisitos(c) {
+  if (!tieneIntake(c)) return "Parámetros autorizados (pedido explícito)";
+  return c.intake.final === true
+    ? "Parámetros vigentes: con estos verifica el Guard"
+    : "Lo que entendió nuestro agente (todavía sin autorizar)";
+}
+
 function msjPedido(c) {
   if (!c.pedido && !c.requisitos.length) return null;
   return mensaje("cliente", {},
     c.pedido ? h("blockquote", { class: "msj-pedido" }, h("p", { text: c.pedido })) : null,
     c.requisitos.length
-      ? [h("p", { class: "rotulo", text: "Parámetros autorizados (pedido explícito)" }), listaRequisitos(c.requisitos)]
+      ? [h("p", { class: "rotulo", text: rotuloRequisitos(c) }), listaRequisitos(c.requisitos)]
       : null);
 }
 

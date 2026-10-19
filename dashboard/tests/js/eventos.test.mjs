@@ -3,8 +3,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  agruparCompras, cartIdElegido, describirEvento, estadoCompra, fichaVigente, fusionarEventos,
-  mandatosDe, montoCheckout, parLadoALado, partirTextoLibre, topeDeFicha, aJsonl,
+  agruparCompras, cartIdElegido, describirEvento, escenarioDelMomento, estadoCompra, fichaVigente,
+  fusionarEventos, mandatosDe, montoCheckout, parLadoALado, partirTextoLibre, topeDeFicha, aJsonl,
 } from "../../static/lib/eventos.js";
 
 let n = 0;
@@ -96,6 +96,18 @@ test("la ficha que se muestra: el recibo, la del intake o, solo con ficha_demo, 
   // Sin confirmar en el intake: se muestra como sin confirmar.
   const sinConfirmar = fichaVigente({ compraAgente: { ...delIntake, intake: { final: false } } });
   assert.equal(sinConfirmar.ficha.confirmada, false);
+});
+
+test("el momento clave sigue a la compra más nueva salvo que se elija un escenario", () => {
+  const evs = [
+    ev("busqueda_enviada", { contexto_id: "ctx-viejo", escenario: "B" }),
+    ev("busqueda_enviada", { contexto_id: "ctx-nuevo", escenario: "general_dato_falso" }),
+  ];
+  const { compras } = agruparCompras(evs);
+  assert.equal(escenarioDelMomento({ compras, porDefecto: "baseline" }), "general_dato_falso");
+  assert.equal(escenarioDelMomento({ elegido: "B", compras, porDefecto: "baseline" }), "B");
+  assert.equal(escenarioDelMomento({ compras: [], porDefecto: "baseline" }), "baseline");
+  assert.equal(escenarioDelMomento({ compras: [{ escenario: null }], porDefecto: "baseline" }), "baseline");
 });
 
 test("una búsqueda sin resultados termina la compra (no queda en curso)", () => {

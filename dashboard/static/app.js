@@ -44,7 +44,11 @@ const estado = {
   eventos: [],
   compraSel: null,
   seguirUltima: true,
+  // Momento clave: sin compras, el escenario B de los fixtures; con compras,
+  // el de la más nueva (lib/eventos.js → escenarioDelMomento) salvo que el
+  // usuario elija uno (escenarioMomentoElegido).
   escenarioMomento: "B",
+  escenarioMomentoElegido: null,
   momentoSin: null,
   momentoCon: null,
   escenarioFicha: null,

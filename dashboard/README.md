@@ -1,6 +1,6 @@
 # dashboard/ (Dev 3)
 
-Panel de la demo de KaiAI: el **escenario B lado a lado**, el flujo de
+Panel de la demo de KaiAI: **la misma compra sin y con Guard lado a lado**, el flujo de
 cada compra, el veredicto con sus chequeos, el recibo firmado (verificado en el
 navegador), la ficha del pedido, el gráfico del benchmark "de X% a Y%" y, en la
 etapa 2, la conversación con **nuestro agente** (vista Agente).
@@ -335,8 +335,9 @@ avisa que esa capa está apagada.
 
 ## Qué se ve en cada vista
 
-1. **Momento clave.** Escenario B (se puede cambiar) en dos columnas con los
-   mismos pasos alineados. *Sin Guard*: el `ap2.cart` elegido con el
+1. **Momento clave.** El escenario (o comportamiento del comercio general) de
+   la compra más nueva, sin compras el B de los fixtures; se puede elegir otro
+   (`escenarioDelMomento`). Dos columnas con los mismos pasos alineados. *Sin Guard*: el `ap2.cart` elegido con el
    `item_label` marcado como texto libre del vendedor (y subrayado lo que no
    figura en su catálogo público), el `checkout_jwt` con header, payload y
    **firma ES256 del comercio**, el `checkout_hash` recalculado en el navegador,
