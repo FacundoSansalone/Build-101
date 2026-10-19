@@ -1,0 +1,49 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Plexo Home",
+      "Brand": "Plexo",
+      "ProductName": "Home",
+      "GTIN": [
+        "2091300000027"
+      ],
+      "Category": {
+        "CategoryID": "fixture-game_consoles",
+        "Name": {
+          "Value": "Game consoles",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Storage",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "512",
+            "PresentationValue": "512 GB",
+            "Feature": {
+              "Name": {
+                "Value": "Total storage capacity",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "GB"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Visra View Lite",
+      "Brand": "Visra",
+      "ProductName": "View Lite",
+      "GTIN": [
+        "2090400000012"
+      ],
+      "Category": {
+        "CategoryID": "fixture-monitors",
+        "Name": {
+          "Value": "Computer monitors",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Display",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "61",
+            "PresentationValue": "61 cm",
+            "Feature": {
+              "Name": {
+                "Value": "Display diagonal",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "cm"
+                }
+              }
+            }
+          },
+          {
+            "Type": "dropdown",
+            "Value": "1920x1080",
+            "PresentationValue": "1920x1080",
+            "Feature": {
+              "Name": {
+                "Value": "Display resolution",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

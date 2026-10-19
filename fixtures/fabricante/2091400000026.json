@@ -1,0 +1,49 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Netra Mesh Duo",
+      "Brand": "Netra",
+      "ProductName": "Mesh Duo",
+      "GTIN": [
+        "2091400000026"
+      ],
+      "Category": {
+        "CategoryID": "fixture-routers",
+        "Name": {
+          "Value": "Wireless routers",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Network",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "dropdown",
+            "Value": "wifi 6",
+            "PresentationValue": "wifi 6",
+            "Feature": {
+              "Name": {
+                "Value": "WiFi standard",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

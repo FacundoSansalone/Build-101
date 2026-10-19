@@ -1,0 +1,65 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Kivo Smart 43",
+      "Brand": "Kivo",
+      "ProductName": "Smart 43",
+      "GTIN": [
+        "2090500000028"
+      ],
+      "Category": {
+        "CategoryID": "fixture-televisions",
+        "Name": {
+          "Value": "TVs",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Display",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "109.2",
+            "PresentationValue": "109.2 cm",
+            "Feature": {
+              "Name": {
+                "Value": "Display diagonal",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "cm"
+                }
+              }
+            }
+          },
+          {
+            "Type": "dropdown",
+            "Value": "3840x2160",
+            "PresentationValue": "3840x2160",
+            "Feature": {
+              "Name": {
+                "Value": "Display resolution",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": ""
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

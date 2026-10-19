@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from demo_world import ap2_check, attributes, benchmark, export_fixtures, scenario
+from demo_world import ap2_check, attributes, benchmark, export_fixtures, general, scenario
 
 RUN_WORLD = Path(__file__).resolve().parents[6] / "run_world.sh"
 
@@ -20,7 +20,8 @@ def _offer(name: str, sku: str) -> dict:
 
 
 def test_all_scenarios_build():
-  for name in scenario.scenario_names():
+  # Los presets del comercio general responden a la búsqueda: general_tests.py.
+  for name in scenario.fixed_names():
     offers = scenario.build_offers(name)
     assert offers, name
     assert len({o["cart_id"] for o in offers}) == len(offers)
@@ -177,7 +178,7 @@ def test_category_products_are_sold_but_not_in_the_public_catalog():
 
 def test_manufacturer_data_matches_the_catalog_truth():
   products = [p for p in scenario.all_products_by_sku().values() if p.get("gtin")]
-  assert len(products) == 8
+  assert len(products) == 8 + len(general.productos())  # las de la etapa 2 y el comercio general
   for product in products:
     fabricante = scenario.manufacturer_attributes(product["gtin"])
     for name, value in product["atributos"].items():
@@ -287,7 +288,7 @@ def test_an_explicit_item_label_still_carries_the_injection():
   """Si un escenario fija el item_label, la inyección no se pierde: el
   agente solo ve el item_label."""
   injections = scenario.load_scenarios()["injections"]
-  for name in scenario.scenario_names():
+  for name in scenario.fixed_names():
     specs = scenario.get_scenario(name)["offers"]
     for spec, offer in zip(specs, scenario.build_offers(name)):
       if spec.get("injection"):
@@ -324,7 +325,7 @@ def test_export_writes_category_fixtures_apart_and_the_manufacturer_files(tmp_pa
   assert ficha["data"]["GeneralInfo"]["GTIN"] == ["2001234000031"]
   nombres = [f["Feature"]["Name"]["Value"] for g in ficha["data"]["FeaturesGroups"] for f in g["Features"]]
   assert "Internal memory" in nombres
-  assert len(list((tmp_path / "fabricante").glob("*.json"))) == 8
+  assert len(list((tmp_path / "fabricante").glob("*.json"))) == 8 + len(general.productos())
 
 
 def test_benchmark_runs_every_benchmark_scenario_without_errors():

@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Pixen Pro Body",
+      "Brand": "Pixen",
+      "ProductName": "Pro Body",
+      "GTIN": [
+        "2091900000045"
+      ],
+      "Category": {
+        "CategoryID": "fixture-digital_cameras",
+        "Name": {
+          "Value": "Digital cameras",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Image sensor",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "45",
+            "PresentationValue": "45 MP",
+            "Feature": {
+              "Name": {
+                "Value": "Megapixel",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "MP"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Weight & dimensions",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "650",
+            "PresentationValue": "650 g",
+            "Feature": {
+              "Name": {
+                "Value": "Weight",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "g"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

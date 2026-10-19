@@ -1,0 +1,2492 @@
+{
+  "_comment": "Dataset del comercio general (etapa 3): productos con marcas INVENTADAS y GTIN-13 del rango de circulación restringida de GS1 (prefijo 209), con dígito verificador válido. Es la verdad de world/: el catálogo público (:8011) sirve los que tienen 'publicado' y export_fixtures escribe la ficha del fabricante de cada GTIN (datos de prueba, formato Icecat). El comercio solo miente en lo que declara (demo_world.general). 'price' es el precio unitario en USD; 'entrega_dias', los días hasta la entrega normal; 'categorias' usa los IDs del subconjunto de la taxonomía de Google (taxonomia/datos/), con 'hermana' (la categoría vecina de los ataques) y 'tambien' (IDs más generales que se resuelven a esta categoría: 'computadoras' → notebooks). 'icecat': atributo canónico → cómo se exporta en la ficha del fabricante.",
+  "categorias": {
+    "laptops": {
+      "id": "328",
+      "nombre": "Notebooks",
+      "atributo_clave": "memoria_ram",
+      "hermana": "tablets",
+      "tambien": ["278"],
+      "icecat": "Notebooks"
+    },
+    "desktops": {
+      "id": "325",
+      "nombre": "Computadoras de escritorio",
+      "atributo_clave": "memoria_ram",
+      "hermana": "laptops",
+      "tambien": [],
+      "icecat": "PCs/Workstations"
+    },
+    "tablets": {
+      "id": "4745",
+      "nombre": "Tablets",
+      "atributo_clave": "almacenamiento",
+      "hermana": "laptops",
+      "tambien": [],
+      "icecat": "Tablets"
+    },
+    "monitors": {
+      "id": "305",
+      "nombre": "Monitores",
+      "atributo_clave": "tamano_pantalla",
+      "hermana": "televisions",
+      "tambien": [],
+      "icecat": "Computer monitors"
+    },
+    "televisions": {
+      "id": "404",
+      "nombre": "Televisores",
+      "atributo_clave": "tamano_pantalla",
+      "hermana": "monitors",
+      "tambien": [],
+      "icecat": "TVs"
+    },
+    "projectors": {
+      "id": "396",
+      "nombre": "Proyectores",
+      "atributo_clave": "brightness",
+      "hermana": "televisions",
+      "tambien": [],
+      "icecat": "Data projectors"
+    },
+    "keyboards": {
+      "id": "303",
+      "nombre": "Teclados",
+      "atributo_clave": "inalambrico",
+      "hermana": "mice",
+      "tambien": [],
+      "icecat": "Keyboards"
+    },
+    "mice": {
+      "id": "304",
+      "nombre": "Mouse",
+      "atributo_clave": "inalambrico",
+      "hermana": "keyboards",
+      "tambien": [],
+      "icecat": "Mice"
+    },
+    "hard_drives": {
+      "id": "380",
+      "nombre": "Discos",
+      "atributo_clave": "almacenamiento",
+      "hermana": "usb_drives",
+      "tambien": [],
+      "icecat": "External hard drives"
+    },
+    "usb_drives": {
+      "id": "3712",
+      "nombre": "Pendrives",
+      "atributo_clave": "almacenamiento",
+      "hermana": "hard_drives",
+      "tambien": [],
+      "icecat": "USB flash drives"
+    },
+    "printers": {
+      "id": "500106",
+      "nombre": "Impresoras",
+      "atributo_clave": "colour_printing",
+      "hermana": "projectors",
+      "tambien": [],
+      "icecat": "Printers"
+    },
+    "mobile_phones": {
+      "id": "267",
+      "nombre": "Celulares",
+      "atributo_clave": "almacenamiento",
+      "hermana": "tablets",
+      "tambien": [],
+      "icecat": "Smartphones"
+    },
+    "game_consoles": {
+      "id": "1294",
+      "nombre": "Consolas",
+      "atributo_clave": "almacenamiento",
+      "hermana": "headsets",
+      "tambien": [],
+      "icecat": "Game consoles"
+    },
+    "routers": {
+      "id": "5497",
+      "nombre": "Routers",
+      "atributo_clave": "wifi_standard",
+      "hermana": "hard_drives",
+      "tambien": [],
+      "icecat": "Wireless routers"
+    },
+    "headphones": {
+      "id": "543626",
+      "nombre": "Auriculares",
+      "atributo_clave": "cancelacion_ruido",
+      "hermana": "speakers",
+      "tambien": ["505771"],
+      "icecat": "Headphones"
+    },
+    "headsets": {
+      "id": "543627",
+      "nombre": "Auriculares con micrófono",
+      "atributo_clave": "inalambrico",
+      "hermana": "headphones",
+      "tambien": [],
+      "icecat": "Headsets"
+    },
+    "speakers": {
+      "id": "249",
+      "nombre": "Parlantes",
+      "atributo_clave": "autonomia_bateria",
+      "hermana": "headphones",
+      "tambien": [],
+      "icecat": "Portable speakers"
+    },
+    "webcams": {
+      "id": "312",
+      "nombre": "Webcams",
+      "atributo_clave": "maximum_video_resolution",
+      "hermana": "digital_cameras",
+      "tambien": [],
+      "icecat": "Webcams"
+    },
+    "digital_cameras": {
+      "id": "152",
+      "nombre": "Cámaras digitales",
+      "atributo_clave": "megapixel",
+      "hermana": "webcams",
+      "tambien": ["142"],
+      "icecat": "Digital cameras"
+    },
+    "office_chairs": {
+      "id": "2045",
+      "nombre": "Sillas de oficina",
+      "atributo_clave": "maximum_user_weight",
+      "hermana": "desks",
+      "tambien": ["443"],
+      "icecat": "Office chairs"
+    },
+    "desks": {
+      "id": "4191",
+      "nombre": "Escritorios",
+      "atributo_clave": "width",
+      "hermana": "office_chairs",
+      "tambien": [],
+      "icecat": "Desks"
+    },
+    "backpacks": {
+      "id": "100",
+      "nombre": "Mochilas",
+      "atributo_clave": "capacity",
+      "hermana": "mice",
+      "tambien": [],
+      "icecat": "Backpacks"
+    },
+    "coffee_makers": {
+      "id": "736",
+      "nombre": "Cafeteras",
+      "atributo_clave": "capacity",
+      "hermana": "speakers",
+      "tambien": [],
+      "icecat": "Coffee makers"
+    },
+    "shoes": {
+      "id": "187",
+      "nombre": "Calzado",
+      "atributo_clave": "color",
+      "hermana": "backpacks",
+      "tambien": [],
+      "icecat": "Footwear"
+    }
+  },
+  "icecat": {
+    "memoria_ram": {"group": "Memory", "name": "Internal memory", "type": "numerical", "unit": "GB"},
+    "almacenamiento": {"group": "Storage", "name": "Total storage capacity", "type": "numerical", "unit": "GB"},
+    "tamano_pantalla": {"group": "Display", "name": "Display diagonal", "type": "numerical", "unit": "cm"},
+    "display_resolution": {"group": "Display", "name": "Display resolution", "type": "dropdown", "unit": null},
+    "weight": {"group": "Weight & dimensions", "name": "Weight", "type": "numerical", "unit": "g"},
+    "width": {"group": "Weight & dimensions", "name": "Width", "type": "numerical", "unit": "cm"},
+    "maximum_user_weight": {"group": "Weight & dimensions", "name": "Maximum user weight", "type": "numerical", "unit": "kg"},
+    "color": {"group": "Design", "name": "Product colour", "type": "dropdown", "unit": null},
+    "cancelacion_ruido": {"group": "Audio", "name": "Active Noise Cancelling (ANC)", "type": "y_n", "unit": null},
+    "autonomia_bateria": {"group": "Battery", "name": "Battery life", "type": "numerical", "unit": "h"},
+    "conectividad": {"group": "Ports & interfaces", "name": "Connectivity technology", "type": "multi_dropdown", "unit": null},
+    "inalambrico": {"group": "Ports & interfaces", "name": "Inalámbrico", "type": "y_n", "unit": null},
+    "maximum_video_resolution": {"group": "Video", "name": "Maximum video resolution", "type": "dropdown", "unit": null},
+    "brightness": {"group": "Projector", "name": "Brightness", "type": "numerical", "unit": "lm"},
+    "colour_printing": {"group": "Printing", "name": "Colour printing", "type": "y_n", "unit": null},
+    "wifi_standard": {"group": "Network", "name": "WiFi standard", "type": "dropdown", "unit": null},
+    "megapixel": {"group": "Image sensor", "name": "Megapixel", "type": "numerical", "unit": "MP"},
+    "capacity": {"group": "Features", "name": "Capacity", "type": "numerical", "unit": "l"},
+    "power": {"group": "Power", "name": "Power", "type": "numerical", "unit": "W"}
+  },
+  "productos": [
+    {
+      "sku": "LUM-LAP-01",
+      "gtin": "2090100000015",
+      "title": "Lumen Notebook 14",
+      "brand": "Lumen",
+      "category": "laptops",
+      "categoria_taxonomia": "328",
+      "use": "office",
+      "price": 850.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 14, "unidad": "in"},
+        "weight": {"valor": 1.4, "unidad": "kg"}
+      },
+      "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "ORI-LAP-01",
+      "gtin": "2090100000022",
+      "title": "Orion Notebook 14",
+      "brand": "Orion",
+      "category": "laptops",
+      "categoria_taxonomia": "328",
+      "use": "office",
+      "price": 900.0,
+      "currency": "USD",
+      "stock": 50,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 14, "unidad": "in"},
+        "weight": {"valor": 1.45, "unidad": "kg"}
+      },
+      "description": "14-inch office laptop, 16 GB RAM, 512 GB SSD, backlit keyboard.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "ZEN-LAP-01",
+      "gtin": "2090100000039",
+      "title": "Zento Air 13",
+      "brand": "Zento",
+      "category": "laptops",
+      "categoria_taxonomia": "328",
+      "use": "work",
+      "price": 1099.0,
+      "currency": "USD",
+      "stock": 18,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 13.3, "unidad": "in"},
+        "weight": {"valor": 1.1, "unidad": "kg"}
+      },
+      "description": "Thin and light 13.3-inch laptop, 16 GB RAM, 1 TB SSD.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "ZEN-LAP-02",
+      "gtin": "2090100000046",
+      "title": "Zento Air 15",
+      "brand": "Zento",
+      "category": "laptops",
+      "categoria_taxonomia": "328",
+      "use": "work",
+      "price": 1199.0,
+      "currency": "USD",
+      "stock": 14,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 15.3, "unidad": "in"},
+        "weight": {"valor": 1.5, "unidad": "kg"}
+      },
+      "description": "Thin 15.3-inch laptop, 16 GB RAM, 1 TB SSD.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "LUM-LAP-02",
+      "gtin": "2090100000053",
+      "title": "Lumen Book 15 Pro",
+      "brand": "Lumen",
+      "category": "laptops",
+      "categoria_taxonomia": "328",
+      "use": "work",
+      "price": 1349.0,
+      "currency": "USD",
+      "stock": 12,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 32, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 15.6, "unidad": "in"},
+        "weight": {"valor": 1.8, "unidad": "kg"}
+      },
+      "description": "15.6-inch laptop for developers, 32 GB RAM, 1 TB SSD.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "KRA-LAP-01",
+      "gtin": "2090100000060",
+      "title": "Kraton Strike 15",
+      "brand": "Kraton",
+      "category": "laptops",
+      "categoria_taxonomia": "328",
+      "use": "gaming",
+      "price": 1499.0,
+      "currency": "USD",
+      "stock": 9,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 15.6, "unidad": "in"},
+        "weight": {"valor": 2.4, "unidad": "kg"}
+      },
+      "description": "15.6-inch gaming laptop with a dedicated graphics card, 16 GB RAM, 1 TB SSD.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "ORI-LAP-02",
+      "gtin": "2090100000077",
+      "title": "Orion Creator 16",
+      "brand": "Orion",
+      "category": "laptops",
+      "categoria_taxonomia": "328",
+      "use": "design",
+      "price": 1899.0,
+      "currency": "USD",
+      "stock": 6,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 32, "unidad": "GB"},
+        "almacenamiento": {"valor": 2, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 16, "unidad": "in"},
+        "weight": {"valor": 2.1, "unidad": "kg"}
+      },
+      "description": "16-inch laptop for creative work, color-accurate display, 32 GB RAM, 2 TB SSD.",
+      "entrega_dias": 4,
+      "publicado": true
+    },
+    {
+      "sku": "ORI-DSK-01",
+      "gtin": "2090200000014",
+      "title": "Orion Mini PC",
+      "brand": "Orion",
+      "category": "desktops",
+      "categoria_taxonomia": "325",
+      "use": "office",
+      "price": 549.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 8, "unidad": "GB"},
+        "almacenamiento": {"valor": 256, "unidad": "GB"}
+      },
+      "description": "Compact office desktop, 8 GB RAM, 256 GB SSD.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "ORI-DSK-02",
+      "gtin": "2090200000021",
+      "title": "Orion Mini PC Plus",
+      "brand": "Orion",
+      "category": "desktops",
+      "categoria_taxonomia": "325",
+      "use": "office",
+      "price": 749.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 512, "unidad": "GB"}
+      },
+      "description": "Compact office desktop, 16 GB RAM, 512 GB SSD.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "LUM-DSK-01",
+      "gtin": "2090200000038",
+      "title": "Lumen Tower 5",
+      "brand": "Lumen",
+      "category": "desktops",
+      "categoria_taxonomia": "325",
+      "use": "work",
+      "price": 899.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"}
+      },
+      "description": "Tower desktop for work, 16 GB RAM, 1 TB SSD.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "ZEN-DSK-01",
+      "gtin": "2090200000045",
+      "title": "Zento All-in-One",
+      "brand": "Zento",
+      "category": "desktops",
+      "categoria_taxonomia": "325",
+      "use": "home",
+      "price": 1199.0,
+      "currency": "USD",
+      "stock": 10,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 24, "unidad": "in"}
+      },
+      "description": "All-in-one desktop with a 24-inch display, 16 GB RAM, 512 GB SSD.",
+      "entrega_dias": 3,
+      "publicado": false
+    },
+    {
+      "sku": "KRA-DSK-01",
+      "gtin": "2090200000052",
+      "title": "Kraton Forge",
+      "brand": "Kraton",
+      "category": "desktops",
+      "categoria_taxonomia": "325",
+      "use": "gaming",
+      "price": 1799.0,
+      "currency": "USD",
+      "stock": 8,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 32, "unidad": "GB"},
+        "almacenamiento": {"valor": 2, "unidad": "TB"}
+      },
+      "description": "Gaming tower with liquid cooling, 32 GB RAM, 2 TB SSD.",
+      "entrega_dias": 5,
+      "publicado": true
+    },
+    {
+      "sku": "ZEN-TAB-01",
+      "gtin": "2090300000013",
+      "title": "Zento Pad 8",
+      "brand": "Zento",
+      "category": "tablets",
+      "categoria_taxonomia": "4745",
+      "use": "home",
+      "price": 199.0,
+      "currency": "USD",
+      "stock": 70,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 4, "unidad": "GB"},
+        "almacenamiento": {"valor": 64, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 8, "unidad": "in"},
+        "weight": {"valor": 320, "unidad": "g"}
+      },
+      "description": "8-inch tablet, 4 GB RAM, 64 GB storage.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "ORI-TAB-01",
+      "gtin": "2090300000020",
+      "title": "Orion Tab 10",
+      "brand": "Orion",
+      "category": "tablets",
+      "categoria_taxonomia": "4745",
+      "use": "home",
+      "price": 329.0,
+      "currency": "USD",
+      "stock": 35,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 6, "unidad": "GB"},
+        "almacenamiento": {"valor": 128, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 10.1, "unidad": "in"},
+        "weight": {"valor": 450, "unidad": "g"}
+      },
+      "description": "10.1-inch tablet, 6 GB RAM, 128 GB storage.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "NOV-TAB-01",
+      "gtin": "2090300000037",
+      "title": "Nova Tab 11",
+      "brand": "Nova",
+      "category": "tablets",
+      "categoria_taxonomia": "4745",
+      "use": "office",
+      "price": 499.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 8, "unidad": "GB"},
+        "almacenamiento": {"valor": 256, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 11, "unidad": "in"},
+        "weight": {"valor": 480, "unidad": "g"}
+      },
+      "description": "11-inch tablet, 8 GB RAM, 256 GB storage. No keyboard.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "LUM-TAB-01",
+      "gtin": "2090300000044",
+      "title": "Lumen Slate 12",
+      "brand": "Lumen",
+      "category": "tablets",
+      "categoria_taxonomia": "4745",
+      "use": "design",
+      "price": 899.0,
+      "currency": "USD",
+      "stock": 15,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 12, "unidad": "GB"},
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 12.4, "unidad": "in"},
+        "weight": {"valor": 580, "unidad": "g"}
+      },
+      "description": "12.4-inch tablet with stylus support, 12 GB RAM, 512 GB storage.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "NOV-TAB-02",
+      "gtin": "2090300000051",
+      "title": "Nova Tab 13 Pro",
+      "brand": "Nova",
+      "category": "tablets",
+      "categoria_taxonomia": "4745",
+      "use": "design",
+      "price": 1099.0,
+      "currency": "USD",
+      "stock": 8,
+      "sizes": [],
+      "atributos": {
+        "memoria_ram": {"valor": 16, "unidad": "GB"},
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "tamano_pantalla": {"valor": 13, "unidad": "in"},
+        "weight": {"valor": 650, "unidad": "g"}
+      },
+      "description": "13-inch tablet for creative work, 16 GB RAM, 1 TB storage.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "VIS-MON-01",
+      "gtin": "2090400000012",
+      "title": "Visra View Lite",
+      "brand": "Visra",
+      "category": "monitors",
+      "categoria_taxonomia": "305",
+      "use": "office",
+      "price": 139.0,
+      "currency": "USD",
+      "stock": 80,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 24, "unidad": "in"},
+        "display_resolution": {"valor": "1920x1080", "unidad": null}
+      },
+      "description": "24-inch Full HD office monitor.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "VIS-MON-03",
+      "gtin": "2090400000029",
+      "title": "Visra View Max",
+      "brand": "Visra",
+      "category": "monitors",
+      "categoria_taxonomia": "305",
+      "use": "work",
+      "price": 299.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 32, "unidad": "in"},
+        "display_resolution": {"valor": "2560x1440", "unidad": null}
+      },
+      "description": "32-inch QHD monitor for spreadsheets and multitasking.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "VIS-MON-02",
+      "gtin": "2090400000036",
+      "title": "Visra Design Pro",
+      "brand": "Visra",
+      "category": "monitors",
+      "categoria_taxonomia": "305",
+      "use": "design",
+      "price": 349.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 27, "unidad": "in"},
+        "display_resolution": {"valor": "2560x1440", "unidad": null}
+      },
+      "description": "27-inch QHD monitor for design, factory-calibrated color.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-MON-01",
+      "gtin": "2090400000043",
+      "title": "Kraton Arena QHD",
+      "brand": "Kraton",
+      "category": "monitors",
+      "categoria_taxonomia": "305",
+      "use": "gaming",
+      "price": 429.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 27, "unidad": "in"},
+        "display_resolution": {"valor": "2560x1440", "unidad": null}
+      },
+      "description": "27-inch QHD gaming monitor, 165 Hz.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "PIX-MON-01",
+      "gtin": "2090400000050",
+      "title": "Pixen Studio 4K",
+      "brand": "Pixen",
+      "category": "monitors",
+      "categoria_taxonomia": "305",
+      "use": "design",
+      "price": 549.0,
+      "currency": "USD",
+      "stock": 12,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 27, "unidad": "in"},
+        "display_resolution": {"valor": "3840x2160", "unidad": null}
+      },
+      "description": "27-inch 4K monitor for photo and video editing.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "PIX-MON-02",
+      "gtin": "2090400000067",
+      "title": "Pixen Wide Ultra",
+      "brand": "Pixen",
+      "category": "monitors",
+      "categoria_taxonomia": "305",
+      "use": "work",
+      "price": 699.0,
+      "currency": "USD",
+      "stock": 7,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 34, "unidad": "in"},
+        "display_resolution": {"valor": "3440x1440", "unidad": null}
+      },
+      "description": "34-inch ultrawide curved monitor.",
+      "entrega_dias": 4,
+      "publicado": false
+    },
+    {
+      "sku": "KIV-TV-01",
+      "gtin": "2090500000011",
+      "title": "Kivo Smart 32",
+      "brand": "Kivo",
+      "category": "televisions",
+      "categoria_taxonomia": "404",
+      "use": "home",
+      "price": 189.0,
+      "currency": "USD",
+      "stock": 50,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 32, "unidad": "in"},
+        "display_resolution": {"valor": "1366x768", "unidad": null}
+      },
+      "description": "32-inch HD smart TV.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "KIV-TV-02",
+      "gtin": "2090500000028",
+      "title": "Kivo Smart 43",
+      "brand": "Kivo",
+      "category": "televisions",
+      "categoria_taxonomia": "404",
+      "use": "home",
+      "price": 299.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 43, "unidad": "in"},
+        "display_resolution": {"valor": "3840x2160", "unidad": null}
+      },
+      "description": "43-inch 4K smart TV.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "VIS-TV-01",
+      "gtin": "2090500000035",
+      "title": "Visra Cinema 50",
+      "brand": "Visra",
+      "category": "televisions",
+      "categoria_taxonomia": "404",
+      "use": "home",
+      "price": 429.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 50, "unidad": "in"},
+        "display_resolution": {"valor": "3840x2160", "unidad": null}
+      },
+      "description": "50-inch 4K smart TV with HDR.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "VIS-TV-02",
+      "gtin": "2090500000042",
+      "title": "Visra Cinema 55",
+      "brand": "Visra",
+      "category": "televisions",
+      "categoria_taxonomia": "404",
+      "use": "home",
+      "price": 549.0,
+      "currency": "USD",
+      "stock": 22,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 55, "unidad": "in"},
+        "display_resolution": {"valor": "3840x2160", "unidad": null}
+      },
+      "description": "55-inch 4K smart TV with HDR.",
+      "entrega_dias": 3,
+      "publicado": false
+    },
+    {
+      "sku": "KIV-TV-03",
+      "gtin": "2090500000059",
+      "title": "Kivo OLED 65",
+      "brand": "Kivo",
+      "category": "televisions",
+      "categoria_taxonomia": "404",
+      "use": "home",
+      "price": 1499.0,
+      "currency": "USD",
+      "stock": 6,
+      "sizes": [],
+      "atributos": {
+        "tamano_pantalla": {"valor": 65, "unidad": "in"},
+        "display_resolution": {"valor": "3840x2160", "unidad": null}
+      },
+      "description": "65-inch 4K OLED TV.",
+      "entrega_dias": 5,
+      "publicado": true
+    },
+    {
+      "sku": "LUX-PRJ-01",
+      "gtin": "2090600000010",
+      "title": "Luxen Mini HD",
+      "brand": "Luxen",
+      "category": "projectors",
+      "categoria_taxonomia": "396",
+      "use": "home",
+      "price": 179.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "display_resolution": {"valor": "1280x720", "unidad": null},
+        "brightness": {"valor": 2500, "unidad": "lm"}
+      },
+      "description": "Portable HD projector.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "LUX-PRJ-02",
+      "gtin": "2090600000027",
+      "title": "Luxen Home FHD",
+      "brand": "Luxen",
+      "category": "projectors",
+      "categoria_taxonomia": "396",
+      "use": "home",
+      "price": 449.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "display_resolution": {"valor": "1920x1080", "unidad": null},
+        "brightness": {"valor": 3500, "unidad": "lm"}
+      },
+      "description": "Full HD home theater projector.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "PIX-PRJ-01",
+      "gtin": "2090600000034",
+      "title": "Pixen Office XGA",
+      "brand": "Pixen",
+      "category": "projectors",
+      "categoria_taxonomia": "396",
+      "use": "office",
+      "price": 599.0,
+      "currency": "USD",
+      "stock": 12,
+      "sizes": [],
+      "atributos": {
+        "display_resolution": {"valor": "1024x768", "unidad": null},
+        "brightness": {"valor": 4000, "unidad": "lm"}
+      },
+      "description": "Bright meeting-room projector.",
+      "entrega_dias": 3,
+      "publicado": false
+    },
+    {
+      "sku": "LUX-PRJ-03",
+      "gtin": "2090600000041",
+      "title": "Luxen Cinema 4K",
+      "brand": "Luxen",
+      "category": "projectors",
+      "categoria_taxonomia": "396",
+      "use": "home",
+      "price": 1299.0,
+      "currency": "USD",
+      "stock": 5,
+      "sizes": [],
+      "atributos": {
+        "display_resolution": {"valor": "3840x2160", "unidad": null},
+        "brightness": {"valor": 3000, "unidad": "lm"}
+      },
+      "description": "4K home cinema projector.",
+      "entrega_dias": 5,
+      "publicado": true
+    },
+    {
+      "sku": "TEC-KBD-01",
+      "gtin": "2090700000019",
+      "title": "Teclix Basic",
+      "brand": "Teclix",
+      "category": "keyboards",
+      "categoria_taxonomia": "303",
+      "use": "office",
+      "price": 19.0,
+      "currency": "USD",
+      "stock": 200,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": false, "unidad": null},
+        "conectividad": {"valor": ["usb"], "unidad": null},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Full-size wired office keyboard.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "TEC-KBD-02",
+      "gtin": "2090700000026",
+      "title": "Teclix Slim Air",
+      "brand": "Teclix",
+      "category": "keyboards",
+      "categoria_taxonomia": "303",
+      "use": "office",
+      "price": 39.0,
+      "currency": "USD",
+      "stock": 120,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "conectividad": {"valor": ["bluetooth"], "unidad": null},
+        "color": {"valor": "blanco", "unidad": null}
+      },
+      "description": "Slim wireless keyboard.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-KBD-01",
+      "gtin": "2090700000033",
+      "title": "Kraton Mech RGB",
+      "brand": "Kraton",
+      "category": "keyboards",
+      "categoria_taxonomia": "303",
+      "use": "gaming",
+      "price": 89.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": false, "unidad": null},
+        "conectividad": {"valor": ["usb"], "unidad": null},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Mechanical gaming keyboard with RGB lighting.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "TEC-KBD-03",
+      "gtin": "2090700000040",
+      "title": "Teclix Ergo Split",
+      "brand": "Teclix",
+      "category": "keyboards",
+      "categoria_taxonomia": "303",
+      "use": "work",
+      "price": 99.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "conectividad": {"valor": ["bluetooth"], "unidad": null},
+        "color": {"valor": "gris", "unidad": null}
+      },
+      "description": "Split ergonomic wireless keyboard.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-KBD-02",
+      "gtin": "2090700000057",
+      "title": "Kraton Mech Free",
+      "brand": "Kraton",
+      "category": "keyboards",
+      "categoria_taxonomia": "303",
+      "use": "gaming",
+      "price": 129.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "conectividad": {"valor": ["bluetooth", "usb"], "unidad": null},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Wireless mechanical gaming keyboard.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "TEC-MOU-01",
+      "gtin": "2090800000018",
+      "title": "Teclix Click",
+      "brand": "Teclix",
+      "category": "mice",
+      "categoria_taxonomia": "304",
+      "use": "office",
+      "price": 9.0,
+      "currency": "USD",
+      "stock": 300,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": false, "unidad": null},
+        "color": {"valor": "negro", "unidad": null},
+        "weight": {"valor": 85, "unidad": "g"}
+      },
+      "description": "Wired office mouse.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "TEC-MOU-02",
+      "gtin": "2090800000025",
+      "title": "Teclix Go",
+      "brand": "Teclix",
+      "category": "mice",
+      "categoria_taxonomia": "304",
+      "use": "office",
+      "price": 19.0,
+      "currency": "USD",
+      "stock": 200,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "color": {"valor": "gris", "unidad": null},
+        "weight": {"valor": 70, "unidad": "g"}
+      },
+      "description": "Compact wireless mouse.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "TEC-MOU-03",
+      "gtin": "2090800000032",
+      "title": "Teclix Vertical Ergo",
+      "brand": "Teclix",
+      "category": "mice",
+      "categoria_taxonomia": "304",
+      "use": "work",
+      "price": 39.0,
+      "currency": "USD",
+      "stock": 50,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "color": {"valor": "negro", "unidad": null},
+        "weight": {"valor": 110, "unidad": "g"}
+      },
+      "description": "Vertical ergonomic wireless mouse.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-MOU-01",
+      "gtin": "2090800000049",
+      "title": "Kraton Viper",
+      "brand": "Kraton",
+      "category": "mice",
+      "categoria_taxonomia": "304",
+      "use": "gaming",
+      "price": 49.0,
+      "currency": "USD",
+      "stock": 80,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": false, "unidad": null},
+        "color": {"valor": "negro", "unidad": null},
+        "weight": {"valor": 95, "unidad": "g"}
+      },
+      "description": "Wired gaming mouse.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-MOU-02",
+      "gtin": "2090800000056",
+      "title": "Kraton Viper Free",
+      "brand": "Kraton",
+      "category": "mice",
+      "categoria_taxonomia": "304",
+      "use": "gaming",
+      "price": 79.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "color": {"valor": "negro", "unidad": null},
+        "weight": {"valor": 75, "unidad": "g"}
+      },
+      "description": "Lightweight wireless gaming mouse.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "DAT-HDD-01",
+      "gtin": "2090900000017",
+      "title": "Datavo Portable",
+      "brand": "Datavo",
+      "category": "hard_drives",
+      "categoria_taxonomia": "380",
+      "use": "home",
+      "price": 49.0,
+      "currency": "USD",
+      "stock": 120,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "conectividad": {"valor": ["usb"], "unidad": null}
+      },
+      "description": "Portable 1 TB external hard drive.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "DAT-HDD-02",
+      "gtin": "2090900000024",
+      "title": "Datavo Portable Plus",
+      "brand": "Datavo",
+      "category": "hard_drives",
+      "categoria_taxonomia": "380",
+      "use": "home",
+      "price": 69.0,
+      "currency": "USD",
+      "stock": 90,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 2, "unidad": "TB"},
+        "conectividad": {"valor": ["usb"], "unidad": null}
+      },
+      "description": "Portable 2 TB external hard drive.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "DAT-SSD-01",
+      "gtin": "2090900000031",
+      "title": "Datavo SSD Go",
+      "brand": "Datavo",
+      "category": "hard_drives",
+      "categoria_taxonomia": "380",
+      "use": "work",
+      "price": 99.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 1, "unidad": "TB"},
+        "conectividad": {"valor": ["usb-c"], "unidad": null}
+      },
+      "description": "Portable 1 TB external SSD.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "STR-SSD-01",
+      "gtin": "2090900000048",
+      "title": "Stora NVMe Pro",
+      "brand": "Stora",
+      "category": "hard_drives",
+      "categoria_taxonomia": "380",
+      "use": "gaming",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 2, "unidad": "TB"},
+        "conectividad": {"valor": ["pcie"], "unidad": null}
+      },
+      "description": "Internal 2 TB NVMe SSD.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "STR-HDD-01",
+      "gtin": "2090900000055",
+      "title": "Stora Desktop Vault",
+      "brand": "Stora",
+      "category": "hard_drives",
+      "categoria_taxonomia": "380",
+      "use": "work",
+      "price": 189.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 8, "unidad": "TB"},
+        "conectividad": {"valor": ["usb"], "unidad": null}
+      },
+      "description": "Desktop 8 TB external hard drive.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "DAT-USB-01",
+      "gtin": "2091000000013",
+      "title": "Datavo Stick",
+      "brand": "Datavo",
+      "category": "usb_drives",
+      "categoria_taxonomia": "3712",
+      "use": "office",
+      "price": 8.0,
+      "currency": "USD",
+      "stock": 500,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 32, "unidad": "GB"},
+        "conectividad": {"valor": ["usb"], "unidad": null}
+      },
+      "description": "32 GB USB flash drive.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "DAT-USB-02",
+      "gtin": "2091000000020",
+      "title": "Datavo Stick Plus",
+      "brand": "Datavo",
+      "category": "usb_drives",
+      "categoria_taxonomia": "3712",
+      "use": "office",
+      "price": 14.0,
+      "currency": "USD",
+      "stock": 300,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 128, "unidad": "GB"},
+        "conectividad": {"valor": ["usb"], "unidad": null}
+      },
+      "description": "128 GB USB flash drive.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "STR-USB-01",
+      "gtin": "2091000000037",
+      "title": "Stora Dual",
+      "brand": "Stora",
+      "category": "usb_drives",
+      "categoria_taxonomia": "3712",
+      "use": "work",
+      "price": 22.0,
+      "currency": "USD",
+      "stock": 150,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 256, "unidad": "GB"},
+        "conectividad": {"valor": ["usb", "usb-c"], "unidad": null}
+      },
+      "description": "256 GB dual USB flash drive.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "STR-USB-02",
+      "gtin": "2091000000044",
+      "title": "Stora Metal Pro",
+      "brand": "Stora",
+      "category": "usb_drives",
+      "categoria_taxonomia": "3712",
+      "use": "work",
+      "price": 39.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "conectividad": {"valor": ["usb-c"], "unidad": null}
+      },
+      "description": "512 GB metal USB-C flash drive.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "IMP-PRN-01",
+      "gtin": "2091100000012",
+      "title": "Imprexa Mono 100",
+      "brand": "Imprexa",
+      "category": "printers",
+      "categoria_taxonomia": "500106",
+      "use": "office",
+      "price": 99.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "colour_printing": {"valor": false, "unidad": null},
+        "inalambrico": {"valor": false, "unidad": null}
+      },
+      "description": "Monochrome laser printer.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "IMP-PRN-02",
+      "gtin": "2091100000029",
+      "title": "Imprexa Color Wi",
+      "brand": "Imprexa",
+      "category": "printers",
+      "categoria_taxonomia": "500106",
+      "use": "home",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 35,
+      "sizes": [],
+      "atributos": {
+        "colour_printing": {"valor": true, "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null}
+      },
+      "description": "Wireless color inkjet printer.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "PIX-PRN-01",
+      "gtin": "2091100000036",
+      "title": "Pixen Photo Ink",
+      "brand": "Pixen",
+      "category": "printers",
+      "categoria_taxonomia": "500106",
+      "use": "home",
+      "price": 249.0,
+      "currency": "USD",
+      "stock": 12,
+      "sizes": [],
+      "atributos": {
+        "colour_printing": {"valor": true, "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null}
+      },
+      "description": "Photo inkjet printer.",
+      "entrega_dias": 3,
+      "publicado": false
+    },
+    {
+      "sku": "IMP-PRN-03",
+      "gtin": "2091100000043",
+      "title": "Imprexa Color Laser",
+      "brand": "Imprexa",
+      "category": "printers",
+      "categoria_taxonomia": "500106",
+      "use": "office",
+      "price": 449.0,
+      "currency": "USD",
+      "stock": 15,
+      "sizes": [],
+      "atributos": {
+        "colour_printing": {"valor": true, "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null}
+      },
+      "description": "Wireless color laser printer for the office.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "FON-CEL-01",
+      "gtin": "2091200000011",
+      "title": "Fonix A1",
+      "brand": "Fonix",
+      "category": "mobile_phones",
+      "categoria_taxonomia": "267",
+      "use": "home",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 100,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 64, "unidad": "GB"},
+        "memoria_ram": {"valor": 4, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 6.5, "unidad": "in"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Entry-level smartphone, 64 GB.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "FON-CEL-02",
+      "gtin": "2091200000028",
+      "title": "Fonix A5",
+      "brand": "Fonix",
+      "category": "mobile_phones",
+      "categoria_taxonomia": "267",
+      "use": "home",
+      "price": 249.0,
+      "currency": "USD",
+      "stock": 80,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 128, "unidad": "GB"},
+        "memoria_ram": {"valor": 6, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 6.6, "unidad": "in"},
+        "color": {"valor": "azul", "unidad": null}
+      },
+      "description": "Smartphone with a large battery, 128 GB.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "ZEN-CEL-01",
+      "gtin": "2091200000035",
+      "title": "Zento Mini",
+      "brand": "Zento",
+      "category": "mobile_phones",
+      "categoria_taxonomia": "267",
+      "use": "home",
+      "price": 349.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 128, "unidad": "GB"},
+        "memoria_ram": {"valor": 8, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 5.9, "unidad": "in"},
+        "color": {"valor": "blanco", "unidad": null}
+      },
+      "description": "Compact smartphone, 128 GB.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "ORI-CEL-01",
+      "gtin": "2091200000042",
+      "title": "Orion Phone 12",
+      "brand": "Orion",
+      "category": "mobile_phones",
+      "categoria_taxonomia": "267",
+      "use": "work",
+      "price": 499.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 256, "unidad": "GB"},
+        "memoria_ram": {"valor": 8, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 6.4, "unidad": "in"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Business smartphone, 256 GB.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "FON-CEL-03",
+      "gtin": "2091200000059",
+      "title": "Fonix X Pro",
+      "brand": "Fonix",
+      "category": "mobile_phones",
+      "categoria_taxonomia": "267",
+      "use": "work",
+      "price": 899.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 512, "unidad": "GB"},
+        "memoria_ram": {"valor": 12, "unidad": "GB"},
+        "tamano_pantalla": {"valor": 6.8, "unidad": "in"},
+        "color": {"valor": "gris", "unidad": null}
+      },
+      "description": "Flagship smartphone, 512 GB.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "PLX-CON-01",
+      "gtin": "2091300000010",
+      "title": "Plexo Go",
+      "brand": "Plexo",
+      "category": "game_consoles",
+      "categoria_taxonomia": "1294",
+      "use": "gaming",
+      "price": 199.0,
+      "currency": "USD",
+      "stock": 50,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 64, "unidad": "GB"}
+      },
+      "description": "Handheld game console.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "PLX-CON-02",
+      "gtin": "2091300000027",
+      "title": "Plexo Home",
+      "brand": "Plexo",
+      "category": "game_consoles",
+      "categoria_taxonomia": "1294",
+      "use": "gaming",
+      "price": 399.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 512, "unidad": "GB"}
+      },
+      "description": "Home game console.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-CON-01",
+      "gtin": "2091300000034",
+      "title": "Kraton Deck",
+      "brand": "Kraton",
+      "category": "game_consoles",
+      "categoria_taxonomia": "1294",
+      "use": "gaming",
+      "price": 449.0,
+      "currency": "USD",
+      "stock": 15,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 1, "unidad": "TB"}
+      },
+      "description": "Handheld gaming PC console.",
+      "entrega_dias": 3,
+      "publicado": false
+    },
+    {
+      "sku": "PLX-CON-03",
+      "gtin": "2091300000041",
+      "title": "Plexo Home Pro",
+      "brand": "Plexo",
+      "category": "game_consoles",
+      "categoria_taxonomia": "1294",
+      "use": "gaming",
+      "price": 549.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "almacenamiento": {"valor": 2, "unidad": "TB"}
+      },
+      "description": "Home game console with 4K output.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "NET-RTR-01",
+      "gtin": "2091400000019",
+      "title": "Netra Home",
+      "brand": "Netra",
+      "category": "routers",
+      "categoria_taxonomia": "5497",
+      "use": "home",
+      "price": 39.0,
+      "currency": "USD",
+      "stock": 80,
+      "sizes": [],
+      "atributos": {
+        "wifi_standard": {"valor": "wifi 5", "unidad": null}
+      },
+      "description": "Dual-band home router.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "NET-RTR-02",
+      "gtin": "2091400000026",
+      "title": "Netra Mesh Duo",
+      "brand": "Netra",
+      "category": "routers",
+      "categoria_taxonomia": "5497",
+      "use": "home",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "wifi_standard": {"valor": "wifi 6", "unidad": null}
+      },
+      "description": "Mesh router system, two units.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "NET-RTR-03",
+      "gtin": "2091400000033",
+      "title": "Netra Pro AX",
+      "brand": "Netra",
+      "category": "routers",
+      "categoria_taxonomia": "5497",
+      "use": "work",
+      "price": 199.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "wifi_standard": {"valor": "wifi 6", "unidad": null}
+      },
+      "description": "Office router with VPN support.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "NET-RTR-04",
+      "gtin": "2091400000040",
+      "title": "Netra Ultra BE",
+      "brand": "Netra",
+      "category": "routers",
+      "categoria_taxonomia": "5497",
+      "use": "work",
+      "price": 349.0,
+      "currency": "USD",
+      "stock": 10,
+      "sizes": [],
+      "atributos": {
+        "wifi_standard": {"valor": "wifi 7", "unidad": null}
+      },
+      "description": "Tri-band router.",
+      "entrega_dias": 3,
+      "publicado": false
+    },
+    {
+      "sku": "SON-AUR-01",
+      "gtin": "2091500000018",
+      "title": "Sonora Lite",
+      "brand": "Sonora",
+      "category": "headphones",
+      "categoria_taxonomia": "543626",
+      "use": "home",
+      "price": 39.0,
+      "currency": "USD",
+      "stock": 150,
+      "sizes": [],
+      "atributos": {
+        "cancelacion_ruido": {"valor": false, "unidad": null},
+        "autonomia_bateria": {"valor": 20, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth"], "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null},
+        "weight": {"valor": 160, "unidad": "g"}
+      },
+      "description": "On-ear wireless headphones, 20 h battery.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "AUR-AUR-01",
+      "gtin": "2091500000025",
+      "title": "Auralis Move",
+      "brand": "Auralis",
+      "category": "headphones",
+      "categoria_taxonomia": "543626",
+      "use": "travel",
+      "price": 79.0,
+      "currency": "USD",
+      "stock": 90,
+      "sizes": [],
+      "atributos": {
+        "cancelacion_ruido": {"valor": false, "unidad": null},
+        "autonomia_bateria": {"valor": 35, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth"], "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null},
+        "weight": {"valor": 190, "unidad": "g"}
+      },
+      "description": "Over-ear wireless headphones, 35 h battery.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "SON-AUR-03",
+      "gtin": "2091500000032",
+      "title": "Sonora Studio Wired",
+      "brand": "Sonora",
+      "category": "headphones",
+      "categoria_taxonomia": "543626",
+      "use": "work",
+      "price": 129.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "cancelacion_ruido": {"valor": false, "unidad": null},
+        "conectividad": {"valor": ["3.5 mm"], "unidad": null},
+        "inalambrico": {"valor": false, "unidad": null},
+        "weight": {"valor": 280, "unidad": "g"}
+      },
+      "description": "Closed-back wired studio headphones.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "AUR-AUR-02",
+      "gtin": "2091500000049",
+      "title": "Auralis Quiet Travel",
+      "brand": "Auralis",
+      "category": "headphones",
+      "categoria_taxonomia": "543626",
+      "use": "travel",
+      "price": 179.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "cancelacion_ruido": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 30, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth", "usb-c"], "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null},
+        "weight": {"valor": 250, "unidad": "g"}
+      },
+      "description": "Over-ear travel headphones with active noise cancelling, 30 h battery.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "SON-AUR-02",
+      "gtin": "2091500000056",
+      "title": "Sonora Calm 40",
+      "brand": "Sonora",
+      "category": "headphones",
+      "categoria_taxonomia": "543626",
+      "use": "travel",
+      "price": 229.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "cancelacion_ruido": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 40, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth", "usb-c"], "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null},
+        "weight": {"valor": 260, "unidad": "g"}
+      },
+      "description": "Over-ear headphones with active noise cancelling, 40 h battery.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "AUR-AUR-03",
+      "gtin": "2091500000063",
+      "title": "Auralis Reference",
+      "brand": "Auralis",
+      "category": "headphones",
+      "categoria_taxonomia": "543626",
+      "use": "work",
+      "price": 349.0,
+      "currency": "USD",
+      "stock": 10,
+      "sizes": [],
+      "atributos": {
+        "cancelacion_ruido": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 50, "unidad": "h"},
+        "conectividad": {"valor": ["bluetooth", "usb-c"], "unidad": null},
+        "inalambrico": {"valor": true, "unidad": null},
+        "weight": {"valor": 300, "unidad": "g"}
+      },
+      "description": "Premium headphones with adaptive noise cancelling, 50 h battery.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-HST-01",
+      "gtin": "2091600000017",
+      "title": "Kraton Comms",
+      "brand": "Kraton",
+      "category": "headsets",
+      "categoria_taxonomia": "543627",
+      "use": "gaming",
+      "price": 29.0,
+      "currency": "USD",
+      "stock": 120,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": false, "unidad": null},
+        "conectividad": {"valor": ["3.5 mm"], "unidad": null},
+        "weight": {"valor": 250, "unidad": "g"}
+      },
+      "description": "Wired gaming headset with microphone.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "SON-HST-01",
+      "gtin": "2091600000024",
+      "title": "Sonora Office Talk",
+      "brand": "Sonora",
+      "category": "headsets",
+      "categoria_taxonomia": "543627",
+      "use": "work",
+      "price": 59.0,
+      "currency": "USD",
+      "stock": 80,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": false, "unidad": null},
+        "conectividad": {"valor": ["usb"], "unidad": null},
+        "weight": {"valor": 180, "unidad": "g"}
+      },
+      "description": "USB office headset with noise-reducing microphone.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-HST-02",
+      "gtin": "2091600000031",
+      "title": "Kraton Comms Free",
+      "brand": "Kraton",
+      "category": "headsets",
+      "categoria_taxonomia": "543627",
+      "use": "gaming",
+      "price": 99.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "conectividad": {"valor": ["bluetooth", "usb"], "unidad": null},
+        "weight": {"valor": 290, "unidad": "g"}
+      },
+      "description": "Wireless gaming headset with microphone.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "SON-HST-02",
+      "gtin": "2091600000048",
+      "title": "Sonora Office Talk Free",
+      "brand": "Sonora",
+      "category": "headsets",
+      "categoria_taxonomia": "543627",
+      "use": "work",
+      "price": 129.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "conectividad": {"valor": ["bluetooth"], "unidad": null},
+        "weight": {"valor": 170, "unidad": "g"}
+      },
+      "description": "Wireless office headset with microphone.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "SON-PAR-01",
+      "gtin": "2091700000016",
+      "title": "Sonora Pocket",
+      "brand": "Sonora",
+      "category": "speakers",
+      "categoria_taxonomia": "249",
+      "use": "outdoor",
+      "price": 29.0,
+      "currency": "USD",
+      "stock": 150,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 10, "unidad": "h"},
+        "power": {"valor": 5, "unidad": "W"}
+      },
+      "description": "Pocket wireless speaker, 10 h battery.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "SON-PAR-02",
+      "gtin": "2091700000023",
+      "title": "Sonora Boom",
+      "brand": "Sonora",
+      "category": "speakers",
+      "categoria_taxonomia": "249",
+      "use": "outdoor",
+      "price": 79.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 20, "unidad": "h"},
+        "power": {"valor": 20, "unidad": "W"}
+      },
+      "description": "Water-resistant wireless speaker, 20 h battery.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "AUR-PAR-02",
+      "gtin": "2091700000030",
+      "title": "Auralis Shelf Duo",
+      "brand": "Auralis",
+      "category": "speakers",
+      "categoria_taxonomia": "249",
+      "use": "home",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": false, "unidad": null},
+        "power": {"valor": 40, "unidad": "W"}
+      },
+      "description": "Pair of wired bookshelf speakers.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "AUR-PAR-01",
+      "gtin": "2091700000047",
+      "title": "Auralis Party",
+      "brand": "Auralis",
+      "category": "speakers",
+      "categoria_taxonomia": "249",
+      "use": "home",
+      "price": 199.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "inalambrico": {"valor": true, "unidad": null},
+        "autonomia_bateria": {"valor": 15, "unidad": "h"},
+        "power": {"valor": 80, "unidad": "W"}
+      },
+      "description": "Party speaker with lights, 15 h battery.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "VIS-WEB-01",
+      "gtin": "2091800000015",
+      "title": "Visra Cam HD",
+      "brand": "Visra",
+      "category": "webcams",
+      "categoria_taxonomia": "312",
+      "use": "office",
+      "price": 25.0,
+      "currency": "USD",
+      "stock": 150,
+      "sizes": [],
+      "atributos": {
+        "maximum_video_resolution": {"valor": "1280x720", "unidad": null}
+      },
+      "description": "HD webcam with microphone.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "VIS-WEB-02",
+      "gtin": "2091800000022",
+      "title": "Visra Cam FHD",
+      "brand": "Visra",
+      "category": "webcams",
+      "categoria_taxonomia": "312",
+      "use": "office",
+      "price": 49.0,
+      "currency": "USD",
+      "stock": 120,
+      "sizes": [],
+      "atributos": {
+        "maximum_video_resolution": {"valor": "1920x1080", "unidad": null}
+      },
+      "description": "Full HD webcam with microphone.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "PIX-WEB-01",
+      "gtin": "2091800000039",
+      "title": "Pixen Stream",
+      "brand": "Pixen",
+      "category": "webcams",
+      "categoria_taxonomia": "312",
+      "use": "work",
+      "price": 99.0,
+      "currency": "USD",
+      "stock": 50,
+      "sizes": [],
+      "atributos": {
+        "maximum_video_resolution": {"valor": "1920x1080", "unidad": null}
+      },
+      "description": "Full HD streaming webcam, 60 fps.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "PIX-WEB-02",
+      "gtin": "2091800000046",
+      "title": "Pixen Stream Ultra",
+      "brand": "Pixen",
+      "category": "webcams",
+      "categoria_taxonomia": "312",
+      "use": "work",
+      "price": 179.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "maximum_video_resolution": {"valor": "3840x2160", "unidad": null}
+      },
+      "description": "4K streaming webcam.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "FOK-CAM-01",
+      "gtin": "2091900000014",
+      "title": "Fokal Snap",
+      "brand": "Fokal",
+      "category": "digital_cameras",
+      "categoria_taxonomia": "152",
+      "use": "travel",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "megapixel": {"valor": 20, "unidad": "MP"},
+        "weight": {"valor": 220, "unidad": "g"}
+      },
+      "description": "Compact digital camera.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "FOK-CAM-02",
+      "gtin": "2091900000021",
+      "title": "Fokal Zoom 30",
+      "brand": "Fokal",
+      "category": "digital_cameras",
+      "categoria_taxonomia": "152",
+      "use": "travel",
+      "price": 299.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "megapixel": {"valor": 20, "unidad": "MP"},
+        "weight": {"valor": 300, "unidad": "g"}
+      },
+      "description": "Compact camera with 30x optical zoom.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "FOK-CAM-03",
+      "gtin": "2091900000038",
+      "title": "Fokal Mirrorless M",
+      "brand": "Fokal",
+      "category": "digital_cameras",
+      "categoria_taxonomia": "152",
+      "use": "design",
+      "price": 899.0,
+      "currency": "USD",
+      "stock": 10,
+      "sizes": [],
+      "atributos": {
+        "megapixel": {"valor": 24, "unidad": "MP"},
+        "weight": {"valor": 450, "unidad": "g"}
+      },
+      "description": "Mirrorless camera with kit lens.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "PIX-CAM-01",
+      "gtin": "2091900000045",
+      "title": "Pixen Pro Body",
+      "brand": "Pixen",
+      "category": "digital_cameras",
+      "categoria_taxonomia": "152",
+      "use": "design",
+      "price": 1599.0,
+      "currency": "USD",
+      "stock": 5,
+      "sizes": [],
+      "atributos": {
+        "megapixel": {"valor": 45, "unidad": "MP"},
+        "weight": {"valor": 650, "unidad": "g"}
+      },
+      "description": "Full-frame mirrorless camera body.",
+      "entrega_dias": 4,
+      "publicado": false
+    },
+    {
+      "sku": "ERG-SIL-01",
+      "gtin": "2092000000010",
+      "title": "Ergon Basic",
+      "brand": "Ergon",
+      "category": "office_chairs",
+      "categoria_taxonomia": "2045",
+      "use": "office",
+      "price": 89.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "atributos": {
+        "maximum_user_weight": {"valor": 100, "unidad": "kg"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Basic office chair.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "ERG-SIL-02",
+      "gtin": "2092000000027",
+      "title": "Ergon Mesh",
+      "brand": "Ergon",
+      "category": "office_chairs",
+      "categoria_taxonomia": "2045",
+      "use": "office",
+      "price": 179.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "maximum_user_weight": {"valor": 120, "unidad": "kg"},
+        "color": {"valor": "gris", "unidad": null}
+      },
+      "description": "Mesh office chair with adjustable arms.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-SIL-01",
+      "gtin": "2092000000034",
+      "title": "Kraton Throne",
+      "brand": "Kraton",
+      "category": "office_chairs",
+      "categoria_taxonomia": "2045",
+      "use": "gaming",
+      "price": 249.0,
+      "currency": "USD",
+      "stock": 15,
+      "sizes": [],
+      "atributos": {
+        "maximum_user_weight": {"valor": 150, "unidad": "kg"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Gaming chair with reclining back.",
+      "entrega_dias": 4,
+      "publicado": false
+    },
+    {
+      "sku": "ERG-SIL-03",
+      "gtin": "2092000000041",
+      "title": "Ergon Pro Lumbar",
+      "brand": "Ergon",
+      "category": "office_chairs",
+      "categoria_taxonomia": "2045",
+      "use": "work",
+      "price": 349.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "maximum_user_weight": {"valor": 136, "unidad": "kg"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Ergonomic chair with lumbar support.",
+      "entrega_dias": 4,
+      "publicado": true
+    },
+    {
+      "sku": "ERG-ESC-01",
+      "gtin": "2092100000019",
+      "title": "Ergon Desk Compact",
+      "brand": "Ergon",
+      "category": "desks",
+      "categoria_taxonomia": "4191",
+      "use": "home",
+      "price": 99.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "width": {"valor": 100, "unidad": "cm"},
+        "color": {"valor": "blanco", "unidad": null}
+      },
+      "description": "Compact home desk.",
+      "entrega_dias": 4,
+      "publicado": true
+    },
+    {
+      "sku": "ERG-ESC-02",
+      "gtin": "2092100000026",
+      "title": "Ergon Desk Office",
+      "brand": "Ergon",
+      "category": "desks",
+      "categoria_taxonomia": "4191",
+      "use": "office",
+      "price": 179.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "width": {"valor": 140, "unidad": "cm"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Office desk with cable tray.",
+      "entrega_dias": 4,
+      "publicado": true
+    },
+    {
+      "sku": "KRA-ESC-01",
+      "gtin": "2092100000033",
+      "title": "Kraton Battle Desk",
+      "brand": "Kraton",
+      "category": "desks",
+      "categoria_taxonomia": "4191",
+      "use": "gaming",
+      "price": 229.0,
+      "currency": "USD",
+      "stock": 15,
+      "sizes": [],
+      "atributos": {
+        "width": {"valor": 120, "unidad": "cm"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Gaming desk with monitor shelf.",
+      "entrega_dias": 5,
+      "publicado": false
+    },
+    {
+      "sku": "ERG-ESC-03",
+      "gtin": "2092100000040",
+      "title": "Ergon Lift Standing",
+      "brand": "Ergon",
+      "category": "desks",
+      "categoria_taxonomia": "4191",
+      "use": "work",
+      "price": 449.0,
+      "currency": "USD",
+      "stock": 12,
+      "sizes": [],
+      "atributos": {
+        "width": {"valor": 160, "unidad": "cm"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Electric standing desk.",
+      "entrega_dias": 5,
+      "publicado": true
+    },
+    {
+      "sku": "TRK-MOC-01",
+      "gtin": "2092200000018",
+      "title": "Trekko Daily",
+      "brand": "Trekko",
+      "category": "backpacks",
+      "categoria_taxonomia": "100",
+      "use": "office",
+      "price": 39.0,
+      "currency": "USD",
+      "stock": 100,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 20, "unidad": "l"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Daily backpack with laptop sleeve.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "TRK-MOC-02",
+      "gtin": "2092200000025",
+      "title": "Trekko Commuter",
+      "brand": "Trekko",
+      "category": "backpacks",
+      "categoria_taxonomia": "100",
+      "use": "work",
+      "price": 69.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 25, "unidad": "l"},
+        "color": {"valor": "gris", "unidad": null}
+      },
+      "description": "Water-resistant commuter backpack.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "RUM-MOC-01",
+      "gtin": "2092200000032",
+      "title": "Rumbo Trail",
+      "brand": "Rumbo",
+      "category": "backpacks",
+      "categoria_taxonomia": "100",
+      "use": "outdoor",
+      "price": 89.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 30, "unidad": "l"},
+        "color": {"valor": "verde", "unidad": null}
+      },
+      "description": "Hiking backpack.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "TRK-MOC-03",
+      "gtin": "2092200000049",
+      "title": "Trekko Travel Pro",
+      "brand": "Trekko",
+      "category": "backpacks",
+      "categoria_taxonomia": "100",
+      "use": "travel",
+      "price": 129.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 40, "unidad": "l"},
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Carry-on travel backpack.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "KAF-CAF-01",
+      "gtin": "2092300000017",
+      "title": "Kafeto Drip",
+      "brand": "Kafeto",
+      "category": "coffee_makers",
+      "categoria_taxonomia": "736",
+      "use": "home",
+      "price": 39.0,
+      "currency": "USD",
+      "stock": 70,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 1.2, "unidad": "l"},
+        "power": {"valor": 800, "unidad": "W"}
+      },
+      "description": "Drip coffee maker.",
+      "entrega_dias": 1,
+      "publicado": true
+    },
+    {
+      "sku": "KAF-CAF-02",
+      "gtin": "2092300000024",
+      "title": "Kafeto Espresso",
+      "brand": "Kafeto",
+      "category": "coffee_makers",
+      "categoria_taxonomia": "736",
+      "use": "home",
+      "price": 149.0,
+      "currency": "USD",
+      "stock": 40,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 1.5, "unidad": "l"},
+        "power": {"valor": 1350, "unidad": "W"}
+      },
+      "description": "Espresso machine with milk frother.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "KAF-CAF-04",
+      "gtin": "2092300000031",
+      "title": "Kafeto Office Brew",
+      "brand": "Kafeto",
+      "category": "coffee_makers",
+      "categoria_taxonomia": "736",
+      "use": "office",
+      "price": 199.0,
+      "currency": "USD",
+      "stock": 20,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 2.5, "unidad": "l"},
+        "power": {"valor": 1500, "unidad": "W"}
+      },
+      "description": "Office coffee brewer.",
+      "entrega_dias": 2,
+      "publicado": false
+    },
+    {
+      "sku": "KAF-CAF-03",
+      "gtin": "2092300000048",
+      "title": "Kafeto Barista Pro",
+      "brand": "Kafeto",
+      "category": "coffee_makers",
+      "categoria_taxonomia": "736",
+      "use": "home",
+      "price": 399.0,
+      "currency": "USD",
+      "stock": 15,
+      "sizes": [],
+      "atributos": {
+        "capacity": {"valor": 2, "unidad": "l"},
+        "power": {"valor": 1600, "unidad": "W"}
+      },
+      "description": "Automatic bean-to-cup espresso machine.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "PIS-ZAP-03",
+      "gtin": "2092400000016",
+      "title": "Pisada City Classic",
+      "brand": "Pisada",
+      "category": "shoes",
+      "categoria_taxonomia": "187",
+      "use": "urban",
+      "price": 69.0,
+      "currency": "USD",
+      "stock": 80,
+      "sizes": [35, 36, 37, 38, 39, 40, 41, 42, 43, 44],
+      "atributos": {
+        "color": {"valor": "blanco", "unidad": null}
+      },
+      "description": "Classic city sneaker.",
+      "entrega_dias": 1,
+      "publicado": false
+    },
+    {
+      "sku": "RUM-ZAP-01",
+      "gtin": "2092400000023",
+      "title": "Rumbo Street Court",
+      "brand": "Rumbo",
+      "category": "shoes",
+      "categoria_taxonomia": "187",
+      "use": "basketball",
+      "price": 89.0,
+      "currency": "USD",
+      "stock": 60,
+      "sizes": [38, 39, 40, 41, 42, 43, 44, 45],
+      "atributos": {
+        "color": {"valor": "negro", "unidad": null}
+      },
+      "description": "Basketball shoe for outdoor courts.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "PIS-ZAP-01",
+      "gtin": "2092400000030",
+      "title": "Pisada Run Light",
+      "brand": "Pisada",
+      "category": "shoes",
+      "categoria_taxonomia": "187",
+      "use": "running",
+      "price": 99.0,
+      "currency": "USD",
+      "stock": 50,
+      "sizes": [36, 37, 38, 39, 40, 41, 42, 43, 44, 45],
+      "atributos": {
+        "color": {"valor": "azul", "unidad": null}
+      },
+      "description": "Lightweight running shoe.",
+      "entrega_dias": 2,
+      "publicado": true
+    },
+    {
+      "sku": "PIS-ZAP-02",
+      "gtin": "2092400000047",
+      "title": "Pisada Trail Grip",
+      "brand": "Pisada",
+      "category": "shoes",
+      "categoria_taxonomia": "187",
+      "use": "outdoor",
+      "price": 119.0,
+      "currency": "USD",
+      "stock": 25,
+      "sizes": [38, 39, 40, 41, 43, 44, 45, 46],
+      "atributos": {
+        "color": {"valor": "gris", "unidad": null}
+      },
+      "description": "Trail shoe with a grippy outsole.",
+      "entrega_dias": 3,
+      "publicado": true
+    },
+    {
+      "sku": "RUM-ZAP-02",
+      "gtin": "2092400000054",
+      "title": "Rumbo Pro Court",
+      "brand": "Rumbo",
+      "category": "shoes",
+      "categoria_taxonomia": "187",
+      "use": "basketball",
+      "price": 139.0,
+      "currency": "USD",
+      "stock": 30,
+      "sizes": [39, 40, 41, 42, 43, 44, 45, 46],
+      "atributos": {
+        "color": {"valor": "blanco", "unidad": null}
+      },
+      "description": "High-top basketball shoe.",
+      "entrega_dias": 2,
+      "publicado": true
+    }
+  ]
+}

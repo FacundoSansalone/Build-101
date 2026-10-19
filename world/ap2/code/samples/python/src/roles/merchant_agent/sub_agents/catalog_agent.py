@@ -63,7 +63,7 @@ async def find_items_workflow(
 
   try:
     scenario_name = demo_scenario.active_scenario(data_parts)
-    offers = demo_scenario.build_offers(scenario_name)
+    offers = demo_scenario.build_offers(scenario_name, catalog_search, contexto_id=updater.context_id)
     logging.info(
         "demo_world: scenario=%s search=%r offers=%s",
         scenario_name,

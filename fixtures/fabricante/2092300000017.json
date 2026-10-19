@@ -1,0 +1,75 @@
+{
+  "_fixture": "Fixture de prueba en formato Icecat: NO son datos de Icecat. Lo genera world/ (demo_world.export_fixtures) desde data/productos.json (comercio general).",
+  "msg": "OK",
+  "data": {
+    "GeneralInfo": {
+      "Title": "Kafeto Drip",
+      "Brand": "Kafeto",
+      "ProductName": "Drip",
+      "GTIN": [
+        "2092300000017"
+      ],
+      "Category": {
+        "CategoryID": "fixture-coffee_makers",
+        "Name": {
+          "Value": "Coffee makers",
+          "Language": "EN"
+        }
+      }
+    },
+    "FeaturesGroups": [
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Features",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "1.2",
+            "PresentationValue": "1.2 l",
+            "Feature": {
+              "Name": {
+                "Value": "Capacity",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "l"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "FeatureGroup": {
+          "Name": {
+            "Value": "Power",
+            "Language": "EN"
+          }
+        },
+        "Features": [
+          {
+            "Type": "numerical",
+            "Value": "800",
+            "PresentationValue": "800 W",
+            "Feature": {
+              "Name": {
+                "Value": "Power",
+                "Language": "EN"
+              },
+              "Measure": {
+                "Signs": {
+                  "_": "W"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
