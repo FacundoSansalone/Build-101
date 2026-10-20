@@ -647,7 +647,7 @@ reabrirías el canal que el gateway cierra.
 | 409 | `sin_webhook` | Tu clave no tiene webhook |
 | 413 | `cuerpo_demasiado_grande` | Más de 1 MB |
 | 415 | `se_espera_json` | Falta `Content-Type: application/json` |
-| 429 | `demasiadas_compras` | Llegaste al máximo de compras activas (`detalle.maximo`) |
+| 429 | `demasiadas_compras` | Llegaste al máximo de compras activas (`detalle.maximo`): las que todavía no resolvieron la negociación (`creada`, `esperando_contexto`, `negociando`, `esperando_decision`) |
 | 503 | `estado_no_disponible` | El gateway no pudo leer o guardar su estado: reintentá |
 | 503 | `sin_clave_recibo` | El gateway no tiene clave de recibos publicada |
 | 500 | `interno` | Error interno (sin detalle) |

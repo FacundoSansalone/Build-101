@@ -864,10 +864,14 @@ intención queda apagada (pedido literal).
   ocuparle uno a otra compra, que quedaría cortada por `contexto_ajeno`. Es
   denegación de servicio, no fuga (no ve nada de la otra compra). Los
   comercios reales usan UUID; si importa, atar solo los que crea el comercio.
-- **Memoria:** una compra de integrador viva (no bloqueada ni vencida,
-  dentro de su TTL, o con una espera abierta) nunca sale de memoria: la
-  acota el límite de compras activas de cada integrador, no el tope de 200
-  de la demo. Las terminadas salen cuando hay más de 200.
+- **Memoria y compras activas:** cuentan como activas (para el 429
+  `demasiadas_compras`) solo las que todavía no resolvieron la negociación:
+  `creada`, `esperando_contexto`, `negociando` y `esperando_decision`. Una
+  sin oportunidad, aceptada, rechazada, bloqueada o vencida ya no ocupa
+  lugar. Las activas nunca salen de memoria (las acota ese límite, no el
+  tope de 200 de la demo); las demás salen cuando hay más de 200 y, si
+  llega tráfico (su checkout, una aprobación), se hidratan del almacén con
+  sus ataduras, como después de un reinicio.
 - **Activas tras un reinicio:** una fila que quedó en `esperando_*` cuenta
   como activa para el 429 hasta que se hidrata o se lista (ahí se
   normaliza) o hasta su TTL.

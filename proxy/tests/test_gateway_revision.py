@@ -96,9 +96,11 @@ async def test_otras_compras_no_desalojan_ni_dejan_aprobar_al_dashboard(config_g
         compra_id, contexto = await _escalar_retenido(c)
         aprobar = {"contexto_id": contexto, "cart_id": "cart_1"}
         assert (await panel.post("/guard/aprobaciones", json=aprobar)).status_code == 409
+        await mundo.esperar_fondo()
         for _ in range(MAX_COMPRAS):
             await crear_compra(otro)
-        assert mundo.proxy.compras.get(compra_id) is not None  # sigue en memoria
+        # Resuelta (sin oportunidad, con su checkout retenido) puede salir de
+        # memoria: el almacén sigue diciendo de quién es y qué se autorizó.
         r = await panel.post("/guard/aprobaciones", json=aprobar)
         assert r.status_code == 409 and r.json()["error"] == "compra_de_integrador"
         reintento = (await checkout(c, compra_id, contexto, "cart_1")).json()["result"]

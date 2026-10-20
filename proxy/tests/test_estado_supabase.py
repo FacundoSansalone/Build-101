@@ -140,7 +140,7 @@ async def test_contar_activas_lee_content_range():
     assert params(req) == {
         "integrador_id": "eq.acme",
         "creada": "gte.2026-10-17T12:00:00Z",
-        "estado": "not.in.(bloqueada,vencida)",
+        "estado": "in.(creada,esperando_contexto,negociando,esperando_decision)",
         "select": "id",
         "limit": "1",
     }

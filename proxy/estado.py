@@ -90,6 +90,10 @@ ESTADOS_COMPRA_SQL = frozenset(
     }
 )
 ESTADOS_TERMINALES = ("bloqueada", "vencida")
+# Las que cuentan para el límite de compras activas: las que todavía no
+# resolvieron la negociación (`compras.ESTADOS_ACTIVOS_API`). Una sin
+# oportunidad, aceptada o rechazada ya no ocupa lugar.
+ESTADOS_ACTIVOS = ("creada", "esperando_contexto", "negociando", "esperando_decision")
 STATUS_VEREDICTO_SQL = frozenset({"aprobado", "con_avisos", "escalar", "bloqueado"})
 
 TABLA_COMPRAS = "gw_compras"
@@ -830,8 +834,8 @@ class EstadoMemoria:
         return copy.deepcopy(filas[:limite])
 
     async def contar_activas(self, integrador_id: str, desde: datetime) -> int:
-        """Compras creadas desde `desde` (el TTL) que no están bloqueadas ni
-        vencidas (diseño §1.3)."""
+        """Compras creadas desde `desde` (el TTL) que todavía no resolvieron
+        la negociación (`ESTADOS_ACTIVOS`; diseño §1.3)."""
         _id_slug(integrador_id, "integrador_id")
         desde = _fecha(desde)
         return sum(
@@ -839,7 +843,7 @@ class EstadoMemoria:
             for f in self._compras.values()
             if f["integrador_id"] == integrador_id
             and _fecha(f["creada"]) >= desde
-            and f["estado"] not in ESTADOS_TERMINALES
+            and f["estado"] in ESTADOS_ACTIVOS
         )
 
     # -- contextos ----------------------------------------------------------------
@@ -1384,7 +1388,7 @@ class EstadoSupabase:
             params={
                 "integrador_id": f"eq.{_id_slug(integrador_id, 'integrador_id')}",
                 "creada": f"gte.{_iso(_fecha(desde))}",
-                "estado": f"not.in.({','.join(ESTADOS_TERMINALES)})",
+                "estado": f"in.({','.join(ESTADOS_ACTIVOS)})",
                 "select": "id",
                 "limit": "1",
             },

@@ -737,3 +737,94 @@ async def test_sin_respuesta_el_detalle_va_solo_al_evento(armar_proxy, cuando):
     assert resp.json()["error"]["message"].startswith("Proxy del Guard: ")
     errores = [e["datos"]["mensaje"] for e in historial if e["tipo"] == "error"]
     assert any(INYECCION in m for m in errores)  # el dashboard sí ve el detalle
+
+
+# ---------------------------------------------------------------------------
+# 12. Compras activas: solo las que no resolvieron la negociación
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_contar_activas_solo_estados_no_finales():
+    from datetime import timedelta
+
+    from proxy.estado import EstadoMemoria
+    from proxy.tests.test_estado import AHORA, fila_compra
+
+    almacen = EstadoMemoria()
+    activos = ("creada", "esperando_contexto", "negociando", "esperando_decision")
+    finales = ("sin_oportunidad", "aceptada", "rechazada", "bloqueada", "vencida")
+    for i, estado in enumerate(activos + finales):
+        await almacen.guardar_compra(fila_compra(f"cmp-{i:016x}", estado=estado))
+    assert await almacen.contar_activas("acme", AHORA - timedelta(hours=24)) == len(activos)
+
+
+@pytest.mark.anyio
+async def test_contar_activas_en_supabase_pide_solo_los_no_finales():
+    from datetime import datetime, timezone
+
+    from proxy.tests.test_estado_supabase import FakePostgrest, almacen, params
+
+    fake = FakePostgrest(
+        lambda req: httpx.Response(200, json=[], headers={"Content-Range": "*/0"})
+    )
+    await almacen(fake).contar_activas("acme", datetime(2026, 10, 17, 12, tzinfo=timezone.utc))
+    assert params(fake.ultimo)["estado"] == (
+        "in.(creada,esperando_contexto,negociando,esperando_decision)"
+    )
+
+
+@pytest.mark.anyio
+async def test_una_compra_resuelta_puede_salir_de_memoria_y_una_activa_no():
+    from proxy.compras import RegistroCompras
+    from proxy.tests.test_compras_api import crear
+
+    registro = RegistroCompras(maximo=2)
+    resuelta, negociando, esperando = crear(registro), crear(registro), crear(registro)
+    resuelta.estado = "sin_oportunidad"
+    negociando.estado = "negociando"
+    esperando.estado = "esperando_decision"
+    crear(registro)  # sobra una: sale la resuelta (si llega tráfico, se hidrata del almacén)
+    assert registro.get(resuelta.id) is None
+    assert registro.get(negociando.id) is negociando
+    assert registro.get(esperando.id) is esperando
+
+
+@pytest.mark.anyio
+async def test_una_compra_terminada_no_cuenta_para_el_limite(config):
+    from dataclasses import replace
+
+    from proxy.claves import RegistroIntegradores
+    from proxy.tests.gateway_ayudantes import (
+        FICHA,
+        GATEWAY_PUBLIC_URL,
+        armar_gateway,
+        buscar as buscar_api,
+        checkout as checkout_api,
+        cliente_publico,
+        crear_compra,
+        datos_integradores,
+    )
+
+    datos = datos_integradores(webhook=False)
+    datos["integradores"][0]["max_compras_activas"] = 1
+    mundo = armar_gateway(
+        replace(config, gateway_public_url=GATEWAY_PUBLIC_URL), evaluador_espia()[0],
+        integradores=RegistroIntegradores.desde_dict(datos, {}),
+    )
+    async with cliente_publico(mundo.app) as c:
+        primera = await crear_compra(c)
+        r = await buscar_api(c, primera["compra_id"])
+        contexto = r.json()["result"]["contextId"]
+        assert (await c.get(f"/v1/compras/{primera['compra_id']}")).json()["estado"] == (
+            "sin_oportunidad"
+        )
+        await mundo.esperar_fondo()  # el conteo lee el almacén (se escribe en segundo plano)
+        resp = await c.post("/v1/compras", json={"pedido": "otra", "ficha": FICHA})
+        assert resp.status_code == 201, resp.text
+        # La primera sigue sirviendo para su checkout.
+        ok = await checkout_api(c, primera["compra_id"], contexto, "cart_1")
+        assert veredictos(ok.json()["result"])
+        # La segunda (creada, sin negociar) sí cuenta.
+        otra = await c.post("/v1/compras", json={"pedido": "otra más", "ficha": FICHA})
+        assert otra.status_code == 429
