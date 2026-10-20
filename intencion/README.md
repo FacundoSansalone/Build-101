@@ -207,7 +207,9 @@ que ella es el de la semana siguiente: dicho un lunes, "10 el lunes y otros
 10 el jueves" es el 26 y el 29, no el 22 (el cronograma usa las fechas de la
 respuesta entera). No se corre entre oraciones, ante una alternativa ("el
 viernes, si no el miércoles") ni por una fecha lejana: ahí queda el próximo,
-del lado estricto. Un día de la semana con su fecha es una sola fecha: "el
+del lado estricto. Una oración que sigue la cuenta de la anterior ("Entran 10
+el lunes. Los otros 10 entran el jueves."; también "el resto", "los demás",
+"otros 10") no corta la secuencia. Un día de la semana con su fecha es una sola fecha: "el
 viernes 30 de octubre" no suma el próximo viernes (si el 30 es viernes; si
 no, quedan las dos), "el jueves 29" es el primer jueves 29 desde hoy (este
 mes o el que viene; el 29 no es cantidad ni monto) y "el miércoles de la

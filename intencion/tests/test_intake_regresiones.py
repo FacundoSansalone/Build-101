@@ -414,6 +414,28 @@ def test_en_un_mismo_texto_un_dia_que_sigue_no_cae_antes():
 
 
 @pytest.mark.parametrize(
+    "texto",
+    [
+        "Entran 10 el lunes. Los otros 10 entran el jueves.",
+        "Entran 10 el lunes. Otros 10 entran el jueves.",
+        "Entran 10 el lunes. El resto, el jueves.",
+        "Entran 10 el lunes; las demás llegan el jueves.",
+    ],
+)
+def test_la_oracion_que_sigue_la_cuenta_no_corta_la_secuencia(texto):
+    """"Los otros 10…" sigue contando lo de la oración anterior: dicho un
+    lunes, el jueves es el 29 (después de ese lunes), no el 22."""
+    assert _fechas(texto, LUNES) == ["2026-10-26", "2026-10-29"]
+
+
+def test_el_cronograma_en_dos_oraciones_sigue_el_orden():
+    texto = "Entran 10 el lunes. Los otros 10 entran el jueves."
+    assert [(c, f) for c, f, _ in cronograma_candidato([texto], LUNES)] == [
+        (10, "2026-10-26"), (10, "2026-10-29"),
+    ]
+
+
+@pytest.mark.parametrize(
     "hoy, pares",
     [
         (LUNES, [(10, "2026-10-26"), (10, "2026-10-29")]),

@@ -448,8 +448,22 @@ def _dia_con_numero(hoy: date, dia_semana: int, numero: int) -> date | None:
 # Entre dos fechas, lo que corta la secuencia: el fin de una oración o una
 # alternativa ("el viernes, si no el miércoles"). "O sea" aclara, no es otra.
 _P_CORTA_SECUENCIA = re.compile(
-    r"[.;!?\n](?:\s|$)|\b(?:o(?!\s+sea\b)|u|or|si\s+no|sino|otherwise)\b"
+    r"([.;!?\n])(?:\s|$)|\b(?:o(?!\s+sea\b)|u|or|si\s+no|sino|otherwise)\b"
 )
+# Una oración que sigue la cuenta de la anterior no la corta: "Entran 10 el
+# lunes. Los otros 10 entran el jueves."
+_P_SIGUE_LA_CUENTA = re.compile(
+    rf"\s*(?:los\s+otros|las\s+otras|el\s+resto|los\s+demas|las\s+demas"
+    rf"|(?:otros|otras)\s+(?:\d+|{_CANT_RE})|the\s+other|the\s+rest)\b"
+)
+
+
+def _corta_secuencia(texto: str, desde: int, hasta: int) -> bool:
+    """¿Entre `desde` y `hasta` termina la oración o hay una alternativa?"""
+    for m in _P_CORTA_SECUENCIA.finditer(texto[desde:hasta]):
+        if not (m.group(1) and _P_SIGUE_LA_CUENTA.match(texto, desde + m.end())):
+            return True
+    return False
 
 
 def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int], date | None]]:
@@ -464,7 +478,8 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
     jueves 29, no el 22, que pondría la segunda tanda antes que la primera.
     No se corre entre oraciones, ante una alternativa ("si no") ni por una
     fecha lejana ("el pago vence el 15/12. Lo necesito el lunes."): ahí queda
-    el próximo, del lado estricto (la fecha más temprana).
+    el próximo, del lado estricto (la fecha más temprana). Una oración que
+    sigue la cuenta de la anterior ("Los otros 10…", "El resto…") no corta.
 
     Un día de la semana con su fecha es una sola fecha: "el viernes 30 de
     octubre" no suma el próximo viernes (si el 30 es viernes), "el jueves 29"
@@ -545,7 +560,7 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
     for span, f in sorted(hallazgos, key=lambda h: h[0][0]):
         if (f is not None and span in spans_dia and limite is not None and f < limite
                 and (limite - f).days <= 6
-                and not _P_CORTA_SECUENCIA.search(texto[fin_limite:span[0]])):
+                and not _corta_secuencia(texto, fin_limite, span[0])):
             f += timedelta(days=7)
         ajustadas[span] = f
         if f is not None and f >= hoy and (limite is None or f >= limite):
