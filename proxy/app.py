@@ -2003,10 +2003,10 @@ class ProxyGuard:
             contexto = result.get("contextId") if isinstance(result, dict) else None
             self._emitir_busqueda(llamada, contexto if isinstance(contexto, str) else None)
             if activo and (self._es_de_checkout(llamada) or n_checkouts):
+                # El `kind` solo si es uno de A2A: lo elige el comercio.
                 return self._bloqueo_sintetico(
                     llamada,
-                    f"respuesta de tipo {kind or type(result).__name__} donde se "
-                    "esperaba una tarea",
+                    f"respuesta de tipo {a2a.tipo_de(result)} donde se esperaba una tarea",
                 ), 200
             self._emitir_reenviado(llamada, contexto if isinstance(contexto, str) else None)
             return salida, status
@@ -2296,7 +2296,7 @@ class ProxyGuard:
         est.checkouts += n
         if kind not in ("task", "artifact-update"):
             return self._sse_cortar(
-                llamada, est, f"un ap2.checkout dentro de un evento {kind}"
+                llamada, est, f"un ap2.checkout dentro de un evento {a2a.tipo_de(result)}"
             )
         checkouts = a2a.checkouts_del_result(result)
         if len(checkouts) != n:

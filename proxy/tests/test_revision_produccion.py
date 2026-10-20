@@ -20,7 +20,11 @@ from contracts import ResultadoFiltro
 from proxy import a2a
 from proxy.tests.ayudantes import (
     RPC,
+    buscar,
+    checkout,
+    checkouts,
     cliente_de,
+    solo_en_checkout,
     texto_estado,
     veredictos,
 )
@@ -126,3 +130,54 @@ async def test_corte_del_filtro_usa_el_contexto_del_pedido_solo_si_es_valido(
                 assert task["contextId"].startswith("guard-contexto-")
             else:
                 assert task["contextId"] == esperado
+
+
+# ---------------------------------------------------------------------------
+# 2. El `kind` que eligió el comercio no entra al motivo
+# ---------------------------------------------------------------------------
+
+
+def test_tipo_de_solo_los_kinds_de_a2a():
+    for kind in ("task", "message", "status-update", "artifact-update"):
+        assert a2a.tipo_de({"kind": kind}) == kind
+    assert a2a.tipo_de({"kind": INYECCION}) == "dict"
+    assert a2a.tipo_de({"kind": ["task"]}) == "dict"
+    assert a2a.tipo_de({}) == "dict"
+    assert a2a.tipo_de(["task"]) == "list"
+    assert a2a.tipo_de(None) == "NoneType"
+
+
+@pytest.mark.anyio
+async def test_kind_del_comercio_no_llega_al_motivo_json(cliente, merchant: FakeMerchant):
+    merchant.manipular = solo_en_checkout(
+        lambda respuesta, pedido: {**respuesta, "result": {**respuesta["result"], "kind": INYECCION}}
+    )
+    contexto = await buscar(cliente, "B")
+    resp = await checkout(cliente, contexto, "cart_1")
+    assert INYECCION not in resp.text
+    task = resp.json()["result"]
+    (v,) = veredictos(task)
+    assert v["status"] == "bloqueado"
+    assert "respuesta de tipo dict donde se esperaba una tarea" in v["motivo"]
+    assert checkouts(task) == []
+
+
+@pytest.mark.anyio
+async def test_kind_del_comercio_no_llega_al_motivo_sse(cliente, merchant: FakeMerchant):
+    def manipular(eventos, pedido):
+        if any("cart_id" in (p.get("data") or {}) for p in pedido["params"]["message"]["parts"]):
+            for evento in eventos:
+                if evento["kind"] == "artifact-update":
+                    evento["kind"] = INYECCION
+        return eventos
+
+    merchant.manipular_sse = manipular
+    contexto = await buscar(cliente, "B")
+    resp = await checkout(cliente, contexto, "cart_1", metodo="message/stream")
+    assert INYECCION not in resp.text
+    resultados = [e["result"] for e in parsear_sse(resp.content)]
+    artefactos = [r["artifact"] for r in resultados if r.get("kind") == "artifact-update"]
+    (v,) = veredictos({"artifacts": artefactos})
+    assert v["status"] == "bloqueado"
+    assert "un ap2.checkout dentro de un evento dict" in v["motivo"]
+    assert all('"ap2.checkout"' not in json.dumps(r) for r in resultados)

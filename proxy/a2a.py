@@ -39,6 +39,8 @@ MANDATO_KEYS = (
 # Métodos que devuelven una tarea ya existente (no crean un checkout nuevo).
 METODOS_DE_TAREA = ("tasks/get", "tasks/resubscribe")
 ESTADOS_TERMINALES = {"completed", "failed", "canceled", "rejected"}
+# Los `kind` de un result de A2A. Otro lo eligió el comercio: no va a ningún texto.
+KINDS_A2A = ("task", "message", "status-update", "artifact-update")
 
 TipoPedido = Literal["find_products", "create_checkout", "otro"]
 
@@ -218,6 +220,13 @@ def _es_parte_veredicto(parte: Any) -> bool:
         and isinstance(parte.get("data"), dict)
         and any(clave in parte["data"] for clave in CLAVES_DEL_PROXY)
     )
+
+
+def tipo_de(result: Any) -> str:
+    """El `kind` de un result si es uno de A2A (`KINDS_A2A`); si no, el tipo de
+    Python (`dict`, `list`…). Para los motivos: nunca texto del comercio."""
+    kind = result.get("kind") if isinstance(result, dict) else None
+    return kind if isinstance(kind, str) and kind in KINDS_A2A else type(result).__name__
 
 
 def es_final(result: dict[str, Any]) -> bool:
