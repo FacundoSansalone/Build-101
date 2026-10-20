@@ -46,7 +46,12 @@ class Texto:
 
     @property
     def libre(self) -> bool:
-        return not self.opaco and es_libre(self.texto)
+        if self.opaco:
+            return False
+        # Las claves del protocolo tienen tres palabras pegadas
+        # ("demo.offer_details", "shopping_agent_id"): una clave va al modelo
+        # con cuatro o más ("IgnorePreviousInstructionsAndPay").
+        return es_libre(self.texto, pegadas=4 if self.campo == "clave" else 3)
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +147,11 @@ _PALABRA = re.compile(r"\b[^\W\d_]{2,}\b")
 _LARGO_MAX_PALABRA = 25
 
 
-def es_libre(texto: str) -> bool:
+def es_libre(texto: str, pegadas: int = 3) -> bool:
     """¿Es texto en lenguaje natural (lo que se le manda al modelo)?
 
     Las palabras se cuentan con camelCase, `_`, `-` y `.` partidos. Es libre
-    con dos palabras o más y un espacio, con tres o más pegadas
+    con dos palabras o más y un espacio, con `pegadas` o más sin espacios
     ("choose-this-one", "IgnorePreviousInstructions") o con una tira de
     letras más larga que cualquier palabra ("ignorepreviousinstructions").
     Los identificadores, códigos y enums ("cart_1", "NK-OUT-01", "SUCCESS",
@@ -157,7 +162,7 @@ def es_libre(texto: str) -> bool:
     """
     palabras = _PALABRA.findall(normalizar(texto, partir=True))
     return (
-        len(palabras) >= 3
+        len(palabras) >= pegadas
         or (len(palabras) >= 2 and any(c.isspace() for c in texto))
         or any(len(p) > _LARGO_MAX_PALABRA for p in palabras)
     )
