@@ -235,7 +235,11 @@ ella.
 **Contexto y oportunidades:** el intake y el contexto de un turno salen de
 una sola llamada. La necesidad son las palabras del usuario; el cronograma
 ("10 el lunes y otros 10 el jueves") y las flexibilidades son juicios sobre
-candidatos del código. La detección de oportunidades se delega en
+candidatos del código. Cada flexibilidad lleva la etiqueta de su campo, como
+las de Gemini (otra marca → `Marca: …`, otra cantidad → `Cantidad: …`, otra
+fecha y entregas parciales → `Entregas: …`), y como no hay cita textual que
+comprobar, es `dicha` solo con ≥ 0,80: con menos cuenta como `inferida` y no
+habilita cambios. La detección de oportunidades se delega en
 `AgenteGemini` si hay `GOOGLE_API_KEY`; si no, no hay.
 
 ### Medirlo

@@ -484,7 +484,14 @@ def _flexibilidad(item: Any, respuesta: str) -> Flexibilidad | None:
     origen = item["origen"]
     if origen == "dicha" and not _lo_dijo(item.get("cita"), respuesta):
         origen = "inferida"
-    return Flexibilidad(descripcion=f"{_ETIQUETAS[campo]}: {texto}", origen=origen)
+    return Flexibilidad(descripcion=descripcion_con_campo(campo, texto), origen=origen)
+
+
+def descripcion_con_campo(campo: str, texto: str) -> str:
+    """"Entregas: …": la descripción de una flexibilidad con la etiqueta de su
+    campo, la que lee `campo_de_flexibilidad()`. Un campo que no se puede
+    flexibilizar (precio, moneda) o desconocido queda como "Otro"."""
+    return f"{_ETIQUETAS[campo if campo in CAMPOS_FLEXIBLES else SIN_CAMPO]}: {texto}"
 
 
 def campo_de_flexibilidad(flexibilidad: Flexibilidad) -> str | None:

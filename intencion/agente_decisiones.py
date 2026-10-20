@@ -42,7 +42,7 @@ from decisiones import (
     RespuestaPredicado,
 )
 from intencion import intake
-from intencion.agente import LARGO_NECESIDAD
+from intencion.agente import LARGO_NECESIDAD, descripcion_con_campo
 from intencion.agente import Pregunta as PreguntaAgente
 from intencion.intake import ResultadoIntake, Umbrales
 
@@ -61,6 +61,16 @@ FLEXIBILIDADES: dict[str, tuple[str, str]] = {
     "otra_fecha": ("que la entrega sea en otra fecha que la pedida", "Acepta otra fecha de entrega."),
     "otra_marca": ("otra marca u otro modelo", "Acepta otra marca u otro modelo."),
     "otra_cantidad": ("otra cantidad", "Acepta otra cantidad."),
+}
+# El campo del pedido de cada una: va como etiqueta al principio de la
+# descripción ("Marca: Acepta otra marca u otro modelo.",
+# `intencion.agente.descripcion_con_campo`), que es lo que lee
+# `campos_cambiables()`. Sin la etiqueta, ninguna habilitaba nada.
+CAMPO_DE_FLEXIBILIDAD: dict[str, str] = {
+    "entregas_parciales": "entregas",
+    "otra_fecha": "entregas",
+    "otra_marca": "marca",
+    "otra_cantidad": "cantidad",
 }
 _OPCIONES_FLEX = {
     "dicha": "lo dijo explícitamente",
@@ -202,8 +212,16 @@ def interpretar_contexto(
     flexibilidades = []
     for clave, (_, descripcion) in FLEXIBILIDADES.items():
         opcion, p = intake._elegida(respuestas.get(f"flex_{clave}"))
-        if opcion in ("dicha", "inferida") and p >= umbrales.duda:
-            flexibilidades.append(Flexibilidad(descripcion=descripcion, origen=opcion))
+        if opcion not in ("dicha", "inferida") or p < umbrales.duda:
+            continue
+        # Acá no hay cita textual que comprobar (el modelo solo elige): "dicha"
+        # pide la confianza de lo resuelto. Con duda cuenta como inferida, que
+        # no habilita ningún cambio (`campos_cambiables`).
+        origen = "dicha" if opcion == "dicha" and p >= umbrales.resuelto else "inferida"
+        flexibilidades.append(Flexibilidad(
+            descripcion=descripcion_con_campo(CAMPO_DE_FLEXIBILIDAD[clave], descripcion),
+            origen=origen,
+        ))
     return Contexto(
         pedido=pedido,
         pregunta=primero.pregunta,

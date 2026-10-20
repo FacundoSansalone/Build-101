@@ -201,6 +201,58 @@ def test_cronograma_con_baja_probabilidad_no_entra():
     assert contexto.necesidad_entregas == []
 
 
+def test_las_flexibilidades_dichas_quedan_atadas_a_su_campo():
+    """"me da igual la marca y si llegan unos días después": marca y entregas
+    cambiables (`campos_cambiables` lee la etiqueta "Campo: …")."""
+    from intencion.agente import campo_de_flexibilidad, campos_cambiables
+    from intencion.agente_decisiones import interpretar_contexto
+    from intencion.intake import UMBRALES
+
+    turnos = [Turno(pregunta="¿Para qué?",
+                    respuesta="Para la oficina, me da igual la marca y si llegan unos días después.")]
+    respuestas = {
+        "flex_otra_marca": eleccion("dicha", 0.9),
+        "flex_otra_fecha": eleccion("dicha", 0.9),
+        "flex_otra_cantidad": eleccion("no", 0.9),
+    }
+    contexto = interpretar_contexto(respuestas, PEDIDO, turnos, [], HOY, UMBRALES)
+    assert sorted(campo_de_flexibilidad(f) for f in contexto.flexibilidades) == ["entregas", "marca"]
+    assert campos_cambiables(contexto) == {"entregas", "marca"}
+
+
+@pytest.mark.parametrize(
+    "clave, campo",
+    [("otra_marca", "marca"), ("otra_cantidad", "cantidad"),
+     ("otra_fecha", "entregas"), ("entregas_parciales", "entregas")],
+)
+def test_cada_flexibilidad_tiene_su_campo(clave, campo):
+    from intencion.agente import campo_de_flexibilidad
+    from intencion.agente_decisiones import interpretar_contexto
+    from intencion.intake import UMBRALES
+
+    turnos = [Turno(pregunta="¿Para qué?", respuesta="Para la oficina.")]
+    contexto = interpretar_contexto(
+        {f"flex_{clave}": eleccion("dicha", 0.95)}, PEDIDO, turnos, [], HOY, UMBRALES
+    )
+    (flexibilidad,) = contexto.flexibilidades
+    assert campo_de_flexibilidad(flexibilidad) == campo
+
+
+def test_una_flexibilidad_dicha_con_duda_cuenta_como_inferida():
+    """Sin cita textual (el modelo solo elige), "dicha" pide la confianza de lo
+    resuelto: entre `duda` y `resuelto` es inferida y no habilita cambios."""
+    from intencion.agente import campos_cambiables
+    from intencion.agente_decisiones import interpretar_contexto
+    from intencion.intake import UMBRALES
+
+    turnos = [Turno(pregunta="¿Para qué?", respuesta="Para la oficina, la marca no importa tanto.")]
+    contexto = interpretar_contexto(
+        {"flex_otra_marca": eleccion("dicha", 0.7)}, PEDIDO, turnos, [], HOY, UMBRALES
+    )
+    assert [f.origen for f in contexto.flexibilidades] == ["inferida"]
+    assert campos_cambiables(contexto) == set()
+
+
 def test_armar_contexto_sin_respuesta_es_error():
     with pytest.raises(ValueError):
         AgenteDecisiones(DecisionesFalso()).armar_contexto(PEDIDO, "¿Para qué?", "  ", HOY)
