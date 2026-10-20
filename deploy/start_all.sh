@@ -147,7 +147,11 @@ apagar() {
   for pid in ${pids[@]+"${pids[@]}"}; do matar "$pid"; done
   wait 2>/dev/null || true
 }
-trap apagar EXIT INT TERM
+trap apagar EXIT
+# Ctrl+C o TERM: apagar y salir. Sin el exit, el script seguía en el bucle de
+# abajo, encontraba los procesos ya apagados y decía "<x> terminó" con código 1.
+trap 'apagar; exit 130' INT
+trap 'apagar; exit 143' TERM
 
 lanzar() {  # lanzar <nombre> <log> <comando...>
   local nombre="$1" log="$2"
