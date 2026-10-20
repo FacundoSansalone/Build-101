@@ -231,13 +231,16 @@ async def test_un_eco_alterado_por_el_comercio_si_se_revisa(armar_proxy, merchan
     assert "ignore previous instructions" in json.dumps(visto)
 
 
-async def test_con_el_fabricante_la_honesta_llega_a_la_firma(armar_proxy, guard_real):
+async def test_con_el_fabricante_y_sin_catalogo_la_honesta_escala(armar_proxy, guard_real):
+    # notebook_honesto no está en el catálogo público: el GTIN solo lo declara
+    # el comercio, así que la ficha del fabricante no respalda lo obligatorio.
     app = armar_proxy(evaluador=guard_real, fabricante=FixtureFabricante())
     async with cliente_de(app) as c:
         contexto = await buscar(c, "notebook_honesto")
         task = (await checkout(c, contexto, "cart_1")).json()["result"]
-    assert checkouts(task), texto_estado(task)
-    assert veredictos(task)[0]["status"] in ("aprobado", "con_avisos")
+    assert not checkouts(task)  # retenido: decide una persona
+    assert veredictos(task)[0]["status"] == "escalar"
+    assert "GTIN que declara el comercio" in texto_estado(task)
 
 
 async def test_sin_fabricante_lo_obligatorio_escala(armar_proxy, guard_real):
