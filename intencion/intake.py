@@ -1340,9 +1340,14 @@ def _peor(a: EstadoParametro, b: EstadoParametro) -> EstadoParametro:
 
 
 def _firmeza(resp: Any, u: Umbrales) -> tuple[bool, bool]:
-    """(obligatorio, claro). Sin indicación clara: obligatorio, pero a confirmar."""
+    """(obligatorio, claro). Sin indicación clara: obligatorio, pero a confirmar.
+
+    "Prefiere" afloja lo que se autoriza (el requisito deja de ser
+    obligatorio): cuenta solo con la confianza de lo resuelto. Con duda es
+    como sin indicación, y un atributo queda a confirmar.
+    """
     opcion, p = _elegida(resp)
-    if opcion == "prefiere" and p >= u.duda:
+    if opcion == "prefiere" and p >= u.resuelto:
         return False, True
     if opcion == "exige" and p >= u.duda:
         return True, True

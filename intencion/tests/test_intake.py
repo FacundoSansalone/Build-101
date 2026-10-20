@@ -458,6 +458,26 @@ def test_plazo_preferido_no_es_obligatorio():
     assert entregas.obligatorio is False
 
 
+def test_una_preferencia_dudosa_no_afloja_lo_que_pidio():
+    """"prefiere" con duda (0,60 a 0,80) no vuelve opcional un requisito: sería
+    el modelo aflojando lo autorizado. Queda obligatorio, como sin indicación."""
+    cands = extraer([PEDIDO_COMPLETO], HOY)
+    resp = _respuestas_completas(cands)
+    resp["plazo_firmeza"] = eleccion("plazo_firmeza", "prefiere", 0.62)
+    r = interpretar(resp, cands, CATEGORIAS, 0)
+    entregas = next(q for q in r.requisitos if q.campo == "entregas")
+    assert entregas.obligatorio is True
+    # El plazo sigue resuelto: autorizado aunque el usuario no confirme la ficha.
+    assert entregas in r.requisitos_autorizables(False)
+    # Un atributo, igual: obligatorio y a confirmar.
+    cands = extraer(["running shoes, ideally Adidas"], HOY)
+    resp = {"pide_0": predicado("x", 0.9), "firmeza_0": eleccion("x", "prefiere", 0.7)}
+    r = interpretar(resp, cands, CATEGORIAS, 0)
+    (adidas,) = [q for q in r.requisitos if q.campo == "marca"]
+    assert adidas.obligatorio is True
+    assert _parametro(r, "mencion:marca:adidas").estado == "a_confirmar"
+
+
 def test_fuera_de_catalogo_resuelve_la_categoria_sin_requisito():
     cands = extraer(["una cafetera de cápsulas"], HOY)
     resp = {"categoria": eleccion("categoria", "fuera_de_catalogo", 0.9)}

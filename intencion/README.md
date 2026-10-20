@@ -172,6 +172,10 @@ valor elegido (las opciones que dan el mismo valor se suman):
 | 0,60 a 0,80 | a confirmar | a confirmar |
 | < 0,60, o "no dicho" | faltante: se repregunta | faltante |
 
+"Lo prefiere" vuelve opcional un requisito (el plazo, un atributo): cuenta
+solo con ≥ 0,80. Con menos es como "no dice": obligatorio (un atributo,
+además, a confirmar). El modelo no afloja lo autorizado con una duda.
+
 **Memoria entre turnos** (el turno anterior; si no está en la caché del
 agente, se recalcula):
 

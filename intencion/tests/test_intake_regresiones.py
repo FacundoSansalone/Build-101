@@ -601,6 +601,10 @@ def test_un_plazo_exigido_no_pasa_a_preferido_sin_correccion():
     ahora["corrige_plazo"] = RespuestaPredicado("corrige_plazo", 0.9)
     (entregas,) = [q for q in interpretar(ahora, cands, CATALOGO, 1, anterior=antes).requisitos
                    if q.campo == "entregas"]
+    assert entregas.obligatorio  # corrige, pero "prefiere" con duda no afloja
+    ahora["plazo_firmeza"] = eleccion("plazo_firmeza", "prefiere", 0.9)
+    (entregas,) = [q for q in interpretar(ahora, cands, CATALOGO, 1, anterior=antes).requisitos
+                   if q.campo == "entregas"]
     assert not entregas.obligatorio
 
 
