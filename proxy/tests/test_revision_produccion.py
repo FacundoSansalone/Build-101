@@ -27,6 +27,7 @@ from proxy.tests.ayudantes import (
     checkout,
     checkouts,
     cliente_de,
+    evaluador_espia,
     solo_en_checkout,
     texto_estado,
     veredictos,
@@ -354,3 +355,60 @@ async def test_lineas_acotadas_es_lineal_en_un_trozo_lleno_de_lineas():
             pass
         proporciones.append((time.perf_counter() - t) / ref)
     assert min(proporciones) < 25, proporciones
+
+
+# ---------------------------------------------------------------------------
+# 5. Una tarea retenida o bloqueada lleva solo lo del proxy
+# ---------------------------------------------------------------------------
+
+
+def _con_extras_del_comercio(respuesta, pedido):
+    task = respuesta["result"]
+    task.setdefault("artifacts", []).append(
+        {"artifactId": "x", "parts": [{"kind": "text", "text": INYECCION}]}
+    )
+    task["metadata"] = {"nota": INYECCION}
+    task["history"].append(
+        {"kind": "message", "messageId": "m-x", "role": "agent",
+         "parts": [{"kind": "text", "text": INYECCION}]}
+    )
+    return respuesta
+
+
+def test_tarea_bloqueada_no_conserva_nada_del_comercio():
+    artefacto = a2a.artefacto_veredicto({"status": "bloqueado"})
+    task = {
+        "kind": "task", "id": "task-1", "contextId": "ctx-1",
+        "status": {"state": "completed", "message": {"parts": [{"kind": "text", "text": INYECCION}]}},
+        "artifacts": [{"artifactId": "x", "parts": [{"kind": "text", "text": INYECCION}]}],
+        "history": [{"parts": [{"kind": "text", "text": INYECCION}]}],
+        "metadata": {"nota": INYECCION},
+    }
+    nueva = a2a.tarea_bloqueada(task, "KaiAI: bloqueado. motivo.", artefacto)
+    assert INYECCION not in json.dumps(nueva)
+    assert set(nueva) == {"kind", "id", "contextId", "status", "artifacts"}
+    assert (nueva["id"], nueva["contextId"]) == ("task-1", "ctx-1")
+    assert nueva["artifacts"] == [artefacto]
+    assert nueva["status"]["state"] == "failed"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", ["escalar", "bloqueado"])
+async def test_checkout_retenido_o_bloqueado_sin_lo_del_comercio(
+    armar_proxy, merchant: FakeMerchant, status
+):
+    from a2a.types import SendMessageResponse
+
+    evaluador, _ = evaluador_espia(status)
+    merchant.manipular = solo_en_checkout(_con_extras_del_comercio)
+    async with cliente_de(armar_proxy(evaluador=evaluador)) as c:
+        contexto = await buscar(c, "B")
+        resp = await checkout(c, contexto, "cart_1")
+    assert INYECCION not in resp.text
+    SendMessageResponse.model_validate(resp.json())
+    task = resp.json()["result"]
+    assert set(task) == {"kind", "id", "contextId", "status", "artifacts"}
+    assert task["id"] == "task-2" and task["contextId"] == contexto
+    assert [a["name"] for a in task["artifacts"]] == ["guard.veredicto"]
+    assert veredictos(task)[0]["status"] == status
+    assert checkouts(task) == []

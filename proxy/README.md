@@ -140,9 +140,9 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
 | Veredicto | Al agente | Eventos |
 |---|---|---|
 | `aprobado`, `con_avisos` | Tarea intacta + artefacto aparte `{"guard.veredicto": <versión para el agente>}` | `veredicto`, `reenviado` |
-| `escalar` | **Retenido**: la misma tarea (mismos ids) en `failed`, sin el `ap2.checkout`, con `guard.veredicto` y el texto "KaiAI: escalar. <motivo> El checkout requiere aprobación humana…" | `veredicto`, `bloqueado` con `requiere_aprobacion: true` |
+| `escalar` | **Retenido**: una tarea `failed` con los mismos ids (si son seguros; si no, unos del proxy) y solo lo del proxy: `guard.veredicto` y el texto "KaiAI: escalar. <motivo> El checkout requiere aprobación humana…". Nada más de la tarea del comercio (ni el checkout, ni `history`, `metadata` u otros artefactos) | `veredicto`, `bloqueado` con `requiere_aprobacion: true` |
 | `escalar` + aprobación humana vigente (mismo contexto, cart y monto) | Tarea intacta (checkout byte a byte el del comercio) + `guard.veredicto` | `veredicto`, `reenviado` con `aprobacion_humana: true` |
-| `bloqueado` | Tarea `failed`, sin el checkout, con `guard.veredicto` y "KaiAI: bloqueado. <motivo> No se presenta para firma." | `veredicto`, `bloqueado` |
+| `bloqueado` | Tarea `failed`, igual que la retenida (sin nada del comercio), con `guard.veredicto` y "KaiAI: bloqueado. <motivo> No se presenta para firma." | `veredicto`, `bloqueado` |
 | No se pudo evaluar | Tarea `failed` (la del comercio o una armada por el proxy) con un `guard.veredicto` `bloqueado` y un motivo fijo del proxy | `error`, `bloqueado` |
 
 El texto para el agente es siempre la plantilla fija

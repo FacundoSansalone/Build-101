@@ -304,8 +304,8 @@ dárselo y agrega a la tarea un artefacto con el veredicto:
 | `status` | Qué recibe tu agente | Qué hacés |
 |---|---|---|
 | `aprobado`, `con_avisos` | La tarea intacta, con el `ap2.checkout` del comercio byte a byte | Firmar (con `con_avisos`, mostrale el motivo al usuario) |
-| `escalar` | Tarea `failed`, **sin** el checkout: "requiere aprobación humana" | Mostrarle la evidencia a tu usuario y, si aprueba, ver abajo |
-| `bloqueado` | Tarea `failed`, sin el checkout | No hay nada que firmar. Tu agente puede elegir otro cart |
+| `escalar` | Tarea `failed`, **sin** el checkout ni nada más del comercio (solo el `guard.veredicto` y el texto): "requiere aprobación humana" | Mostrarle la evidencia a tu usuario y, si aprueba, ver abajo |
+| `bloqueado` | Tarea `failed`, sin el checkout ni nada más del comercio | No hay nada que firmar. Tu agente puede elegir otro cart |
 
 **Regla para tu agente: firmá solo si la tarea trae el `ap2.checkout` y el
 `guard.veredicto` dice `aprobado` o `con_avisos`.** El texto de la tarea es

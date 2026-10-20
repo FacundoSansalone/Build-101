@@ -540,27 +540,6 @@ def tarea_con_artefacto(task: dict[str, Any], artefacto: dict[str, Any]) -> dict
     return {**task, "artifacts": [*(task.get("artifacts") or []), artefacto]}
 
 
-def _sin_checkout(artifacts: list[Any]) -> list[Any]:
-    """Saca las partes con ap2.checkout; descarta artefactos que quedan vacíos."""
-    resultado = []
-    for artifact in artifacts:
-        if not isinstance(artifact, dict):
-            resultado.append(artifact)
-            continue
-        parts = [
-            p
-            for p in artifact.get("parts") or []
-            if not (
-                isinstance(p, dict)
-                and isinstance(p.get("data"), dict)
-                and CHECKOUT_KEY in p["data"]
-            )
-        ]
-        if parts:
-            resultado.append({**artifact, "parts": parts})
-    return resultado
-
-
 def _ahora_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -580,21 +559,14 @@ def estado_fallido(texto: str, task_id: str | None, contexto_id: str | None) -> 
 
 
 def tarea_bloqueada(
-    task: dict[str, Any], texto: str, artefacto: dict[str, Any] | None
+    task: dict[str, Any], texto: str, artefacto: dict[str, Any]
 ) -> dict[str, Any]:
-    """La misma tarea (mismos ids), `failed`, sin el checkout y con el motivo."""
-    artifacts = _sin_checkout(task.get("artifacts") or [])
-    if artefacto is not None:
-        artifacts.append(artefacto)
-    nueva = {
-        **task,
-        "status": estado_fallido(texto, task.get("id"), task.get("contextId")),
-    }
-    if artifacts:
-        nueva["artifacts"] = artifacts
-    else:
-        nueva.pop("artifacts", None)
-    return nueva
+    """La tarea retenida o bloqueada: los mismos ids (si son seguros), `failed`,
+    con el motivo y solo el artefacto del veredicto. Nada más de la tarea del
+    comercio (ni el checkout, ni `history`, `metadata` u otros artefactos):
+    el agente no tiene por qué leer texto del comercio en una tarea que no
+    sigue. El agente del sample lee el veredicto de `task.artifacts`."""
+    return tarea_sintetica_bloqueada(task.get("id"), task.get("contextId"), texto, artefacto)
 
 
 def tarea_sintetica_bloqueada(
