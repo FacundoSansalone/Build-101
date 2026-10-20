@@ -42,7 +42,7 @@ from decisiones import (
     RespuestaPredicado,
 )
 from intencion import intake
-from intencion.agente import LARGO_NECESIDAD
+from intencion.agente import LARGO_NECESIDAD, descripcion_con_campo
 from intencion.agente import Pregunta as PreguntaAgente
 from intencion.intake import ResultadoIntake, Umbrales
 
@@ -61,6 +61,16 @@ FLEXIBILIDADES: dict[str, tuple[str, str]] = {
     "otra_fecha": ("que la entrega sea en otra fecha que la pedida", "Acepta otra fecha de entrega."),
     "otra_marca": ("otra marca u otro modelo", "Acepta otra marca u otro modelo."),
     "otra_cantidad": ("otra cantidad", "Acepta otra cantidad."),
+}
+# El campo del pedido de cada una: va como etiqueta al principio de la
+# descripción ("Marca: Acepta otra marca u otro modelo.",
+# `intencion.agente.descripcion_con_campo`), que es lo que lee
+# `campos_cambiables()`. Sin la etiqueta, ninguna habilitaba nada.
+CAMPO_DE_FLEXIBILIDAD: dict[str, str] = {
+    "entregas_parciales": "entregas",
+    "otra_fecha": "entregas",
+    "otra_marca": "marca",
+    "otra_cantidad": "cantidad",
 }
 _OPCIONES_FLEX = {
     "dicha": "lo dijo explícitamente",
@@ -135,6 +145,12 @@ def cronograma_candidato(respuestas: Sequence[str], hoy: date) -> list[tuple[int
     día de la semana no cae antes que la fecha de una cláusula anterior
     (dicho un lunes, "el jueves" de esa frase es el 29, no el 22; ver
     `intake._fechas`).
+
+    Si en una respuesta quedan fechas sin su par ("Hay dos grupos: 10
+    empiezan el lunes y 10 el jueves": dos números en la primera cláusula),
+    esa respuesta no aporta nada: un cronograma a medias (solo 10 el jueves)
+    es más laxo que lo que contó y habilitaría una oferta que no cubre el
+    lunes. Sin cronograma no se cambian cantidad ni entregas.
     """
     pares: list[tuple[int, str, str]] = []
     for texto in respuestas:
@@ -147,6 +163,7 @@ def cronograma_candidato(respuestas: Sequence[str], hoy: date) -> list[tuple[int
             for span, f in intake._fechas(original.lower(), hoy, intake._idioma(original))
             if f is not None
         ]
+        propios: list[tuple[int, str, str]] = []
         inicio = 0
         for a, b in [*(m.span() for m in _SEPARADORES.finditer(original)), (len(original),) * 2]:
             desde, inicio = inicio, b
@@ -156,9 +173,12 @@ def cronograma_candidato(respuestas: Sequence[str], hoy: date) -> list[tuple[int
             cantidades = intake.extraer([clausula], hoy).cantidades
             en_clausula = [f for span, f in fechas if desde <= span[0] < a]
             if len(cantidades) == 1 and len(en_clausula) == 1:
-                par = (cantidades[0].valor, en_clausula[0].isoformat(), clausula.strip())
-                if (par[0], par[1]) not in {(x, y) for x, y, _ in pares}:
-                    pares.append(par)
+                propios.append((cantidades[0].valor, en_clausula[0].isoformat(), clausula.strip()))
+        if len(fechas) > len(propios):
+            continue  # fechas sin su par: el cronograma de esta respuesta queda a medias
+        for par in propios:
+            if (par[0], par[1]) not in {(x, y) for x, y, _ in pares}:
+                pares.append(par)
     return pares[:MAX_CRONOGRAMA]
 
 
@@ -202,8 +222,16 @@ def interpretar_contexto(
     flexibilidades = []
     for clave, (_, descripcion) in FLEXIBILIDADES.items():
         opcion, p = intake._elegida(respuestas.get(f"flex_{clave}"))
-        if opcion in ("dicha", "inferida") and p >= umbrales.duda:
-            flexibilidades.append(Flexibilidad(descripcion=descripcion, origen=opcion))
+        if opcion not in ("dicha", "inferida") or p < umbrales.duda:
+            continue
+        # Acá no hay cita textual que comprobar (el modelo solo elige): "dicha"
+        # pide la confianza de lo resuelto. Con duda cuenta como inferida, que
+        # no habilita ningún cambio (`campos_cambiables`).
+        origen = "dicha" if opcion == "dicha" and p >= umbrales.resuelto else "inferida"
+        flexibilidades.append(Flexibilidad(
+            descripcion=descripcion_con_campo(CAMPO_DE_FLEXIBILIDAD[clave], descripcion),
+            origen=origen,
+        ))
     return Contexto(
         pedido=pedido,
         pregunta=primero.pregunta,

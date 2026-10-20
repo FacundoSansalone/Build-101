@@ -193,6 +193,22 @@ def test_armar_contexto_con_cronograma_invalido_lo_deja_vacio():
     assert contexto.necesidad_entregas == []
 
 
+@pytest.mark.parametrize(
+    "entregas, esperado",
+    [
+        # El modelo se saltea el lunes: el cronograma a medias es más laxo.
+        ([{"cantidad": 10, "fecha": "2026-10-22"}], []),
+        ([{"cantidad": 10, "fecha": "2026-10-19"}, {"cantidad": 10, "fecha": "2026-10-22"}],
+         [(10, "2026-10-19"), (10, "2026-10-22")]),
+    ],
+)
+def test_un_cronograma_con_menos_fechas_que_la_respuesta_se_descarta(entregas, esperado):
+    cliente = ClienteFalso({"necesidad": "x", "necesidad_entregas": entregas, "flexibilidades": []})
+    respuesta = "Hay dos grupos: 10 empiezan el lunes y 10 el jueves."
+    contexto = armar_contexto("20 laptops", "¿Para qué?", respuesta, HOY, cliente)
+    assert [(e.cantidad, e.fecha.isoformat()) for e in contexto.necesidad_entregas] == esperado
+
+
 def test_armar_contexto_sin_respuesta_no_llama_al_modelo():
     cliente = ClienteFalso()
     with pytest.raises(ValueError):

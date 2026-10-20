@@ -43,6 +43,8 @@ las que el código ya aceptó. El código:
 - descarta la propuesta si contradice lo verificable: si la necesidad tiene
   un cronograma ("10 el lunes y 10 el jueves"), la oferta tiene que cubrirlo
   acumulado (`guard.normalizar.cubre_entregas`);
+- descarta el cronograma del modelo si la respuesta nombra más fechas que
+  las que trae: uno a medias es más laxo que lo que contó el usuario;
 - arma la explicación para el usuario (`Oportunidad.por_que`) con una
   **plantilla**: qué cambia, de qué a qué y la necesidad en palabras del
   usuario. No lleva texto del vendedor (de marca, categoría o uso solo dice
@@ -65,7 +67,9 @@ las que el código ya aceptó. El código:
   `origen == "dicha"` atada a cantidad, entregas, marca, categoría, uso o
   talle;
 - cantidad y entregas, si la necesidad tiene un cronograma: la oferta tiene
-  que cubrirlo.
+  que cubrirlo. Si la cantidad cambia solo por el cronograma (el usuario no
+  dijo que puede variar), la oferta trae el total del cronograma, ni más ni
+  menos: "son 20 que entran el lunes" no habilita una oferta de 40.
 
 Una flexibilidad `inferida` no habilita ningún cambio. Precio y moneda (el
 mandato) nunca. Sin respuesta del usuario, ninguno.
@@ -114,11 +118,12 @@ defecto si hay `OPENAI_API_KEY` o `TYPESAFE_API_KEY`
 **Necesarios:** producto (categoría del catálogo, un tipo general de la
 taxonomía de Google, o "fuera del catálogo público"), cantidad, tope de
 precio y moneda, plazo. Además, los atributos que el usuario mencionó
-(marca, talle, memoria, color, inalámbrico…), con si los exige o los
-prefiere. Un producto fuera del catálogo no es un error: la confirmación
-dice que no figura en el catálogo público y que lo que declare el comercio
-se verifica con otras fuentes antes de la firma (lo obligatorio que no se
-pueda verificar, el Guard lo escala).
+(marca, talle, memoria, almacenamiento, color, inalámbrico…), con si los
+exige o los prefiere. Un tamaño de datos sin decir de qué ("16 GB") no se
+adivina, pero no es una cantidad ni un tope. Un producto fuera del catálogo
+no es un error: la confirmación dice que no figura en el catálogo público y
+que lo que declare el comercio se verifica con otras fuentes antes de la
+firma (lo obligatorio que no se pueda verificar, el Guard lo escala).
 
 **Un tipo general es un producto.** "computadoras" no es una categoría del
 catálogo del comercio general (laptops, desktops, tablets…), pero sí de la
@@ -170,6 +175,10 @@ valor elegido (las opciones que dan el mismo valor se suman):
 | 0,60 a 0,80 | a confirmar | a confirmar |
 | < 0,60, o "no dicho" | faltante: se repregunta | faltante |
 
+"Lo prefiere" vuelve opcional un requisito (el plazo, un atributo): cuenta
+solo con ≥ 0,80. Con menos es como "no dice": obligatorio (un atributo,
+además, a confirmar). El modelo no afloja lo autorizado con una duda.
+
 **Memoria entre turnos** (el turno anterior; si no está en la caché del
 agente, se recalcula):
 
@@ -205,13 +214,24 @@ que ella es el de la semana siguiente: dicho un lunes, "10 el lunes y otros
 10 el jueves" es el 26 y el 29, no el 22 (el cronograma usa las fechas de la
 respuesta entera). No se corre entre oraciones, ante una alternativa ("el
 viernes, si no el miércoles") ni por una fecha lejana: ahí queda el próximo,
-del lado estricto. Con decisiones real, "para el lunes" dicho un lunes queda
+del lado estricto. Una oración que sigue la cuenta de la anterior ("Entran 10
+el lunes. Los otros 10 entran el jueves."; también "el resto", "los demás",
+"otros 10") no corta la secuencia. Un día de la semana con su fecha es una sola fecha: "el
+viernes 30 de octubre" no suma el próximo viernes (si el 30 es viernes; si
+no, quedan las dos), "el jueves 29" es el primer jueves 29 desde hoy (este
+mes o el que viene; el 29 no es cantidad ni monto) y "el miércoles de la
+semana que viene" es el de esa semana. "Por la mañana" (o "a la", "de la",
+"en la") no es mañana. Con decisiones real, "para el lunes" dicho un lunes queda
 a veces a confirmar (0,59 a 0,88): es ambiguo, y la confirmación lo muestra.
 
 **El tope:** la pregunta no ofrece los números de cosas ("20 computadoras",
 "10 unidades": un producto de la tabla o una palabra de cantidad después),
 que nunca son el tope. Con "20" entre las opciones, "hasta 20000 USD"
-quedaba en 0,59 con decisiones real; sin ella, 0,80 a 0,95.
+quedaba en 0,59 con decisiones real; sin ella, 0,80 a 0,95. Un precio por
+cosa no es un número de cosas: "800 cada notebook", "100 por teclado" (con
+`cada`, `por`, `c/u`, `per`, `each`, `la` o `el` en el medio) sí se ofrecen.
+Un número pegado a la moneda ("USD20000", "u$s20.000", "20000USD") es un
+monto en esa moneda, como "USD 20000".
 
 **Preguntas:** todas con plantilla (es/en según el pedido); el modelo no
 redacta nada. La primera es el porqué más lo que falte; después, "me falta
@@ -235,7 +255,15 @@ ella.
 **Contexto y oportunidades:** el intake y el contexto de un turno salen de
 una sola llamada. La necesidad son las palabras del usuario; el cronograma
 ("10 el lunes y otros 10 el jueves") y las flexibilidades son juicios sobre
-candidatos del código. La detección de oportunidades se delega en
+candidatos del código. Un par del cronograma es una cantidad y una fecha en
+la misma cláusula; si en una respuesta queda alguna fecha sin su par ("Hay
+dos grupos: 10 empiezan el lunes y 10 el jueves"), esa respuesta no aporta
+cronograma: uno a medias (solo 10 el jueves) habilitaría una oferta que no
+cubre el lunes. Cada flexibilidad lleva la etiqueta de su campo, como
+las de Gemini (otra marca → `Marca: …`, otra cantidad → `Cantidad: …`, otra
+fecha y entregas parciales → `Entregas: …`), y como no hay cita textual que
+comprobar, es `dicha` solo con ≥ 0,80: con menos cuenta como `inferida` y no
+habilita cambios. La detección de oportunidades se delega en
 `AgenteGemini` si hay `GOOGLE_API_KEY`; si no, no hay.
 
 ### Medirlo

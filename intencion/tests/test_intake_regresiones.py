@@ -414,6 +414,28 @@ def test_en_un_mismo_texto_un_dia_que_sigue_no_cae_antes():
 
 
 @pytest.mark.parametrize(
+    "texto",
+    [
+        "Entran 10 el lunes. Los otros 10 entran el jueves.",
+        "Entran 10 el lunes. Otros 10 entran el jueves.",
+        "Entran 10 el lunes. El resto, el jueves.",
+        "Entran 10 el lunes; las demás llegan el jueves.",
+    ],
+)
+def test_la_oracion_que_sigue_la_cuenta_no_corta_la_secuencia(texto):
+    """"Los otros 10…" sigue contando lo de la oración anterior: dicho un
+    lunes, el jueves es el 29 (después de ese lunes), no el 22."""
+    assert _fechas(texto, LUNES) == ["2026-10-26", "2026-10-29"]
+
+
+def test_el_cronograma_en_dos_oraciones_sigue_el_orden():
+    texto = "Entran 10 el lunes. Los otros 10 entran el jueves."
+    assert [(c, f) for c, f, _ in cronograma_candidato([texto], LUNES)] == [
+        (10, "2026-10-26"), (10, "2026-10-29"),
+    ]
+
+
+@pytest.mark.parametrize(
     "hoy, pares",
     [
         (LUNES, [(10, "2026-10-26"), (10, "2026-10-29")]),
@@ -479,6 +501,23 @@ def test_un_numero_de_cosas_no_se_ofrece_como_tope():
     assert _opciones_precio("20 sillas a 300 cada una") == {20.0, 300.0}
     # Las cantidades siguen siendo cantidades.
     assert 20 in [c.valor for c in extraer([PEDIDO], LUNES).cantidades]
+
+
+@pytest.mark.parametrize(
+    "texto, montos",
+    [
+        ("quiero 3 notebooks, 800 cada notebook, en dolares", {800.0}),
+        ("3 notebooks a 800 por notebook", {800.0}),
+        ("5 teclados, tope 100 por teclado", {100.0}),
+        ("5 keyboards, max 100 per keyboard", {100.0}),
+        ("3 monitores, 300 c/u monitor", {300.0}),
+        ("unas zapatillas, 150 el par de zapatillas", {150.0}),
+    ],
+)
+def test_un_precio_por_cosa_no_es_un_numero_de_cosas(texto, montos):
+    """"800 cada notebook" es un precio: si se marcaba como número de cosas,
+    el tope no se ofrecía y se agotaban las repreguntas sin él."""
+    assert _opciones_precio(texto) == montos
 
 
 def test_las_palabras_de_una_respuesta_precisan_la_categoria_aunque_el_modelo_dude():
@@ -562,7 +601,72 @@ def test_un_plazo_exigido_no_pasa_a_preferido_sin_correccion():
     ahora["corrige_plazo"] = RespuestaPredicado("corrige_plazo", 0.9)
     (entregas,) = [q for q in interpretar(ahora, cands, CATALOGO, 1, anterior=antes).requisitos
                    if q.campo == "entregas"]
+    assert entregas.obligatorio  # corrige, pero "prefiere" con duda no afloja
+    ahora["plazo_firmeza"] = eleccion("plazo_firmeza", "prefiere", 0.9)
+    (entregas,) = [q for q in interpretar(ahora, cands, CATALOGO, 1, anterior=antes).requisitos
+                   if q.campo == "entregas"]
     assert not entregas.obligatorio
+
+
+MARTES = date(2026, 10, 20)
+
+
+@pytest.mark.parametrize(
+    "texto, fechas",
+    [
+        # Un día de la semana pegado a su fecha no es otra fecha (el próximo viernes, 23).
+        ("el viernes 30 de octubre", ["2026-10-30"]),
+        ("el viernes 30/10", ["2026-10-30"]),
+        ("lo necesito para el lunes 2 de noviembre", ["2026-11-02"]),
+        ("para el miércoles 28 de octubre, 4 sillas de oficina", ["2026-10-28"]),
+        ("by Friday, October 30", ["2026-10-30"]),
+        # Con el número del día: el primer jueves 29 desde hoy.
+        ("para el jueves 29", ["2026-10-29"]),
+        ("el lunes 26 a las 9", ["2026-10-26"]),
+        ("by Monday the 2nd", ["2026-11-02"]),
+        # "por la mañana" es una franja del día, no mañana.
+        ("el viernes por la mañana", ["2026-10-23"]),
+        ("a las 9 de la mañana del jueves", ["2026-10-22"]),
+        ("mañana a la mañana", ["2026-10-21"]),
+        # El día de la semana que viene, no el próximo (el 21) ni el viernes de esa semana.
+        ("para el miercoles de la semana que viene, 4 laptops", ["2026-10-28"]),
+        ("el miércoles de la próxima semana", ["2026-10-28"]),
+        ("by Wednesday next week", ["2026-10-28"]),
+    ],
+)
+def test_un_dia_de_la_semana_con_su_fecha_es_una_sola_fecha(texto, fechas):
+    assert _fechas(texto, MARTES) == fechas
+
+
+def test_el_numero_del_dia_no_es_cantidad_ni_monto():
+    cands = extraer(["para el jueves 29, 3 notebooks"], MARTES)
+    assert [c.valor for c in cands.cantidades] == [3]
+    assert 29.0 not in [c.valor for c in cands.montos]
+
+
+def test_un_numero_que_no_es_el_dia_no_se_lo_come_la_fecha():
+    # "10 personas" cuenta personas: el lunes es el próximo y 10, una cantidad.
+    cands = extraer(["entran el lunes 10 personas"], MARTES)
+    assert [c.valor for c in cands.fechas] == ["2026-10-26"]
+    assert 10 in [c.valor for c in cands.cantidades]
+    # Sin un viernes 29 cerca (el 29/10 es jueves), el viernes sigue siendo el próximo.
+    assert _fechas("el viernes 29", MARTES) == ["2026-10-23"]
+    # Un día que no es el de la fecha de al lado, tampoco se pierde.
+    assert _fechas("lo necesito el lunes, el 30/10 no hay nadie", MARTES) == ["2026-10-30", "2026-10-26"]
+
+
+@pytest.mark.parametrize(
+    "texto, pares",
+    [
+        ("empiezan 10 el lunes 26 y 10 el jueves 29", [(10, "2026-10-26"), (10, "2026-10-29")]),
+        ("10 el viernes 30 de octubre y 10 el lunes 2 de noviembre",
+         [(10, "2026-10-30"), (10, "2026-11-02")]),
+        ("Entran 10 el lunes por la mañana y 10 el jueves por la tarde",
+         [(10, "2026-10-26"), (10, "2026-10-29")]),
+    ],
+)
+def test_el_cronograma_con_el_dia_y_su_fecha(texto, pares):
+    assert [(c, f) for c, f, _ in cronograma_candidato([texto], MARTES)] == pares
 
 
 def test_una_fecha_que_no_tiene_que_ver_no_corre_el_dia():

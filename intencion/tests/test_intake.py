@@ -91,6 +91,24 @@ def test_encuentra_los_montos(texto, esperado):
     assert esperado in [c.valor for c in extraer([texto], HOY).montos]
 
 
+@pytest.mark.parametrize(
+    "texto, monto, codigo",
+    [
+        ("5 notebooks, presupuesto USD20000", 20000.0, "USD"),
+        ("5 notebooks hasta u$s20.000", 20000.0, "USD"),
+        ("max US$1500", 1500.0, "USD"),
+        ("hasta 20000USD", 20000.0, "USD"),
+        ("hasta EUR900", 900.0, "EUR"),
+        ("hasta ARS80.000", 80000.0, "ARS"),
+    ],
+)
+def test_un_numero_pegado_a_la_moneda_es_un_monto(texto, monto, codigo):
+    cands = extraer([texto], HOY)
+    assert monto in [c.valor for c in cands.montos]
+    assert monto not in [c.valor for c in cands.cantidades]  # es dinero
+    assert codigo in cands.monedas_dichas
+
+
 def test_signo_pesos_solo_es_ambiguo_y_us_no():
     assert extraer(["hasta $150"], HOY).simbolo_ambiguo is True
     explicito = extraer(["hasta US$ 150"], HOY)
@@ -197,6 +215,33 @@ def test_encuentra_las_menciones():
     assert (pantalla.valor, pantalla.unidad) == (14, "in")
     color = _mencion(cands, "atributo:color")
     assert color.valor == "negro"
+
+
+@pytest.mark.parametrize(
+    "texto, valor, unidad",
+    [
+        ("notebook con SSD de 512 GB y 16 GB de RAM, hasta 900 USD", 512, "GB"),
+        ("un disco de 1 TB", 1, "TB"),
+        ("con disco SSD de 1TB", 1, "TB"),
+        ("almacenamiento de 256 GB", 256, "GB"),
+        ("a laptop with storage of 512 GB", 512, "GB"),
+    ],
+)
+def test_almacenamiento_con_la_palabra_antes_del_numero(texto, valor, unidad):
+    cands = extraer([texto], HOY)
+    disco = _mencion(cands, "atributo:almacenamiento")
+    assert (disco.valor, disco.unidad, disco.operador) == (valor, unidad, "minimo")
+    assert valor not in [c.valor for c in cands.cantidades]
+    assert float(valor) not in [c.valor for c in cands.montos]
+
+
+def test_gb_sin_decir_de_que_no_es_cantidad_ni_monto():
+    """"16 GB" sin decir si es RAM o disco: no se adivina el atributo, pero
+    tampoco es una cantidad ni un tope."""
+    cands = extraer(["una notebook con 16 GB hasta 1200 USD"], HOY)
+    assert 16 not in [c.valor for c in cands.cantidades]
+    assert 16.0 not in [c.valor for c in cands.montos]
+    assert not any(m.campo == "atributo" for m in cands.menciones)
 
 
 def test_menciones_de_auriculares_en_ingles():
@@ -456,6 +501,26 @@ def test_plazo_preferido_no_es_obligatorio():
     resp["plazo_firmeza"] = eleccion("plazo_firmeza", "prefiere", 0.9)
     entregas = next(q for q in interpretar(resp, cands, CATEGORIAS, 0).requisitos if q.campo == "entregas")
     assert entregas.obligatorio is False
+
+
+def test_una_preferencia_dudosa_no_afloja_lo_que_pidio():
+    """"prefiere" con duda (0,60 a 0,80) no vuelve opcional un requisito: sería
+    el modelo aflojando lo autorizado. Queda obligatorio, como sin indicación."""
+    cands = extraer([PEDIDO_COMPLETO], HOY)
+    resp = _respuestas_completas(cands)
+    resp["plazo_firmeza"] = eleccion("plazo_firmeza", "prefiere", 0.62)
+    r = interpretar(resp, cands, CATEGORIAS, 0)
+    entregas = next(q for q in r.requisitos if q.campo == "entregas")
+    assert entregas.obligatorio is True
+    # El plazo sigue resuelto: autorizado aunque el usuario no confirme la ficha.
+    assert entregas in r.requisitos_autorizables(False)
+    # Un atributo, igual: obligatorio y a confirmar.
+    cands = extraer(["running shoes, ideally Adidas"], HOY)
+    resp = {"pide_0": predicado("x", 0.9), "firmeza_0": eleccion("x", "prefiere", 0.7)}
+    r = interpretar(resp, cands, CATEGORIAS, 0)
+    (adidas,) = [q for q in r.requisitos if q.campo == "marca"]
+    assert adidas.obligatorio is True
+    assert _parametro(r, "mencion:marca:adidas").estado == "a_confirmar"
 
 
 def test_fuera_de_catalogo_resuelve_la_categoria_sin_requisito():

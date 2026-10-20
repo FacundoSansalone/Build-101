@@ -379,8 +379,23 @@ _P_SEMANA_PROX = re.compile(
 _P_FIN_MES = re.compile(r"\b(?:fin(?:es|ales)?\s+de(?:l)?\s+mes|end\s+of\s+(?:the\s+)?month)\b")
 _P_PASADO = re.compile(r"\b(?:pasado\s+manana|day\s+after\s+tomorrow)\b")
 _P_MANANA = re.compile(r"\b(?:manana|tomorrow)\b")
+# "por la mañana", "a las 9 de la mañana": una franja del día, no mañana.
+_P_FRANJA = re.compile(r"\b(?:por|a|de|en)\s+la\s+$")
 _P_HOY = re.compile(r"\b(?:hoy|today)\b")
 _P_DIA = re.compile(rf"\b({_DIAS_RE})\b")
+# Un día de la semana con el número del día ("el jueves 29", "Monday the 2nd").
+_P_DIA_NUMERO = re.compile(
+    rf"\b({_DIAS_RE}),?\s+(?:the\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\b(?![/:.,]\d)"
+)
+# Lo que dice que ese número no es el día: una hora o algo que se cuenta.
+_P_NO_ES_DIA = re.compile(r"^\s*(?:hs|h|hrs|horas|am|pm|mas|otros|otras|more)\b")
+# El día de la semana que viene ("el miércoles de la semana que viene").
+_P_DIA_SEMANA_PROX = re.compile(
+    rf"\b({_DIAS_RE})\s+(?:de\s+)?(?:la\s+semana\s+que\s+viene|la\s+proxima\s+semana"
+    rf"|la\s+semana\s+proxima|(?:of\s+)?next\s+week)\b"
+)
+# Entre un día de la semana y su fecha ("el viernes 30 de octubre", "Friday, October 30").
+_P_HASTA_LA_FECHA = re.compile(r"[\s,]*(?:el\s+|the\s+)?")
 
 
 def _fecha_sin_anio(hoy: date, mes: int, dia: int) -> date | None:
@@ -415,11 +430,40 @@ def _proximo_dia(hoy: date, dia_semana: int) -> date:
     return hoy + timedelta(days=((dia_semana - hoy.weekday() - 1) % 7) + 1)
 
 
+def _dia_con_numero(hoy: date, dia_semana: int, numero: int) -> date | None:
+    """"el jueves 29": el primer jueves 29 desde hoy, este mes o el que viene.
+    None si no hay (el número no es el día: "el viernes 29" con el 29 jueves)."""
+    anio, mes = hoy.year, hoy.month
+    for _ in range(2):
+        try:
+            f = date(anio, mes, numero)
+        except ValueError:
+            f = None
+        if f is not None and f >= hoy and f.weekday() == dia_semana:
+            return f
+        anio, mes = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
+    return None
+
+
 # Entre dos fechas, lo que corta la secuencia: el fin de una oración o una
 # alternativa ("el viernes, si no el miércoles"). "O sea" aclara, no es otra.
 _P_CORTA_SECUENCIA = re.compile(
-    r"[.;!?\n](?:\s|$)|\b(?:o(?!\s+sea\b)|u|or|si\s+no|sino|otherwise)\b"
+    r"([.;!?\n])(?:\s|$)|\b(?:o(?!\s+sea\b)|u|or|si\s+no|sino|otherwise)\b"
 )
+# Una oración que sigue la cuenta de la anterior no la corta: "Entran 10 el
+# lunes. Los otros 10 entran el jueves."
+_P_SIGUE_LA_CUENTA = re.compile(
+    rf"\s*(?:los\s+otros|las\s+otras|el\s+resto|los\s+demas|las\s+demas"
+    rf"|(?:otros|otras)\s+(?:\d+|{_CANT_RE})|the\s+other|the\s+rest)\b"
+)
+
+
+def _corta_secuencia(texto: str, desde: int, hasta: int) -> bool:
+    """¿Entre `desde` y `hasta` termina la oración o hay una alternativa?"""
+    for m in _P_CORTA_SECUENCIA.finditer(texto[desde:hasta]):
+        if not (m.group(1) and _P_SIGUE_LA_CUENTA.match(texto, desde + m.end())):
+            return True
+    return False
 
 
 def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int], date | None]]:
@@ -434,7 +478,14 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
     jueves 29, no el 22, que pondría la segunda tanda antes que la primera.
     No se corre entre oraciones, ante una alternativa ("si no") ni por una
     fecha lejana ("el pago vence el 15/12. Lo necesito el lunes."): ahí queda
-    el próximo, del lado estricto (la fecha más temprana).
+    el próximo, del lado estricto (la fecha más temprana). Una oración que
+    sigue la cuenta de la anterior ("Los otros 10…", "El resto…") no corta.
+
+    Un día de la semana con su fecha es una sola fecha: "el viernes 30 de
+    octubre" no suma el próximo viernes (si el 30 es viernes), "el jueves 29"
+    es el primer jueves 29 desde hoy (y el 29 no es una cantidad) y "el
+    miércoles de la semana que viene" es el de esa semana, no el próximo.
+    "Por la mañana" (o "a la", "de la", "en la") no es mañana.
     """
     hallazgos: list[tuple[tuple[int, int], date | None]] = []
     ocupado: list[tuple[int, int]] = []
@@ -465,6 +516,16 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
         agregar(m, _fecha_con_anio(m.group(3), _MESES[m.group(1)], int(m.group(2)), hoy))
     for m in _P_DIA_MES.finditer(texto):
         agregar(m, _fecha_con_anio(None, _MESES[m.group(2)], int(m.group(1)), hoy))
+    explicitas = {span[0]: f for span, f in hallazgos}  # dónde empieza cada fecha con número
+    for m in _P_DIA_NUMERO.finditer(texto):
+        despues = texto[m.end():m.end() + 40]
+        if _P_NO_ES_DIA.match(despues) or _de_cosas(despues):
+            continue  # "el lunes 10 personas": el número cuenta otra cosa
+        f = _dia_con_numero(hoy, _DIAS[m.group(1)], int(m.group(2)))
+        if f is not None:
+            agregar(m, f)
+    for m in _P_DIA_SEMANA_PROX.finditer(texto):
+        agregar(m, _proximo_dia(hoy, 0) + timedelta(days=_DIAS[m.group(1)]))
     for m in _P_RELATIVO.finditer(texto):
         n = _a_entero(m.group(1))
         if n is not None and n > 0:
@@ -481,11 +542,16 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
     for m in _P_PASADO.finditer(texto):
         agregar(m, hoy + timedelta(days=2))
     for m in _P_MANANA.finditer(texto):
-        agregar(m, hoy + timedelta(days=1))
+        if not _P_FRANJA.search(texto[max(0, m.start() - 12):m.start()]):
+            agregar(m, hoy + timedelta(days=1))
     for m in _P_HOY.finditer(texto):
         agregar(m, hoy)
     for m in _P_DIA.finditer(texto):
-        if agregar(m, _proximo_dia(hoy, _DIAS[m.group(1)])):
+        dia = _DIAS[m.group(1)]
+        pegada = explicitas.get(_P_HASTA_LA_FECHA.match(texto, m.end()).end())
+        if pegada is not None and pegada.weekday() == dia:
+            continue  # "el viernes 30 de octubre": ya está la fecha
+        if agregar(m, _proximo_dia(hoy, dia)):
             spans_dia.add(m.span())
     # En el orden del texto: un día de la semana no cae antes que lo anterior.
     ajustadas: dict[tuple[int, int], date | None] = {}
@@ -494,7 +560,7 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
     for span, f in sorted(hallazgos, key=lambda h: h[0][0]):
         if (f is not None and span in spans_dia and limite is not None and f < limite
                 and (limite - f).days <= 6
-                and not _P_CORTA_SECUENCIA.search(texto[fin_limite:span[0]])):
+                and not _corta_secuencia(texto, fin_limite, span[0])):
             f += timedelta(days=7)
         ajustadas[span] = f
         if f is not None and f >= hoy and (limite is None or f >= limite):
@@ -506,6 +572,13 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
 # -- números, montos y monedas ----------------------------------------------------
 
 _P_NUMERO = re.compile(r"(?<![\w.,])(\d[\d.,]*\d|\d)(?![\d])")
+# Un número pegado a la moneda ("USD20000", "u$s20.000", "20000USD"): se
+# separa con un espacio y lo leen las mismas reglas que "USD 20000".
+_P_PEGADO = re.compile(
+    r"(?<=\b(?:usd|ars|eur|brl|mxn|gbp))(?=\d)|(?<=u\$s|us\$|u\$d)(?=\d)|(?<=r\$)(?=\d)"
+    r"|(?<=\d)(?=(?:usd|ars|eur|brl|mxn|gbp)\b)",
+    re.IGNORECASE,
+)
 _P_MULTIPLICADOR = re.compile(
     r"^\s*(k|mil|lucas|thousand|millon(?:es)?|millions?)\b"
 )
@@ -524,10 +597,15 @@ _COSAS = frozenset(
 )
 
 
+# Entre el número y la cosa: es un precio por cosa ("800 cada notebook", "100
+# por teclado", "150 el par"), no un número de cosas.
+_POR_COSA = frozenset("cada por c per each la el".split())
+
+
 def _de_cosas(despues: str) -> bool:
     """¿El número cuenta cosas? ("20 computadoras", "10 unidades")."""
     m = _P_SIGUE.match(despues)
-    if m is None:
+    if m is None or m.group(1) in _POR_COSA:
         return False
     if m.group(1) in _COSAS:
         return True
@@ -592,6 +670,14 @@ _P_RAM = re.compile(
 _P_DISCO = re.compile(
     r"\b(\d{1,4})\s*(gb|tb)\s+(?:de\s+)?(?:disco\s+)?(?:ssd|hdd|disco|almacenamiento|storage)\b"
 )
+# Con la palabra antes: "SSD de 512 GB", "disco de 1 TB", "storage of 512 GB".
+_P_DISCO_ANTES = re.compile(
+    r"\b(?:ssd|hdd|disco(?:\s+(?:ssd|hdd|rigido|duro|solido))?|almacenamiento|storage)"
+    r"\s+(?:de\s+|of\s+)?(\d{1,4})\s*(gb|tb)\b"
+)
+# Un tamaño de datos sin decir de qué ("16 GB"): no se adivina el atributo,
+# pero el número no es una cantidad ni un monto.
+_P_DATOS = re.compile(r"\b\d{1,4}(?:[.,]\d+)?\s*(?:gb|tb|mb|gigas?|teras?)\b")
 _P_PANTALLA = re.compile(r"\b(\d{1,2}(?:[.,]\d)?)\s*(?:\"|”|''|pulgadas|pulg\b|-?inch(?:es)?\b)")
 _COLORES = {
     "negro": "negro", "negra": "negro", "negros": "negro", "negras": "negro",
@@ -630,10 +716,11 @@ def _menciones(texto: str, original: str) -> tuple[list[Mencion], list[tuple[int
         menciones.append(Mencion("atributo:memoria_ram", "atributo", "minimo",
                                  int(m.group(1) or m.group(2)), frase(m), "GB", "memoria_ram"))
         spans.append(m.span())
-    for m in _P_DISCO.finditer(texto):
+    for m in [*_P_DISCO.finditer(texto), *_P_DISCO_ANTES.finditer(texto)]:
         menciones.append(Mencion("atributo:almacenamiento", "atributo", "minimo", int(m.group(1)),
                                  frase(m), m.group(2).upper(), "almacenamiento"))
         spans.append(m.span())
+    spans.extend(m.span() for m in _P_DATOS.finditer(texto))
     for m in _P_PANTALLA.finditer(texto):
         n = float(m.group(1).replace(",", "."))
         menciones.append(Mencion("atributo:pantalla", "atributo", "igual",
@@ -691,7 +778,7 @@ def extraer(textos: Sequence[str], hoy: date) -> Candidatos:
     vistas_fecha: set[str] = set()
 
     for crudo in textos:
-        original = _sin_tildes((crudo or "")[:LARGO_TEXTO])
+        original = _P_PEGADO.sub(" ", _sin_tildes((crudo or "")[:LARGO_TEXTO]))
         texto = original.lower()
 
         # Fechas primero: sus números no son cantidades ni montos.
@@ -1269,9 +1356,14 @@ def _peor(a: EstadoParametro, b: EstadoParametro) -> EstadoParametro:
 
 
 def _firmeza(resp: Any, u: Umbrales) -> tuple[bool, bool]:
-    """(obligatorio, claro). Sin indicación clara: obligatorio, pero a confirmar."""
+    """(obligatorio, claro). Sin indicación clara: obligatorio, pero a confirmar.
+
+    "Prefiere" afloja lo que se autoriza (el requisito deja de ser
+    obligatorio): cuenta solo con la confianza de lo resuelto. Con duda es
+    como sin indicación, y un atributo queda a confirmar.
+    """
     opcion, p = _elegida(resp)
-    if opcion == "prefiere" and p >= u.duda:
+    if opcion == "prefiere" and p >= u.resuelto:
         return False, True
     if opcion == "exige" and p >= u.duda:
         return True, True
