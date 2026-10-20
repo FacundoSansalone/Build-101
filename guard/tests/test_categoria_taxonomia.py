@@ -312,7 +312,9 @@ def test_el_fabricante_respalda_la_categoria_y_queda_rotulado(ahora):
         "fabricante", gtin=GTIN_LP, datos={"brand": "Lumen", "categoria_taxonomia": LAPTOPS},
         fixture=True, fuente="fixture",
     )
-    veredicto = evaluar(_ficha(COMPUTERS), vistas, "cart_1", con_fuentes({}, [fabricante]), ahora=ahora)
+    # El catálogo publica el GTIN del SKU (no la categoría): ata la ficha del fabricante.
+    catalogo = con_fuentes({"LP-14": {"sku": "LP-14", "gtin": GTIN_LP}}, [fabricante])
+    veredicto = evaluar(_ficha(COMPUTERS), vistas, "cart_1", catalogo, ahora=ahora)
     chequeo = _categoria(veredicto)
     assert chequeo.resultado == "ok"
     assert chequeo.origen == "fabricante"

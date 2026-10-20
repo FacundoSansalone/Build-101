@@ -8,14 +8,15 @@ Sin esquema por categoría: un atributo es un nombre (schema.org, como
   (MB/GB/TB decimales; MiB/GiB/TiB binarios), longitud (mm/cm/m/in), masa
   (g/kg/lb/oz) y tiempo (s/min/h), con los nombres comunes y los códigos
   UN/CEFACT de schema.org (`E34` = GB, `CMT` = cm, `KGM` = kg...). Una unidad
-  desconocida solo se compara con la misma unidad;
-- enumerado (`igual` con texto, sin mayúsculas ni acentos);
+  desconocida solo se compara con la misma unidad, y los bits (`Gb`, `kb`,
+  con la `b` en minúscula) no son bytes;
+- enumerado (`igual` con texto, sin mayúsculas ni tildes, en cualquier alfabeto);
 - conjunto (`incluye`: todos los pedidos están en lo ofrecido);
 - booleano (`igual` con `true`/`false`; acepta Y/N, sí/no, yes/no).
 
 Si no se puede comparar (falta el dato, dimensiones distintas, unidad de un
-solo lado, texto que no es número), el resultado es None: el chequeo escala
-el obligatorio. Los nombres se canonicalizan con un vocabulario chico de
+solo lado, texto que no es número o con separador de miles ambiguo, como
+"1,500 g"), el resultado es None: el chequeo escala el obligatorio. Los nombres se canonicalizan con un vocabulario chico de
 sinónimos (incluye los nombres de Icecat): no es un mapa de categorías.
 """
 
@@ -200,18 +201,55 @@ _UNIDADES: dict[str, tuple[str, float]] = {
 # Tolerancia relativa cuando hay que convertir (35,6 cm publicados ≈ 14").
 TOLERANCIA_CONVERSION = 0.005
 _TOLERANCIA_MISMA_UNIDAD = 1e-9
-_NUMERO_CON_UNIDAD = re.compile(r"^\s*(-?\d+(?:[.,]\d+)?)\s*([^\d\s][^\d]{0,15})?\s*$")
+_NUMERO_CON_UNIDAD = re.compile(r"^\s*(-?\d[\d.,]*)\s*([^\d\s][^\d]{0,15})?\s*$")
+
+# Números escritos como texto. "1,500" y "1.500" son 1500 en un país y 1,5 en
+# otro: un grupo de miles sin otro separador no se interpreta. Con un solo
+# separador que no agrupa miles ("1,5", "0.500", "12,3456") es el decimal; con
+# los dos separadores, solo la forma inequívoca (miles de a tres y un decimal).
+_SIN_SEPARADOR = re.compile(r"-?\d+")
+_MILES_AMBIGUOS = re.compile(r"-?[1-9]\d{0,2}([.,])\d{3}(?:\1\d{3})*")
+_CON_DECIMAL = re.compile(r"-?\d+[.,]\d+")
+_MILES_Y_DECIMAL = {
+    ",": re.compile(r"-?\d{1,3}(?:,\d{3})+\.\d+"),   # 1,234.5
+    ".": re.compile(r"-?\d{1,3}(?:\.\d{3})+,\d+"),   # 1.234,5
+}
+
+
+def _numero_en_texto(texto: str) -> float | None:
+    """"1,5" → 1,5; "1,234.5" y "1.234,5" → 1234,5; "1,500" o "1.500" → None."""
+    if _SIN_SEPARADOR.fullmatch(texto):
+        return float(texto)
+    if _MILES_AMBIGUOS.fullmatch(texto):
+        return None
+    if _CON_DECIMAL.fullmatch(texto):
+        return float(texto.replace(",", "."))
+    for miles, patron in _MILES_Y_DECIMAL.items():
+        if patron.fullmatch(texto):
+            return float(texto.replace(miles, "").replace(",", "."))
+    return None
+
+
+def _clave_unidad(unidad: str) -> str:
+    """La unidad sin mayúsculas, salvo que importen: una unidad de datos con
+    la `b` final en minúscula es de bits ("Gb", "kb", "b"), no de bytes ("GB",
+    "kB", "KiB", "byte"), y queda como una unidad desconocida."""
+    limpia = unidad.strip().rstrip(".")
+    clave = limpia.casefold()
+    if limpia.endswith("b") and clave in _DIMENSIONES["datos"]:
+        return f"bits:{clave}"
+    return clave
 
 
 def unidad_conocida(unidad: str | None) -> bool:
-    return unidad is not None and unidad.strip().casefold().rstrip(".") in _UNIDADES
+    return unidad is not None and _clave_unidad(unidad) in _UNIDADES
 
 
 def _unidad(unidad: str | None) -> tuple[str, float] | None:
     """(dimensión, factor a la unidad base). Una desconocida es su propia dimensión."""
     if unidad is None:
         return None
-    clave = unidad.strip().casefold().rstrip(".")
+    clave = _clave_unidad(unidad)
     return _UNIDADES.get(clave, (f"unidad:{clave}", 1.0))
 
 
@@ -219,12 +257,15 @@ def _cantidad(valor: Any, unidad: str | None) -> tuple[float, tuple[str, float] 
     """(número, unidad normalizada) o None si no es un número."""
     if isinstance(valor, bool):
         return None
-    como_numero = numero(valor)
-    if como_numero is None and isinstance(valor, str) and unidad is None:
+    if isinstance(valor, str):
+        # "16", "1,5 kg", "16GB". Con la unidad aparte, el texto es solo el número.
         coincidencia = _NUMERO_CON_UNIDAD.match(valor)
-        if coincidencia:
-            como_numero = float(coincidencia.group(1).replace(",", "."))
-            unidad = coincidencia.group(2)
+        if coincidencia is None or (coincidencia.group(2) is not None and unidad is not None):
+            return None
+        como_numero = _numero_en_texto(coincidencia.group(1))
+        unidad = coincidencia.group(2) or unidad
+    else:
+        como_numero = numero(valor)
     if como_numero is None or not math.isfinite(como_numero):
         return None
     return como_numero, _unidad(unidad)
@@ -269,8 +310,23 @@ def como_booleano(valor: Any) -> bool | None:
     return None
 
 
+def _sin_tildes_latinas(texto: str) -> str:
+    """Saca las marcas de las letras latinas ("Básquet" → "Basquet") y deja las
+    de otros alfabetos ("й" no es "и" ni "ガ" es "カ")."""
+    letras: list[str] = []
+    for c in unicodedata.normalize("NFKD", texto):
+        if unicodedata.combining(c) and letras and letras[-1].isascii():
+            continue
+        letras.append(c)
+    return unicodedata.normalize("NFKC", "".join(letras))
+
+
 def _texto(valor: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", _sin_acentos(str(valor)).casefold()).strip()
+    """Enumerado para comparar: sin mayúsculas ni tildes, con las letras de
+    cualquier alfabeto y la puntuación (`-`, `_`, espacios) como un espacio.
+    Un texto sin letras ni dígitos se compara tal cual (sin mayúsculas)."""
+    crudo = unicodedata.normalize("NFKC", _sin_tildes_latinas(str(valor)).casefold())
+    return re.sub(r"[\W_]+", " ", crudo).strip() or crudo.strip()
 
 
 def _iguales_escalares(a: Any, b: Any) -> bool:

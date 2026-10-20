@@ -24,7 +24,7 @@ el recibo referencia). **Ningún texto del comercio llega a `motivo` ni a
 | `ficha.py` | `ficha_desde_intent()`: `Ficha.desde_intent()` + `intent.attributes` + `google_product_category` |
 | `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, cantidad sin autorizar, evidencia y política. Publica lo que sabe chequear: `CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS` (todo el contrato, con `atributo` y `minimo`); el intake los lee para armar la ficha autorizada |
 | `categorias.py` | Categoría de la taxonomía de Google con jerarquía: la oferta tiene que caer en la rama de `Ficha.categoria_taxonomia`. El árbol (subconjunto del repo) se carga una vez al importar; sin árbol, escala |
-| `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección. La categoría y "una unidad" cuentan como obligatorios implícitos |
+| `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección. La categoría y "una unidad" cuentan como obligatorios implícitos; lo que se cumple solo según el fabricante de un GTIN sin atar desempata antes que los preferidos |
 | `checkout.py` | `ap2.checkout` firmado: decodifica el payload del JWT (sin verificar la firma), recalcula `checkout_hash`, lo ata al cart evaluado y exige que sea coherente consigo mismo (`line_items`, `exp`, `iat`) |
 | `recibo.py` | Arma el `Recibo` (sin I/O) y lo firma/verifica (JWS compacto ES256); clave PEM y JWK |
 | `textos.py` | `acotar()` (sin caracteres de control, 80 caracteres) y `moneda_legible()` para no interpolar texto del comercio |
@@ -114,9 +114,9 @@ ES256 del comercio: no hay clave pública; AP2 la verifica después) y compara:
 | `currency` firmada vs la del cart; la del data part vs la firmada | `escalar`; fuera de la moneda obligatoria `bloquea` |
 | `merchant.id` firmado vs `politica.comercios_aprobados` | fuera `bloquea`; faltante `escalar`; aprobado pero distinto de `comercio_id` `escalar` |
 | `line_items` firmados: Σ `item.price × quantity` vs total firmado; el `totals` type `total` de cada línea (si lo trae) vs su `price × quantity`; `price` número ≥ 0 y `quantity` entero ≥ 1 | `integridad` `bloquea` (el JWT se contradice a sí mismo o es ilegible) |
-| `exp` vs `ahora` (`exp <= ahora` venció) | `mandato` `escalar` |
+| `exp` vs `ahora` (`exp <= ahora` venció; con decimales, el segundo entero anterior) | `mandato` `escalar` |
 | `iat` vs `ahora` (más de 5 minutos en el futuro) | `integridad` `escalar` |
-| `exp` o `iat` que no son enteros (texto, decimal, `true`, `null`…) | `integridad` `bloquea` |
+| `exp` o `iat` que no son NumericDate (RFC 7519: entero o decimal finito; texto, `true`, `null`, NaN…) | `integridad` `bloquea` |
 | JWT ilegible: no 3 segmentos, base64/JSON inválido, encabezado que no es ES256, firma que no mide 64 bytes, sin `totals` o sin un único total numérico > 0 | `bloquea` |
 
 El `recibo.checkout_hash` es el hash recalculado. Sin `checkout` no se agrega
@@ -199,8 +199,14 @@ solo declarado).
   verifican solo las fuentes por SKU (página, catálogo, comprador): el
   fabricante se busca por GTIN y no puede verificarlo. Si una fuente por SKU
   dice otro GTIN, `contradicho` (escala) y el fabricante se busca con el de
-  la fuente. Sin fuente por SKU, el GTIN queda como aviso: es la declaración
-  del comercio que ata la oferta al producto.
+  la fuente. Sin fuente por SKU, el GTIN queda como aviso y nada lo ata a lo
+  que se vende (puede ser el de otro producto): la ficha del fabricante de
+  ese GTIN sigue desmintiendo lo declarado (un obligatorio que no cumple
+  `bloquea`), pero no confirma un obligatorio (`escalar`, ver
+  `verificador.fabricante_sin_atar`). En el ranking, lo que se cumple solo
+  según esa ficha no cuenta como cumplido: desempata antes que los
+  preferidos, para que la oferta que el fabricante desmiente no quede
+  primera ni "domine".
 - Se verifican los atributos que pide la ficha (por nombre; los nombres que
   inventa el comercio no llegan a ningún texto).
 - Un campo que no declara el comercio ni tiene ninguna fuente (talles de una
@@ -214,11 +220,13 @@ solo declarado).
   de la oferta se verifica además contra las fuentes, como cualquier campo.
 
 Escenarios de `world/` (`fixtures/etapa2/`), con la ficha del fabricante y
-sin catálogo público para esos productos: la honesta da `con_avisos` (SKU y
-precio sin catálogo; la categoría, dentro de la rama pero solo declarada, es
-otro aviso), el ataque `bloqueado` (`memoria_ram 8 GB no cumple el
-obligatorio (mínimo 16 GB)`; `cancelacion_ruido (no) no cumple el
-obligatorio (sí)`). Sin ninguna fuente, lo obligatorio escala.
+sin catálogo público para esos productos: la honesta da `escalar` (el GTIN
+solo lo declara el comercio, así que sus obligatorios no tienen respaldo y
+decide una persona; sigue primera en el ranking), el ataque `bloqueado`
+(`memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)`;
+`cancelacion_ruido (no) no cumple el obligatorio (sí)`). Con el GTIN en el
+catálogo (como el comercio general), el fabricante respalda. Sin ninguna
+fuente, lo obligatorio escala.
 `notebook_dato_falso` es el mismo dato falso **sin inyección** (el filtro no
 tiene nada que ver): el Guard no lee texto libre y lo bloquea igual.
 
@@ -376,10 +384,12 @@ veredicto = veredicto.model_copy(update={"recibo": firmar_recibo(veredicto.recib
   nunca `verificado`, y no se completa con el dato público. Si es un
   preferido, es un aviso; como la elegida no lo demuestra, otra oferta igual
   en lo demostrado y más barata la domina (`escalar`).
-- **Obligatorio respaldado solo por lo declarado** (SKU fuera del catálogo o
-  dato que el catálogo no publica) → `escalar`. Un no obligatorio sigue en
-  `aviso`. En el ranking, un obligatorio cuenta solo con respaldo: una oferta
-  inverificable no desplaza (ni "domina") a una verificada.
+- **Obligatorio respaldado solo por lo declarado** (SKU fuera del catálogo,
+  dato que el catálogo no publica, o confirmado solo por la ficha del
+  fabricante de un GTIN que ninguna fuente por SKU ata) → `escalar`. Un no
+  obligatorio sigue en `aviso`. En el ranking, un obligatorio cuenta solo con
+  respaldo: una oferta inverificable no desplaza (ni "domina") a una
+  verificada.
 - **Ficha sin tope de precio obligatorio válido, sin moneda obligatoria o sin
   confirmar** → chequeo `mandato` (origen `ficha`) `escalar`.
 - **Comercio no identificado** (`comercio_id` vacío) → `escalar`, también con
@@ -400,8 +410,8 @@ veredicto = veredicto.model_copy(update={"recibo": firmar_recibo(veredicto.recib
   suman el total firmado → `bloquea` (el objeto firmado se contradice: no hay
   dato que falte, hay uno que miente); `exp` vencido → `escalar` (el checkout
   puede haber sido legítimo; un humano decide o el comercio emite otro);
-  `exp`/`iat` que no son enteros → `bloquea`, igual que el resto de un JWT
-  ilegible. Un entero que no entra en un float (`10**400`) cuenta como
+  `exp`/`iat` que no son números (NumericDate: entero o decimal finito) →
+  `bloquea`, igual que el resto de un JWT ilegible. Un entero que no entra en un float (`10**400`) cuenta como
   monto inválido (`normalizar.numero`) en vez de lanzar.
 - **Recibo**: `id = "rcb-" + sha256(entradas)` (ficha, ofertas sin texto
   libre, descartes, elegido, comercio, política, `checkout_hash`, `emitido`).

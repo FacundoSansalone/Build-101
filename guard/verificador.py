@@ -24,6 +24,11 @@ compara con el precio por la cantidad (`total_publico`).
 Categorías variadas: el GTIN (solo contra fuentes por SKU: el fabricante se
 busca por GTIN y no puede verificarlo), la categoría de la taxonomía de
 Google y los atributos que pide la ficha (`atributos`, por nombre).
+
+Un GTIN que solo declara el comercio puede ser el de otro producto: la ficha
+del fabricante de ese GTIN contradice lo declarado (eso sigue valiendo), pero
+no lo confirma (`fabricante_sin_atar`): sin una fuente por SKU que ate el
+GTIN, el obligatorio escala.
 """
 
 from __future__ import annotations
@@ -215,6 +220,31 @@ def sku_publico(oferta: Oferta) -> str | None:
     """El SKU si está en una fuente pública (un valor de esa fuente); si no, None."""
     evidencia = oferta.evidencia.get("sku")
     return oferta.sku if evidencia is not None and evidencia.estado == "verificado" else None
+
+
+def gtin_atado(oferta: Oferta) -> bool:
+    """¿El GTIN con que se buscó al fabricante es el de lo que se vende?
+
+    Sí si lo ata una fuente por SKU: el comercio no declaró GTIN (el
+    fabricante se buscó con el de la fuente por SKU) o el que declaró
+    coincide con ella (evidencia `gtin` verificada). Uno que solo declara el
+    comercio puede ser el de otro producto.
+    """
+    if oferta.gtin is None:
+        return True
+    evidencia = oferta.evidencia.get("gtin")
+    return evidencia is not None and evidencia.estado == "verificado"
+
+
+def fabricante_sin_atar(evidencia: Evidencia | None, oferta: Oferta) -> bool:
+    """La evidencia salió de la ficha del fabricante de un GTIN que ninguna
+    fuente por SKU ata a la oferta: dice cómo es ese GTIN, no lo que se vende.
+    No confirma lo declarado (no respalda un obligatorio)."""
+    return (
+        evidencia is not None
+        and evidencia.origen_usado == "fabricante"
+        and not gtin_atado(oferta)
+    )
 
 
 def acotar_atributo(valor: ValorAtributo | None) -> dict | None:

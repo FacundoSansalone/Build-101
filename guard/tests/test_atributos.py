@@ -192,6 +192,87 @@ def test_booleanos_enumerados_y_conjuntos(observado, operador, valor, esperado):
     assert comparar(observado, operador, valor, None) is esperado
 
 
+@pytest.mark.parametrize(
+    ("observado", "operador", "valor", "unidad", "esperado"),
+    [
+        # "1,500" y "1.500" son 1500 o 1,5 según el país: no se interpretan
+        (V("1,500 g"), "maximo", 1, "kg", None),
+        (V("1.500 g"), "maximo", 1, "kg", None),
+        (V("1,500,000 g"), "maximo", 1, "kg", None),
+        (V("1.500", "g"), "maximo", 1, "kg", None),
+        (V("1,000 GB"), "igual", 1, "TB", None),
+        # un solo separador que no agrupa miles: decimal
+        (V("1,5 kg"), "maximo", 1.5, "kg", True),
+        (V("1.5 kg"), "maximo", 1.5, "kg", True),
+        (V("1,5 kg"), "minimo", 1.6, "kg", False),
+        (V("0,500 kg"), "maximo", 1, "kg", True),   # un grupo de miles no empieza con 0
+        (V("1500 g"), "maximo", 1, "kg", False),
+        # miles y decimales con separadores distintos: solo si es inequívoco
+        (V("1,234.5 g"), "igual", 1234.5, "g", True),
+        (V("1.234,5 g"), "igual", 1234.5, "g", True),
+        (V("1.23,4 g"), "igual", 123.4, "g", None),
+        (V("1,2.3 g"), "igual", 12.3, "g", None),
+        (V("1.234.5 g"), "igual", 1234.5, "g", None),
+    ],
+)
+def test_numeros_con_separadores_de_miles(observado, operador, valor, unidad, esperado):
+    assert comparar(observado, operador, valor, unidad) is esperado
+
+
+@pytest.mark.parametrize(
+    ("observado", "operador", "valor", "unidad", "esperado"),
+    [
+        # la `b` final en minúscula es de bits: otra dimensión, no se compara con bytes
+        (V(16, "Gb"), "minimo", 16, "GB", None),
+        (V(16, "gb"), "minimo", 16, "GB", None),
+        (V(8, "kb"), "minimo", 8, "KB", None),
+        (V(8000, "Mb"), "igual", 1, "MB", None),
+        (V(8, "b"), "igual", 1, "B", None),
+        (V("16Gb"), "minimo", 16, "GB", None),
+        (V(16, "GB"), "minimo", 16, "Gb", None),       # el pedido en bits
+        (V(16, "Gb"), "minimo", 16, "Gb", True),       # la misma unidad de bits
+        # formas inequívocas de bytes y códigos UN/CEFACT
+        (V(16, "kB"), "igual", 16000, "B", True),
+        (V(16, "KB"), "igual", 16, "kB", True),
+        (V(1, "KiB"), "igual", 1024, "B", True),
+        (V(1, "byte"), "igual", 1, "B", True),
+        (V(1, "AD"), "igual", 1, "B", True),
+        (V(1, "4L"), "igual", 1, "MB", True),
+        (V(16, "E34"), "igual", 16, "GB", True),
+        (V(1, "2P"), "igual", 1, "kB", True),
+    ],
+)
+def test_bits_no_son_bytes(observado, operador, valor, unidad, esperado):
+    assert comparar(observado, operador, valor, unidad) is esperado
+
+
+def test_bits_no_se_convierten_a_bytes_al_mostrar():
+    assert formatear_en_unidad(V(16, "Gb"), "GB") == "16 Gb"
+
+
+@pytest.mark.parametrize(
+    ("observado", "valor", "esperado"),
+    [
+        # letras de cualquier alfabeto: no se borran
+        ("черный", "белый", False),
+        ("黑色", "白色", False),
+        ("黑色", "黑色", True),
+        ("Черный", "черный", True),     # sin mayúsculas
+        ("ガ", "カ", False),             # la marca de sonorización no es una tilde
+        ("😀", "😎", False),             # sin letras: se compara el texto
+        ("ＵＳＢ-Ｃ", "usb c", True),     # ancho completo (NFKC)
+        ("USB_C", "usb c", True),        # `_` separa como `-` y el espacio
+        # el castellano sigue sin tildes
+        ("Básquet", "basquet", True),
+        ("Año", "ano", True),
+        ("USB-C", "USBC", False),
+    ],
+)
+def test_enumerados_en_cualquier_alfabeto(observado, valor, esperado):
+    assert comparar(V(observado), "igual", valor) is esperado
+    assert iguales_atributo(V(observado), V(valor)) is esperado
+
+
 def test_iguales_atributo_para_la_evidencia():
     assert iguales_atributo(V(16, "GB"), V("16", "E34")) is True
     assert iguales_atributo(V(14, "in"), V(35.6, "cm")) is True

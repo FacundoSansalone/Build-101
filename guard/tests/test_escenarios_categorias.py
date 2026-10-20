@@ -1,10 +1,12 @@
 """Escenarios de otras categorías exportados por world/ (fixtures/etapa2/).
 
 Notebooks y auriculares, honesto y malicioso. El comercio no publica esos
-productos en su catálogo público (el catálogo no siempre existe): la fuente
-independiente de los atributos es la ficha del fabricante por GTIN
-(`fixtures/fabricante/`, rotulada como fixture). Sin ninguna fuente, lo
-obligatorio escala.
+productos en su catálogo público (el catálogo no siempre existe): la única
+fuente independiente es la ficha del fabricante del GTIN que declara el
+comercio (`fixtures/fabricante/`, rotulada como fixture). Esa ficha desmiente
+lo declarado (el ataque se bloquea), pero no confirma un obligatorio: sin una
+fuente por SKU que ate el GTIN, puede ser el de otro producto, así que la
+honesta escala a una persona. Sin ninguna fuente, lo obligatorio escala.
 """
 
 import json
@@ -58,16 +60,19 @@ def test_el_catalogo_publico_no_lista_esos_productos(categoria):
 
 
 @pytest.mark.parametrize("categoria", CATEGORIAS)
-def test_con_el_fabricante_la_honesta_llega_a_la_firma(categoria, ahora):
+def test_con_el_fabricante_y_sin_catalogo_la_honesta_escala(categoria, ahora):
     nombre = f"{categoria}_honesto"
     mejor = _esperado(nombre, "best_cart_id")
     veredicto = _evaluar(nombre, mejor, True, ahora)
-    # SKU, precio, categoría y uso sin catálogo son avisos; ningún obligatorio escala.
-    assert veredicto.status == "con_avisos", veredicto.motivo
+    # El GTIN solo lo declara el comercio: los obligatorios escalan, nada se bloquea.
+    assert veredicto.status == "escalar", veredicto.motivo
     assert veredicto.ranking[0] == mejor
+    assert _chequeo(veredicto, "integridad", "cart_id").resultado == "ok"
     cumplimiento = [c for c in veredicto.chequeos if c.tipo == "cumplimiento"]
-    assert cumplimiento and all(c.resultado in ("ok", "aviso") for c in cumplimiento)
-    assert all(c.origen == "fabricante" for c in cumplimiento if c.campo.startswith("atributo:"))
+    assert cumplimiento and all(c.resultado != "bloquea" for c in cumplimiento)
+    atributos = [c for c in cumplimiento if c.campo.startswith("atributo:")]
+    assert atributos and all(c.origen == "fabricante" for c in atributos)
+    assert any(c.resultado == "escalar" and "GTIN" in c.detalle for c in atributos)
 
 
 @pytest.mark.parametrize("categoria", CATEGORIAS)
