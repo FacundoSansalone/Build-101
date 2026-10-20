@@ -8,7 +8,10 @@
 #   - cloudflared rápido (trycloudflare.com, sin cuenta). Necesita salida al
 #     puerto 7844 de Cloudflare.
 #   - pinggy (SSH por el 443, sin cuenta): para redes que solo dejan salir por
-#     el 443. El túnel gratis dura 60 minutos: el script lo vuelve a abrir solo.
+#     el 443. El túnel gratis dura 60 minutos: a los 55 (TUNEL_RENOVAR_S) el
+#     script abre otro, apunta Vercel al nuevo y recién después corta el viejo
+#     (TUNEL_GRACIA_S, 30 s). Si pinggy no da dos a la vez, espera a que se
+#     corte el viejo y abre otro (queda una ventana de ~1-2 min sin túnel).
 #   auto usa cloudflared si el 7844 está abierto y, si no, pinggy.
 #
 # Los dos cambian de URL en cada arranque. El script la lee, reescribe
@@ -55,7 +58,10 @@ TUNEL_PREFIJO="$(tr -d '\r\n' < "$SECRETOS/TUNEL_PREFIJO.txt")" PYTHONUTF8=1 \
   "$PY" deploy/vercel/tunel_router.py --puerto "$PUERTO" > .logs/tunel_router.log 2>&1 &
 PIDS+=($!)
 
-# Espera en el log $1 una URL que cumpla $2 (regex) y la deja en DOMINIO.
+vivo() { kill -0 "$1" 2>/dev/null; }
+
+# Espera en el log $1 una URL que cumpla $2 (regex) y la deja en DOMINIO; si
+# el proceso $3 (opcional) termina sin darla, no espera más.
 # Nunca la del panel de pinggy (dashboard.pinggy.io) ni la API con la que
 # cloudflared pide el túnel (https://api.trycloudflare.com, sale en el log si
 # falla): esas no son el túnel.
@@ -64,6 +70,7 @@ esperar_url() {
   for _ in $(seq 1 60); do
     DOMINIO="$(grep -oE "$2" "$1" | grep -vE 'dashboard|//api\.' | head -1 || true)"
     [ -n "$DOMINIO" ] && return 0
+    if [ -n "${3:-}" ] && ! vivo "$3"; then return 1; fi
     sleep 1
   done
   return 1
@@ -130,19 +137,75 @@ fi
 
 [ "$TUNEL" = pinggy ] || { echo "TUNEL tiene que ser auto, cloudflared o pinggy."; exit 1; }
 command -v ssh > /dev/null || { echo "Falta ssh (OpenSSH)."; exit 1; }
-while true; do
+# El túnel gratis dura 60 min. A los TUNEL_RENOVAR_S (55 min) se abre otro,
+# se apunta Vercel al nuevo y recién después (TUNEL_GRACIA_S, para lo que
+# estaba en vuelo) se corta el viejo: Vercel no queda apuntando a un túnel
+# muerto mientras redespliega. Si pinggy no da un segundo túnel a la vez, se
+# sigue con el viejo hasta que se corte y ahí se abre otro (con esa ventana).
+# Si el túnel se corta antes (red, suspensión), se abre otro en el momento.
+RENOVAR="${TUNEL_RENOVAR_S:-3300}"
+GRACIA="${TUNEL_GRACIA_S:-30}"
+ahora() { date +%s; }
+podar() {  # saca de PIDS los que ya terminaron (su pid se puede reusar)
+  local p vivos=()
+  for p in ${PIDS[@]+"${PIDS[@]}"}; do
+    if vivo "$p"; then vivos+=("$p"); fi
+  done
+  PIDS=(${vivos[@]+"${vivos[@]}"})
+}
+abrir_pinggy() {  # abrir_pinggy <log>: deja el pid en SSH y la hora en ABIERTO
+  podar
   ssh -p 443 -T -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SECRETOS/../pinggy_known_hosts" \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
-    -R0:127.0.0.1:"$PUERTO" a.pinggy.io > .logs/pinggy.log 2>&1 &
+    -R0:127.0.0.1:"$PUERTO" a.pinggy.io > "$1" 2>&1 &
   SSH=$!
-  PIDS+=($SSH)
-  if esperar_url .logs/pinggy.log 'https://[a-z0-9.-]+\.pinggy\.(net|link|online)'; then
+  ABIERTO="$(ahora)"
+  PIDS+=("$SSH")
+}
+ACTUAL=""     # el túnel al que apunta Vercel
+ABIERTO_ACTUAL=0
+ANTERIOR=""   # el reemplazado: se corta pasada la gracia
+n=0
+while true; do
+  n=$((n + 1))
+  LOG=".logs/pinggy-$((n % 2)).log"  # dos a la vez durante el relevo
+  abrir_pinggy "$LOG"
+  if esperar_url "$LOG" 'https://[a-z0-9.-]+\.pinggy\.(net|link|online)' "$SSH"; then
     apuntar_vercel || exit 1
-    echo "Listo. El túnel gratis dura 60 min: al cortarse, lo vuelvo a abrir solo. Ctrl+C para cortar."
+    ANTERIOR="$ACTUAL"
+    ACTUAL="$SSH"
+    ABIERTO_ACTUAL="$ABIERTO"
+    APUNTADO="$(ahora)"
+    echo "Listo. El túnel gratis dura 60 min: a los $((RENOVAR / 60)) min abro otro y recién después corto este. Ctrl+C para cortar."
   else
-    echo "pinggy no dio una URL (ver .logs/pinggy.log)."
+    echo "pinggy no dio una URL (ver $LOG)."
+    kill "$SSH" 2>/dev/null || true
+    if [ -n "$ACTUAL" ] && vivo "$ACTUAL"; then
+      echo "Sigo con el túnel actual hasta que se corte."
+      wait "$ACTUAL" || true
+    fi
+    ACTUAL=""
+    echo "$(date +%H:%M:%S) el túnel se cortó; lo vuelvo a abrir…"
+    sleep 3
+    continue
   fi
-  wait "$SSH" || true
-  echo "$(date +%H:%M:%S) el túnel se cortó; lo vuelvo a abrir…"
-  sleep 3
+  # Hasta que se corte o toque renovarlo.
+  while vivo "$ACTUAL" && [ $(($(ahora) - ABIERTO_ACTUAL)) -lt "$RENOVAR" ]; do
+    if [ -n "$ANTERIOR" ] && [ $(($(ahora) - APUNTADO)) -ge "$GRACIA" ]; then
+      kill "$ANTERIOR" 2>/dev/null || true
+      ANTERIOR=""
+    fi
+    sleep 5
+  done
+  if [ -n "$ANTERIOR" ]; then
+    kill "$ANTERIOR" 2>/dev/null || true
+    ANTERIOR=""
+  fi
+  if vivo "$ACTUAL"; then
+    echo "$(date +%H:%M:%S) el túnel vence pronto: abro otro antes de cortarlo…"
+  else
+    echo "$(date +%H:%M:%S) el túnel se cortó; lo vuelvo a abrir…"
+    ACTUAL=""
+    sleep 3
+  fi
 done
