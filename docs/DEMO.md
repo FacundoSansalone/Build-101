@@ -398,6 +398,12 @@ por el proxy, la intención retendría cada búsqueda esperando el porqué) y
   Zento, 0/10). Para mostrar el momento de respaldo hace falta el pedido con
   "Comprá la más barata que cumpla." (ver el guion corto).
 - Siempre "de 100% a 0% en 10 corridas, en esta medición", nunca "0% siempre".
+- **Desde el 2026-10-20** la ficha del fabricante solo respalda un obligatorio
+  si el GTIN está atado a la oferta por una fuente que el comercio no
+  controla (el catálogo público). `notebook_honesto` y `auriculares_honesto`
+  no están en el catálogo: su GTIN solo lo declara el comercio, así que lo
+  obligatorio pasa de `con_avisos` a `escalar`. El comercio general publica
+  el GTIN en su catálogo y no cambia.
 
 ### Filtro e intake (muestras chicas)
 
