@@ -219,6 +219,29 @@ def test_numeros_con_separadores_de_miles(observado, operador, valor, unidad, es
     assert comparar(observado, operador, valor, unidad) is esperado
 
 
+@pytest.mark.parametrize(
+    ("observado", "valor", "esperado"),
+    [
+        # letras de cualquier alfabeto: no se borran
+        ("черный", "белый", False),
+        ("黑色", "白色", False),
+        ("黑色", "黑色", True),
+        ("Черный", "черный", True),     # sin mayúsculas
+        ("ガ", "カ", False),             # la marca de sonorización no es una tilde
+        ("😀", "😎", False),             # sin letras: se compara el texto
+        ("ＵＳＢ-Ｃ", "usb c", True),     # ancho completo (NFKC)
+        ("USB_C", "usb c", True),        # `_` separa como `-` y el espacio
+        # el castellano sigue sin tildes
+        ("Básquet", "basquet", True),
+        ("Año", "ano", True),
+        ("USB-C", "USBC", False),
+    ],
+)
+def test_enumerados_en_cualquier_alfabeto(observado, valor, esperado):
+    assert comparar(V(observado), "igual", valor) is esperado
+    assert iguales_atributo(V(observado), V(valor)) is esperado
+
+
 def test_iguales_atributo_para_la_evidencia():
     assert iguales_atributo(V(16, "GB"), V("16", "E34")) is True
     assert iguales_atributo(V(14, "in"), V(35.6, "cm")) is True

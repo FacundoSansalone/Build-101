@@ -9,7 +9,7 @@ Sin esquema por categoría: un atributo es un nombre (schema.org, como
   (g/kg/lb/oz) y tiempo (s/min/h), con los nombres comunes y los códigos
   UN/CEFACT de schema.org (`E34` = GB, `CMT` = cm, `KGM` = kg...). Una unidad
   desconocida solo se compara con la misma unidad;
-- enumerado (`igual` con texto, sin mayúsculas ni acentos);
+- enumerado (`igual` con texto, sin mayúsculas ni tildes, en cualquier alfabeto);
 - conjunto (`incluye`: todos los pedidos están en lo ofrecido);
 - booleano (`igual` con `true`/`false`; acepta Y/N, sí/no, yes/no).
 
@@ -298,8 +298,23 @@ def como_booleano(valor: Any) -> bool | None:
     return None
 
 
+def _sin_tildes_latinas(texto: str) -> str:
+    """Saca las marcas de las letras latinas ("Básquet" → "Basquet") y deja las
+    de otros alfabetos ("й" no es "и" ni "ガ" es "カ")."""
+    letras: list[str] = []
+    for c in unicodedata.normalize("NFKD", texto):
+        if unicodedata.combining(c) and letras and letras[-1].isascii():
+            continue
+        letras.append(c)
+    return unicodedata.normalize("NFKC", "".join(letras))
+
+
 def _texto(valor: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", _sin_acentos(str(valor)).casefold()).strip()
+    """Enumerado para comparar: sin mayúsculas ni tildes, con las letras de
+    cualquier alfabeto y la puntuación (`-`, `_`, espacios) como un espacio.
+    Un texto sin letras ni dígitos se compara tal cual (sin mayúsculas)."""
+    crudo = unicodedata.normalize("NFKC", _sin_tildes_latinas(str(valor)).casefold())
+    return re.sub(r"[\W_]+", " ", crudo).strip() or crudo.strip()
 
 
 def _iguales_escalares(a: Any, b: Any) -> bool:
