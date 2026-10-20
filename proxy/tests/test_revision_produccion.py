@@ -627,3 +627,27 @@ async def test_las_esperas_del_intake_reservan_tiempo_para_el_comercio(
     # 100 s de la llamada - 20 de margen - 30 para el comercio = 50 (antes, 80).
     segundos = (vence - datetime.now(timezone.utc)).total_seconds()
     assert 40 < segundos <= 50, segundos
+
+
+# ---------------------------------------------------------------------------
+# 9. Categoría de la ficha: sin relación de rama, mandan las palabras del pedido
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("propuesta", "textos", "esperado"),
+    [
+        # "notebooks" (Laptops, 328) contra "Desktop Computers" (325): hermanas.
+        ("325", ["20 notebooks para la oficina"], "328"),
+        ("305", ["una notebook"], "328"),  # monitores: otra rama
+        # Con relación de rama, la más específica (como siempre).
+        ("278", ["una notebook"], "328"),
+        ("328", ["una computadora"], "328"),
+        # Sin palabras que nombren una categoría, la del clasificador.
+        ("325", ["algo para la oficina"], "325"),
+    ],
+)
+def test_categoria_sin_relacion_de_rama_mandan_las_palabras(propuesta, textos, esperado):
+    from proxy.fuentes import categoria_de_la_ficha
+
+    assert categoria_de_la_ficha(propuesta, textos) == esperado

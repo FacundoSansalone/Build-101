@@ -254,11 +254,11 @@ def test_ruta_categoria_es_el_texto_del_arbol():
         # El pedido manda sobre las respuestas ("para la notebook" no cambia
         # que lo que se compra es un monitor).
         (None, ["un monitor", "para conectarlo a la notebook del trabajo"], MONITORES),
-        # El clasificador manda; si las palabras son más específicas dentro de
-        # su rama, esas.
+        # En la misma rama, la más específica; sin relación de rama, las
+        # palabras del pedido (lo que se compra).
         (COMPUTADORAS, ["una notebook"], LAPTOPS),
         (LAPTOPS, ["una computadora"], LAPTOPS),
-        (MONITORES, ["una notebook"], MONITORES),
+        (MONITORES, ["una notebook"], LAPTOPS),
         # Un ID que no está en el árbol (o no es un ID) no se usa.
         ("999999999", ["una notebook"], LAPTOPS),
         ("Laptops", ["una notebook"], LAPTOPS),
@@ -354,7 +354,7 @@ async def test_sin_clasificador_la_categoria_sale_de_las_palabras(armar_proxy, c
     ("categoria", "falla", "esperada"),
     [
         (COMPUTADORAS, False, LAPTOPS),  # las palabras son más específicas en su rama
-        (MONITORES, False, MONITORES),  # el clasificador manda
+        (MONITORES, False, LAPTOPS),  # otra rama: mandan las palabras del pedido
         (None, False, LAPTOPS),  # no devolvió nada
         ("999999999", False, LAPTOPS),  # un ID fuera del árbol
         (COMPUTADORAS, True, LAPTOPS),  # falló

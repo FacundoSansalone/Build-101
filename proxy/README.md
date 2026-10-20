@@ -333,8 +333,10 @@ prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
    su propuesta; si no hay, si no devuelve un ID del subconjunto del repo o
    si falla, la de las palabras del pedido (`taxonomia.categoria_por_palabras`,
    tabla determinística; el pedido manda sobre las respuestas). Si las dos
-   están y la de las palabras es más específica dentro de la rama de la
-   propuesta, esa. Los eventos llevan el ID y la ruta del árbol
+   están en la misma rama, la más específica; si no tienen relación de
+   rama, la de las palabras ("notebooks" es Laptops aunque el clasificador
+   proponga Desktop Computers: si no, el Guard escalaba las notebooks de
+   verdad). Los eventos llevan el ID y la ruta del árbol
    (`categoria_ruta`); nada del comercio. Las categorías del catálogo que se
    le ofrecen al intake van primero las del pedido (las de su rama de la
    taxonomía o las que nombra): el intake ofrece como mucho 40.

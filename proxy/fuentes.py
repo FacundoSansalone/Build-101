@@ -115,18 +115,21 @@ def categoria_de_la_ficha(propuesta: Any, textos: Iterable[str]) -> str | None:
 
     `propuesta` es lo que devolvió el clasificador del agente (puede ser
     None o cualquier cosa): solo cuenta un ID del árbol. Si no hay, la de las
-    palabras de `textos`. Si las dos están y la de las palabras es
-    descendiente de la propuesta, la más específica.
+    palabras de `textos`. Si están las dos:
+
+    - en la misma rama, la más específica;
+    - sin relación de rama, la de las palabras: el pedido nombra lo que se
+      compra ("notebooks" es Laptops) y una propuesta de otra rama (Desktop
+      Computers) hacía que el Guard escalara las notebooks de verdad.
     """
     clasificada = _id_del_arbol(propuesta)
     palabras = categoria_nombrada(textos)
-    if clasificada is None:
-        return palabras
-    if palabras is not None and _arbol().es_descendiente(
-        palabras, clasificada, incluir_igual=False
-    ):
-        return palabras
-    return clasificada
+    if clasificada is None or palabras is None:
+        return clasificada or palabras
+    arbol = _arbol()
+    if arbol.es_descendiente(clasificada, palabras):
+        return clasificada  # la propuesta es igual o más específica
+    return palabras  # más específica en la rama, o de otra rama
 
 
 def categorias_para_el_pedido(catalogo: Mapping[str, Any], texto: str) -> list[str]:
