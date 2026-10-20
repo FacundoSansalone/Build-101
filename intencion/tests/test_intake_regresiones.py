@@ -503,6 +503,23 @@ def test_un_numero_de_cosas_no_se_ofrece_como_tope():
     assert 20 in [c.valor for c in extraer([PEDIDO], LUNES).cantidades]
 
 
+@pytest.mark.parametrize(
+    "texto, montos",
+    [
+        ("quiero 3 notebooks, 800 cada notebook, en dolares", {800.0}),
+        ("3 notebooks a 800 por notebook", {800.0}),
+        ("5 teclados, tope 100 por teclado", {100.0}),
+        ("5 keyboards, max 100 per keyboard", {100.0}),
+        ("3 monitores, 300 c/u monitor", {300.0}),
+        ("unas zapatillas, 150 el par de zapatillas", {150.0}),
+    ],
+)
+def test_un_precio_por_cosa_no_es_un_numero_de_cosas(texto, montos):
+    """"800 cada notebook" es un precio: si se marcaba como número de cosas,
+    el tope no se ofrecía y se agotaban las repreguntas sin él."""
+    assert _opciones_precio(texto) == montos
+
+
 def test_las_palabras_de_una_respuesta_precisan_la_categoria_aunque_el_modelo_dude():
     cands0 = extraer([PEDIDO], LUNES)
     antes = interpretar(respuestas_del_log(cands0, 1), cands0, CATALOGO, 0)

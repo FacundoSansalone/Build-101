@@ -220,7 +220,9 @@ a veces a confirmar (0,59 a 0,88): es ambiguo, y la confirmación lo muestra.
 **El tope:** la pregunta no ofrece los números de cosas ("20 computadoras",
 "10 unidades": un producto de la tabla o una palabra de cantidad después),
 que nunca son el tope. Con "20" entre las opciones, "hasta 20000 USD"
-quedaba en 0,59 con decisiones real; sin ella, 0,80 a 0,95.
+quedaba en 0,59 con decisiones real; sin ella, 0,80 a 0,95. Un precio por
+cosa no es un número de cosas: "800 cada notebook", "100 por teclado" (con
+`cada`, `por`, `c/u`, `per`, `each`, `la` o `el` en el medio) sí se ofrecen.
 
 **Preguntas:** todas con plantilla (es/en según el pedido); el modelo no
 redacta nada. La primera es el porqué más lo que falte; después, "me falta

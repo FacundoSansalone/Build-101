@@ -590,10 +590,15 @@ _COSAS = frozenset(
 )
 
 
+# Entre el número y la cosa: es un precio por cosa ("800 cada notebook", "100
+# por teclado", "150 el par"), no un número de cosas.
+_POR_COSA = frozenset("cada por c per each la el".split())
+
+
 def _de_cosas(despues: str) -> bool:
     """¿El número cuenta cosas? ("20 computadoras", "10 unidades")."""
     m = _P_SIGUE.match(despues)
-    if m is None:
+    if m is None or m.group(1) in _POR_COSA:
         return False
     if m.group(1) in _COSAS:
         return True
