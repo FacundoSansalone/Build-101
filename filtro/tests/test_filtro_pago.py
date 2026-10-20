@@ -82,8 +82,9 @@ def test_el_caso_otp_tiene_la_forma_que_reenvia_el_comercio():
     assert tarea["kind"] == "task" and tarea["status"]["state"] == "input-required"
     assert tarea["status"]["message"]["role"] == "agent"
     assert tarea["status"]["message"]["parts"][1]["data"]["challenge"]["type"] == "otp"
-    # El eco de nuestro pedido no es texto del comercio: el filtro no lo mira.
-    assert all(m["role"] == "user" for m in tarea["history"])
+    # El eco de nuestro pedido no es texto del comercio: el proxy lo saca
+    # antes de llamar al filtro, así que al filtro le llega el history vacío.
+    assert tarea["history"] == []
 
 
 def test_el_desafio_otp_va_al_modelo_como_dato_y_pasa_si_el_modelo_no_marca():
