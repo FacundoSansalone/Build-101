@@ -541,6 +541,44 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     estricta y todo texto del comercio con `textContent`. Local:
     `GATEWAY_CONSOLA=1`.
 
+- **Revisión para producción (2026-10-20, ramas `arreglos/*`, a revisar
+  entre los tres).** Seis revisiones por área y corridas de punta a punta con
+  agentes reales; ~50 arreglos con su test. Lo que cambia de comportamiento:
+  - **Guard:** la ficha del fabricante respalda un obligatorio solo si el
+    GTIN está atado a la oferta por una fuente por SKU (un GTIN que solo
+    declara el comercio no alcanza: `notebook_honesto` y
+    `auriculares_honesto`, sin catálogo, escalan). "1,500 g" (miles ambiguo)
+    no se interpreta; "16 Gb" (bits) no son bytes; los textos conservan
+    cualquier alfabeto; los ids de comercio se comparan exactos y no van al
+    motivo; `exp`/`iat` con decimales valen.
+  - **Filtro:** revisa el `history` con cualquier `role` (el eco exacto lo
+    saca el proxy); un JWT solo es opaco si sus partes decodifican como tal;
+    el texto pegado (camelCase, guiones) se parte para revisarlo. Sin falsos
+    positivos con "α7R" ni con publicidad para personas.
+  - **Proxy:** tras un corte, al agente no le llega nada del comercio (ni
+    `id`, `contextId` o `kind`); una tarea retenida o bloqueada lleva solo lo
+    del proxy; del sobre JSON-RPC pasa solo `jsonrpc`, `id` y `result`/`error`;
+    tipos raros del comercio dan un bloqueo limpio, no un 500. "Hoy" con
+    `KAIAI_ZONA_HORARIA` (por defecto Buenos Aires). Sin 30 s para la
+    consulta de oportunidad, no se consulta (pedido literal). La categoría de
+    las palabras del usuario gana si la del clasificador es de otra rama.
+    `/v1/filtrar` y `/v1/evaluar`: 2 en curso por integrador (429). Las
+    cabeceras de la plataforma (`X-Forwarded-*`, `X-Vercel-*`, `CF-*`) no
+    llegan al comercio.
+  - **Intención:** las flexibilidades del camino de decisiones habilitan su
+    campo (con p ≥ 0,80); un cronograma a medias no se arma; el cronograma
+    solo habilita la cantidad que contó el usuario; "prefiere" dudoso no
+    afloja un obligatorio; fechas como "el jueves 29" o "por la mañana".
+  - **Panel:** "sí, pero…" no confirma ni acepta (va como corrección o pide
+    sí/no). Publicado, pide contraseña (`DASHBOARD_ACCESS_TOKEN`, HTTP
+    Basic); `tenki.sh` la genera y no sube `SUPABASE_ACCESS_TOKEN`.
+  - **`world/`:** otra búsqueda de la misma compra sigue en su contexto A2A
+    (nuestro agente no repregunta el porqué); el catálogo público escucha en
+    `127.0.0.1` (`PUBLIC_CATALOG_HOST` para publicarlo).
+  - **Pendiente:** el N+1 de `GET /v1/compras` con varias instancias, la
+    retención de las tablas `gw_*` y el origen del recibo de `/v1/evaluar`
+    (toca `contracts/`).
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh

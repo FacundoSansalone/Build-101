@@ -321,43 +321,38 @@ def leer_pedido(raw: bytes) -> Pedido:
     )
 
 
-def _partes_canonicas(partes: Any) -> list[Any] | None:
-    """Las partes de un mensaje con lo que importa (tipo, texto, datos)."""
-    if not isinstance(partes, list):
-        return None
-    salida = []
-    for parte in partes:
-        if not isinstance(parte, dict):
-            return None
-        salida.append({k: parte.get(k) for k in ("kind", "text", "data") if k in parte})
-    return salida
+# Lo que el servidor A2A le agrega a nuestro pedido al guardarlo en el
+# `history` (medido con el comercio del sample): el resto tiene que ser igual.
+_CLAVES_DEL_SERVIDOR = frozenset({"taskId", "contextId"})
+
+
+def _sin_claves_del_servidor(m: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in m.items() if k not in _CLAVES_DEL_SERVIDOR}
 
 
 def sin_eco_del_pedido(result: Any, mensaje: dict[str, Any] | None) -> Any:
     """`result` sin los mensajes del `history` que son el eco exacto del
-    pedido del comprador: mismo `messageId` y mismas partes que `mensaje`.
+    pedido del comprador: el mismo mensaje que `mensaje`, campo por campo
+    (partes, `metadata`, `extensions`…), salvo el `taskId` y el `contextId`
+    que agrega el servidor.
 
     Es para el filtro de seguridad: ese eco es texto nuestro (el pedido del
     usuario, "Find products…"), no del proveedor. El agente del cliente del
     sample manda `role: agent`, así que el rol no alcanza para reconocerlo. Un
-    mensaje que el comercio alteró (aunque use el mismo `messageId`) no es el
-    eco y se sigue revisando. Devuelve una copia; el original no cambia.
+    mensaje que el comercio alteró (aunque use el mismo `messageId`, o solo
+    le sume un campo) no es el eco y se sigue revisando: todo lo que se
+    reenvía al agente lo vio el filtro. Devuelve una copia; el original no
+    cambia.
     """
     if not isinstance(result, dict) or not isinstance(mensaje, dict):
         return result
     historial = result.get("history")
-    mensaje_id = mensaje.get("messageId")
-    partes = _partes_canonicas(mensaje.get("parts"))
-    if not isinstance(historial, list) or not mensaje_id or partes is None:
+    if not isinstance(historial, list) or not mensaje.get("messageId"):
         return result
+    nuestro = _sin_claves_del_servidor(mensaje)
 
     def es_eco(m: Any) -> bool:
-        return (
-            isinstance(m, dict)
-            and m.get("messageId") == mensaje_id
-            and m.get("role") == mensaje.get("role")
-            and _partes_canonicas(m.get("parts")) == partes
-        )
+        return isinstance(m, dict) and _sin_claves_del_servidor(m) == nuestro
 
     if not any(es_eco(m) for m in historial):
         return result
