@@ -25,8 +25,27 @@ from roles.shopping_agent.remote_agents import merchant_agent_client
 
 # HACKATHON (Pre-Sign Guard): el contexto del comercio de la compra en curso.
 # Lo abre la primera búsqueda y lo cierra el fin de la compra: el recibo del
-# pago o un corte del Guard (búsqueda o checkout bloqueados).
+# pago o un corte del Guard (búsqueda o checkout bloqueados). Vale solo en el
+# mismo turno del agente (`invocation_id`): las búsquedas que el agente hace
+# solo siguen en la compra, y un mensaje nuevo del usuario (puede pedir otra
+# cosa) abre otra, así el Guard nunca verifica con la ficha de otro pedido.
 CONTEXTO_COMPRA_KEY = "guard_contexto_compra"
+
+
+def _contexto_de_la_compra(tool_context: ToolContext) -> str | None:
+  compra = tool_context.state.get(CONTEXTO_COMPRA_KEY)
+  if not isinstance(compra, dict):
+    return None
+  if compra.get("invocacion") != getattr(tool_context, "invocation_id", None):
+    return None
+  return compra.get("contexto")
+
+
+def _seguir_la_compra(tool_context: ToolContext, contexto_id: str) -> None:
+  tool_context.state[CONTEXTO_COMPRA_KEY] = {
+      "contexto": contexto_id,
+      "invocacion": getattr(tool_context, "invocation_id", None),
+  }
 
 
 async def find_products(
@@ -55,8 +74,8 @@ async def find_products(
   # por contexto: con uno nuevo por búsqueda, le volvía a preguntar el porqué
   # al usuario cada vez que el agente buscaba de nuevo.
   builder = A2aMessageBuilder()
-  if tool_context.state.get(CONTEXTO_COMPRA_KEY):
-    builder.set_context_id(tool_context.state[CONTEXTO_COMPRA_KEY])
+  if contexto_compra := _contexto_de_la_compra(tool_context):
+    builder.set_context_id(contexto_compra)
   message = (
       builder
       .add_text("Find products that match the user's request.")
@@ -85,11 +104,11 @@ async def find_products(
           " find_products again for this request. Tell the user the purchase"
           " was stopped for safety."
       )
-    tool_context.state[CONTEXTO_COMPRA_KEY] = task.context_id  # el reintento sigue
+    _seguir_la_compra(tool_context, task.context_id)  # el reintento sigue
     raise RuntimeError(f"Failed to find products: {task.status}")
 
   tool_context.state["shopping_context_id"] = task.context_id
-  tool_context.state[CONTEXTO_COMPRA_KEY] = task.context_id  # HACKATHON
+  _seguir_la_compra(tool_context, task.context_id)  # HACKATHON
   carts = find_canonical_objects(task.artifacts, CART_DATA_KEY, Cart)
   tool_context.state["available_carts"] = [
       c.model_dump(mode="json") for c in carts

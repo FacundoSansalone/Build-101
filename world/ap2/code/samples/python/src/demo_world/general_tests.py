@@ -709,3 +709,18 @@ def test_una_compra_pagada_o_frenada_antes_de_firmar_no_presta_su_contexto(monke
   assert "blocked" in asyncio.run(raiz.create_checkout(contexto))
   asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
   assert comercio.contextos[-1] is None
+
+
+def test_un_mensaje_nuevo_del_usuario_es_otra_compra(monkeypatch):
+  """Las búsquedas que el agente hace solo (el mismo turno) siguen en la
+  compra; con un mensaje nuevo del usuario (otro turno de ADK) la búsqueda
+  abre otro contexto: puede ser otro pedido, y el Guard no tiene que
+  verificarlo con la ficha del anterior."""
+  comercio = _ComercioEnProceso("general")
+  shopper, contexto = _shopper(monkeypatch, comercio)
+  contexto.invocation_id = "turno-1"
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))  # el agente vuelve a buscar
+  contexto.invocation_id = "turno-2"
+  asyncio.run(shopper.find_products(MONITOR, contexto))
+  assert comercio.contextos == [None, "ctx-1", None]
