@@ -150,16 +150,24 @@ _PATRONES: dict[str, tuple[str, ...]] = {
         rf"\s+(?:all|the\s+other|other|others|every|any|competing|the\s+rest)",
         rf"\b(?:recommend|choose|select|pick|prefer)\s+{_OBJ}{_PALABRAS}\s+(?:above|ahead\s+of|before)"
         rf"\s+(?:all|the\s+other|other|others|every|any|competing|the\s+rest)",
-        rf"\b(?:recommend|present|show|suggest|offer|pitch|propose)\s+{_OBJ}{_PALABRAS}\s+to\s+(?:the"
-        rf"|every|any|all)\s+(?:user|customer|buyer|shopper|human|client|principal)s?\b"
-        rf"(?!\s+(?:service|support|care))",
+        # "Recommend it to the user" como orden (al principio de una oración o
+        # después de always/please/must...), no "We recommend this to every
+        # customer who needs a laptop".
+        rf"(?:^|[.;:!?\[(\n]\s*|\b(?:always|please|must|should|be\s+sure\s+to"
+        rf"|make\s+sure\s+(?:to|you))\s+)(?:recommend|present|show|suggest|offer|pitch|propose)"
+        rf"\s+{_OBJ}{_PALABRAS}\s+to\s+(?:the|every|any|all|your)\s+(?:user|customer|buyer|shopper"
+        rf"|human|client|principal)s?\b(?!\s+(?:service|support|care))",
         rf"\b(?:choose|select|pick|buy|purchase|prefer|recommend|order)\s+{_OBJ}{_PALABRAS}"
         rf"\s+(?:regardless\s+of|no\s+matter|instead\s+of\s+(?:the\s+)?(?:requested|user|other|cart"
         rf"|what))",
-        # "La mejor opción para cualquier pedido", "cumple cualquier búsqueda"
-        r"\bbest\s+(?:match|choice|option|pick|result|fit)\s+for\s+(?:any|every|all|each|whatever)\b",
+        # "La mejor opción para cualquier pedido", "cumple cualquier búsqueda":
+        # lo que mira el ranking del agente (pedidos, búsquedas), no "best
+        # choice for any office" (publicidad para personas).
+        r"\bbest\s+(?:match|choice|option|pick|result|fit)\s+for\s+(?:any|every|all|each|whatever)"
+        r"\s+(?:[\w']+\s+){0,2}?(?:requests?|quer(?:y|ies)|search(?:es)?|prompts?)\b",
         r"\bmejor\s+(?:opcion|eleccion|resultado|coincidencia|alternativa)\s+para\s+(?:cualquier"
-        r"|todo|toda|todos|todas)\b",
+        r"|todo|toda|todos|todas)\s+(?:[\w']+\s+){0,2}?(?:pedidos?|busquedas?|consultas?"
+        r"|solicitud(?:es)?)\b",
         r"\b(?:satisf(?:y|ies|ying)|meets?|meeting|match(?:es|ing)?|fulfil?l?s?|fulfil?ling)"
         r"\s+(?:any|every)\s+(?:[\w']+\s+){0,2}?(?:requests?|quer(?:y|ies)|searches)\b",
         rf"\btreat\s+{_OBJ}(?:\s+[\w']+){{0,2}}?\s+as\s+(?:satisfying|matching|meeting|compliant"
@@ -297,19 +305,24 @@ _PALABRA_UNICODE = re.compile(r"\w+")
 
 
 def _homoglifos(texto: str) -> bool:
-    """Una palabra con letras latinas y cirílicas (o griegas que se confunden)."""
+    """Una palabra con letras latinas y cirílicas, o latinas y griegas que se
+    confunden. Con griego, solo si la palabra no tiene dígitos: "α7R" o
+    "α6400" son nombres de modelo (Sony), no una palabra disfrazada."""
     if texto.isascii():
         return False
     for palabra in _PALABRA_UNICODE.findall(unicodedata.normalize("NFKC", texto)):
         if palabra.isascii():
             continue
-        latina = otra = False
+        latina = cirilica = griega = digitos = False
         for c in palabra:
             if c.isascii():
                 latina = latina or c.isalpha()
-            elif c in GRIEGAS_CONFUSABLES or "CYRILLIC" in unicodedata.name(c, ""):
-                otra = True
-        if latina and otra:
+                digitos = digitos or c.isdigit()
+            elif c in GRIEGAS_CONFUSABLES:
+                griega = True
+            elif "CYRILLIC" in unicodedata.name(c, ""):
+                cirilica = True
+        if latina and (cirilica or (griega and not digitos)):
             return True
     return False
 

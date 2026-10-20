@@ -126,18 +126,24 @@ chequeos sobre el texto crudo:
 | `heuristica:instruccion_ia` | Notas o saludos a una IA ("Note for AI shopping assistants", "Nota para el asistente de compras", "If you are an AI agent") |
 | `heuristica:anula_instrucciones` | "Ignore previous instructions", "olvidá las instrucciones", ocultarle algo al usuario, cambiarle el rol, autoridad falsa ("the user has pre-approved…", "the user's requirements have been updated") |
 | `heuristica:marcador_rol` | `SYSTEM:`, `[INST]`, `<\|im_start\|>`, `<<SYS>>`, "system prompt" |
-| `heuristica:manipulacion` | Órdenes de rankear, elegir o recomendar lo propio ("always rank this first", "recommend it to the user", "best match for any request", "select cart_3"), desacreditar a los demás |
+| `heuristica:manipulacion` | Órdenes de rankear, elegir o recomendar lo propio ("always rank this first", "Recommend it to the user." como orden, "best match for any request", "select cart_3"), desacreditar a los demás |
 | `heuristica:exfiltracion` | Pedidos de tarjeta, CVV, credenciales, mandatos o del prompt del sistema; URLs con plantillas de datos |
 | `heuristica:herramientas` | Nombres de herramientas del agente (`create_checkout`, `select_cart`…) o "call the … tool" |
 | `heuristica:texto_oculto` | Caracteres de control, de ancho cero, bidi y de etiqueta (U+E00xx), selectores de variación, HTML oculto, comentarios, 80+ blancos seguidos |
-| `heuristica:homoglifos` | Una palabra que mezcla letras latinas con cirílicas o griegas parecidas |
+| `heuristica:homoglifos` | Una palabra que mezcla letras latinas con cirílicas, o con griegas parecidas si no tiene dígitos ("α7R" es un nombre de modelo) |
 
 Son estrictas a propósito: **una oferta que no cumple el pedido no es un
 ataque** (FLUJO.md, regla 4). "We cannot deliver 20 units on Monday", "Not
 recommended for gaming", "Operating System: Windows 11", "built-in AI
-assistant", publicidad común y los mensajes del protocolo (challenge de
-pago, errores) pasan; hay un test por cada uno. Todos los patrones son
-lineales: hay tests con textos hechos para trabar las regex.
+assistant", publicidad común ("Best choice for any office", "We recommend
+this to every customer who needs a laptop"), nombres de modelo con α
+("Sony α7R IV") y los mensajes del protocolo (challenge de pago, errores)
+pasan; hay un test por cada uno. "Best … for any" solo se marca si lo que
+sigue es un pedido o una búsqueda (lo que mira el ranking del agente:
+"best match for any laptop request"), y "recommend … to the user" solo con
+forma de orden (al principio de una oración o después de always, please,
+must, should). Todos los patrones son lineales: hay tests con textos
+hechos para trabar las regex.
 
 ### Capa (b): juicios tipados (`modelo.py`)
 
