@@ -670,6 +670,14 @@ _P_RAM = re.compile(
 _P_DISCO = re.compile(
     r"\b(\d{1,4})\s*(gb|tb)\s+(?:de\s+)?(?:disco\s+)?(?:ssd|hdd|disco|almacenamiento|storage)\b"
 )
+# Con la palabra antes: "SSD de 512 GB", "disco de 1 TB", "storage of 512 GB".
+_P_DISCO_ANTES = re.compile(
+    r"\b(?:ssd|hdd|disco(?:\s+(?:ssd|hdd|rigido|duro|solido))?|almacenamiento|storage)"
+    r"\s+(?:de\s+|of\s+)?(\d{1,4})\s*(gb|tb)\b"
+)
+# Un tamaño de datos sin decir de qué ("16 GB"): no se adivina el atributo,
+# pero el número no es una cantidad ni un monto.
+_P_DATOS = re.compile(r"\b\d{1,4}(?:[.,]\d+)?\s*(?:gb|tb|mb|gigas?|teras?)\b")
 _P_PANTALLA = re.compile(r"\b(\d{1,2}(?:[.,]\d)?)\s*(?:\"|”|''|pulgadas|pulg\b|-?inch(?:es)?\b)")
 _COLORES = {
     "negro": "negro", "negra": "negro", "negros": "negro", "negras": "negro",
@@ -708,10 +716,11 @@ def _menciones(texto: str, original: str) -> tuple[list[Mencion], list[tuple[int
         menciones.append(Mencion("atributo:memoria_ram", "atributo", "minimo",
                                  int(m.group(1) or m.group(2)), frase(m), "GB", "memoria_ram"))
         spans.append(m.span())
-    for m in _P_DISCO.finditer(texto):
+    for m in [*_P_DISCO.finditer(texto), *_P_DISCO_ANTES.finditer(texto)]:
         menciones.append(Mencion("atributo:almacenamiento", "atributo", "minimo", int(m.group(1)),
                                  frase(m), m.group(2).upper(), "almacenamiento"))
         spans.append(m.span())
+    spans.extend(m.span() for m in _P_DATOS.finditer(texto))
     for m in _P_PANTALLA.finditer(texto):
         n = float(m.group(1).replace(",", "."))
         menciones.append(Mencion("atributo:pantalla", "atributo", "igual",

@@ -217,6 +217,33 @@ def test_encuentra_las_menciones():
     assert color.valor == "negro"
 
 
+@pytest.mark.parametrize(
+    "texto, valor, unidad",
+    [
+        ("notebook con SSD de 512 GB y 16 GB de RAM, hasta 900 USD", 512, "GB"),
+        ("un disco de 1 TB", 1, "TB"),
+        ("con disco SSD de 1TB", 1, "TB"),
+        ("almacenamiento de 256 GB", 256, "GB"),
+        ("a laptop with storage of 512 GB", 512, "GB"),
+    ],
+)
+def test_almacenamiento_con_la_palabra_antes_del_numero(texto, valor, unidad):
+    cands = extraer([texto], HOY)
+    disco = _mencion(cands, "atributo:almacenamiento")
+    assert (disco.valor, disco.unidad, disco.operador) == (valor, unidad, "minimo")
+    assert valor not in [c.valor for c in cands.cantidades]
+    assert float(valor) not in [c.valor for c in cands.montos]
+
+
+def test_gb_sin_decir_de_que_no_es_cantidad_ni_monto():
+    """"16 GB" sin decir si es RAM o disco: no se adivina el atributo, pero
+    tampoco es una cantidad ni un tope."""
+    cands = extraer(["una notebook con 16 GB hasta 1200 USD"], HOY)
+    assert 16 not in [c.valor for c in cands.cantidades]
+    assert 16.0 not in [c.valor for c in cands.montos]
+    assert not any(m.campo == "atributo" for m in cands.menciones)
+
+
 def test_menciones_de_auriculares_en_ingles():
     cands = extraer(["wireless noise cancelling headphones, Sony or Bose, size L"], HOY)
     claves = {m.clave for m in cands.menciones}
