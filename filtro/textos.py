@@ -183,7 +183,8 @@ def _b64_json(segmento: str) -> Any:
 
 def _jwt_compacto(texto: str) -> bool:
     """`cabecera.payload.firma`: cabecera JSON con `alg`, payload objeto JSON
-    y firma base64url (vacía con `alg: none`)."""
+    y firma base64url o vacía (`alg: none`). La firma no se valida más que
+    eso: por eso las heurísticas miran igual los JWT."""
     partes = texto.split(".")
     if len(partes) != 3:
         return False
