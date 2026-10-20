@@ -19,7 +19,7 @@ import re
 import unicodedata
 from collections.abc import Iterable
 
-from filtro.textos import GRIEGAS_CONFUSABLES, normalizar
+from filtro.textos import GRIEGAS_CONFUSABLES, versiones
 
 INSTRUCCION_IA = "heuristica:instruccion_ia"
 ANULA_INSTRUCCIONES = "heuristica:anula_instrucciones"
@@ -32,6 +32,7 @@ HOMOGLIFOS = "heuristica:homoglifos"
 
 # ---------------------------------------------------------------------------
 # Patrones sobre el texto normalizado (minúsculas, sin acentos, `_ - /` = espacio)
+# y, si tiene camelCase, también sobre el texto partido (`textos.versiones`)
 # ---------------------------------------------------------------------------
 
 _QUAL_IA = r"(?:(?:ai|llm|automated|autonomous|shopping|purchasing|buying|procurement|virtual|digital)\s+){0,3}"
@@ -327,9 +328,9 @@ def revisar_texto(texto: str) -> set[str]:
     for codigo, patrones in _CRUDOS.items():
         if codigo not in senales and any(p.search(texto) for p in patrones):
             senales.add(codigo)
-    normal = normalizar(texto)
+    normales = versiones(texto)  # con camelCase, también partido
     for codigo, patrones in _COMPILADOS.items():
-        if codigo not in senales and any(p.search(normal) for p in patrones):
+        if codigo not in senales and any(p.search(n) for n in normales for p in patrones):
             senales.add(codigo)
     return senales
 

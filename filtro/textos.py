@@ -78,16 +78,32 @@ def _un_blanco(m: re.Match[str]) -> str:
     return "\n" if "\n" in m.group() else " "
 
 
-def normalizar(texto: str) -> str:
-    """Minúsculas, sin acentos ni caracteres invisibles, con homoglifos y letras
-    de ancho completo o matemáticas llevadas a ASCII, y `_ - / .` entre
-    palabras como espacios. Para que "Ignоre_previous" y "Ignore previous"
-    se comparen igual."""
+# Un tramo de letras y dígitos ASCII (lo que queda entre separadores) y los
+# cortes de camelCase adentro: "IgnorePrevious" → "Ignore Previous",
+# "AIAgents" → "AI Agents".
+_TRAMO = re.compile(r"[A-Za-z0-9]+")
+_CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _partir_tramo(m: re.Match[str]) -> str:
+    tramo = m.group()
+    # Con dígitos es un id, un SKU o base64 ("eyJhbGciOiJIUzI1"): no se parte.
+    if any(c.isdigit() for c in tramo):
+        return tramo
+    return _CAMEL.sub(" ", tramo)
+
+
+def _sin_marcas(texto: str) -> str:
+    """Sin caracteres invisibles, con homoglifos y letras de ancho completo o
+    matemáticas llevadas a ASCII y sin acentos. Respeta mayúsculas."""
     t = "".join(c for c in texto if unicodedata.category(c) != "Cf")
     t = unicodedata.normalize("NFKC", t).translate(_CONFUSABLES)
     t = unicodedata.normalize("NFKD", t)
-    t = "".join(c for c in t if not unicodedata.combining(c)).casefold()
-    t = _SEPARADORES.sub(" ", t)
+    return "".join(c for c in t if not unicodedata.combining(c))
+
+
+def _terminar(t: str) -> str:
+    t = _SEPARADORES.sub(" ", t.casefold())
     t = _PUNTO_ENTRE_LETRAS.sub(" ", t)
     # Cada tramo de blancos queda en un carácter (un salto de línea si tenía
     # alguno): así ningún patrón con \s* o \s+ se vuelve cuadrático con miles
@@ -95,19 +111,54 @@ def normalizar(texto: str) -> str:
     return _BLANCOS.sub(_un_blanco, t)
 
 
+def _partir(t: str) -> str:
+    return _TRAMO.sub(_partir_tramo, t) if _CAMEL.search(t) else t
+
+
+def normalizar(texto: str, *, partir: bool = False) -> str:
+    """Minúsculas, sin acentos ni caracteres invisibles, con homoglifos y letras
+    de ancho completo o matemáticas llevadas a ASCII, y `_ - / .` entre
+    palabras como espacios. Para que "Ignоre_previous" y "Ignore previous"
+    se comparen igual. Con `partir`, además corta el camelCase de los tramos
+    sin dígitos ("IgnorePrevious" → "ignore previous")."""
+    t = _sin_marcas(texto)
+    return _terminar(_partir(t) if partir else t)
+
+
+def versiones(texto: str) -> list[str]:
+    """El texto normalizado y, si tiene camelCase, también partido. Las
+    heurísticas miran las dos: "IgnorePreviousInstructions" solo se ve
+    partido y "jailBreak mode" solo entero."""
+    t = _sin_marcas(texto)
+    partido = _partir(t)
+    if partido == t:
+        return [_terminar(t)]
+    return [_terminar(t), _terminar(partido)]
+
+
 _PALABRA = re.compile(r"\b[^\W\d_]{2,}\b")
+_LARGO_MAX_PALABRA = 25
 
 
 def es_libre(texto: str) -> bool:
     """¿Es texto en lenguaje natural (lo que se le manda al modelo)?
 
-    Dos palabras o más con un espacio, o cuatro o más pegadas con `_` o `-`.
-    Los identificadores, códigos y enums ("cart_1", "SUCCESS",
-    "basketball_shoes") no: con eso no se le puede dar una instrucción a nadie
-    y ya los revisan las heurísticas.
+    Las palabras se cuentan con camelCase, `_`, `-` y `.` partidos. Es libre
+    con dos palabras o más y un espacio, con tres o más pegadas
+    ("choose-this-one", "IgnorePreviousInstructions") o con una tira de
+    letras más larga que cualquier palabra ("ignorepreviousinstructions").
+    Los identificadores, códigos y enums ("cart_1", "NK-OUT-01", "SUCCESS",
+    "basketball_shoes", "contextId") no: con eso no se le puede dar una
+    instrucción a nadie y ya los revisan las heurísticas. Tres palabras
+    pegadas no se distinguen de una orden ("pick_this_cart"), así que un id
+    así ("fake_risk_data") también va al modelo.
     """
-    palabras = len(_PALABRA.findall(normalizar(texto)))
-    return palabras >= 4 or (palabras >= 2 and any(c.isspace() for c in texto))
+    palabras = _PALABRA.findall(normalizar(texto, partir=True))
+    return (
+        len(palabras) >= 3
+        or (len(palabras) >= 2 and any(c.isspace() for c in texto))
+        or any(len(p) > _LARGO_MAX_PALABRA for p in palabras)
+    )
 
 
 # ---------------------------------------------------------------------------

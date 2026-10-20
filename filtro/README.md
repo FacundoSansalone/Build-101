@@ -102,14 +102,24 @@ payload que no es un objeto) se revisa como texto común. Las heurísticas
 miran también los JWT válidos porque la firma no tiene otra forma que
 validar y puede traer texto con guiones; sobre base64 no arman frases (test
 con los JWT de una grabación real). Al modelo solo le llega el **texto
-libre** del proveedor (dos palabras o más), nunca el pedido del usuario.
+libre** del proveedor, nunca el pedido del usuario. Libre es: dos palabras
+o más con un espacio; tres o más pegadas, contando con camelCase, `_`, `-`
+y `.` partidos ("choose-this-one", "IgnorePreviousInstructions"); o una
+tira de letras de más de 25 ("ignorepreviousinstructions"). Los ids, SKUs,
+enums y claves del protocolo ("cart_2_8d2023", "NK-OUT-01", "contextId",
+"input-required") no; un tramo con dígitos (id, SKU, base64) no se parte.
+Tres palabras pegadas no se distinguen de una orden ("pick_this_cart"), así
+que algunas claves del protocolo ("shopping_agent_id", "demo.offer_details")
+y el marcador "fake_risk_data" del sample también van al modelo, como ruido.
 
 ### Capa (a): heurísticas (`heuristicas.py`)
 
 Patrones en inglés y castellano sobre el texto normalizado (minúsculas, sin
 acentos, sin caracteres invisibles, con letras de ancho completo,
 matemáticas y homoglifos cirílicos o griegos llevados a ASCII, y `_ - / .`
-como espacios), más chequeos sobre el texto crudo:
+como espacios) y, si tiene camelCase, también sobre el texto partido
+("IgnorePreviousInstructions" → "ignore previous instructions"), más
+chequeos sobre el texto crudo:
 
 | Señal | Qué busca |
 |---|---|
@@ -266,6 +276,11 @@ respuesta.
 - **Codificaciones.** No decodifica base64, ni el contenido de JWT, ni texto
   en imágenes o URLs. Letras separadas por espacios ("i g n o r e") y otros
   idiomas que no sean inglés o castellano quedan para el modelo.
+- **Texto pegado.** El camelCase se parte solo en tramos sin dígitos (para
+  no partir ids ni base64): "BuyCart7Now" no se parte y las heurísticas no
+  lo ven. Dos palabras pegadas sin espacio ("pickThis", "rank-first") ni
+  siquiera van al modelo, y una tira de letras corta sin separar
+  ("ranksthisfirst") tampoco.
 - **La firma de un JWT válido solo la miran las heurísticas.** Una frase con
   guiones en la firma ("…​.Ignore-all-previous-instructions") se corta; una
   sutil, sin palabras clave, no llega al modelo (mandarle las firmas le
