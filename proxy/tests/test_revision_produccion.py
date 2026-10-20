@@ -489,3 +489,64 @@ async def test_evento_sse_solo_con_el_sobre(armar_proxy, merchant: FakeMerchant)
         )
     assert INYECCION not in resp.text
     assert all(set(e) == {"jsonrpc", "id", "result"} for e in parsear_sse(resp.content))
+
+
+# ---------------------------------------------------------------------------
+# 7. El "hoy" del agente de intención con zona horaria (Vercel corre en UTC)
+# ---------------------------------------------------------------------------
+
+
+def test_zona_horaria_desde_el_entorno():
+    from proxy.config import ZONA_HORARIA_POR_DEFECTO, Config
+
+    assert ZONA_HORARIA_POR_DEFECTO == "America/Argentina/Buenos_Aires"
+    assert Config.desde_entorno({}).zona_horaria == ZONA_HORARIA_POR_DEFECTO
+    assert Config.desde_entorno({"KAIAI_ZONA_HORARIA": " "}).zona_horaria == ZONA_HORARIA_POR_DEFECTO
+    assert (
+        Config.desde_entorno({"KAIAI_ZONA_HORARIA": " Europe/Madrid "}).zona_horaria
+        == "Europe/Madrid"
+    )
+
+
+def test_hoy_en_argentina_entre_las_21_y_las_24():
+    from datetime import date, datetime, timezone
+
+    from proxy.config import hoy_en, zona_horaria
+
+    zona = zona_horaria("America/Argentina/Buenos_Aires")
+    # 01:30 UTC del 21 = 22:30 del 20 en Buenos Aires.
+    ahora = datetime(2026, 10, 21, 1, 30, tzinfo=timezone.utc)
+    assert hoy_en(zona, ahora) == date(2026, 10, 20)
+    assert hoy_en(zona_horaria("UTC"), ahora) == date(2026, 10, 21)
+
+
+def test_zona_horaria_sin_tzdata(monkeypatch, caplog):
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfoNotFoundError
+
+    from proxy import config as config_mod
+
+    def sin_tzdata(nombre):
+        raise ZoneInfoNotFoundError(nombre)
+
+    monkeypatch.setattr(config_mod, "ZoneInfo", sin_tzdata)
+    ahora = datetime(2026, 10, 21, 1, 30, tzinfo=timezone.utc)
+    argentina = config_mod.zona_horaria("America/Argentina/Buenos_Aires")
+    assert argentina.utcoffset(ahora) == timedelta(hours=-3)
+    with caplog.at_level("WARNING"):
+        otra = config_mod.zona_horaria("Europe/Madrid")
+    assert otra.utcoffset(ahora) == timedelta(0)
+    assert "Europe/Madrid" in caplog.text
+    assert config_mod.zona_horaria("no/existe").utcoffset(ahora) == timedelta(0)
+
+
+def test_el_proxy_usa_la_zona_y_demo_hoy_sigue_mandando(armar_proxy, config):
+    from dataclasses import replace
+    from datetime import date, datetime
+
+    from proxy.config import zona_horaria
+
+    proxy = armar_proxy(config=replace(config, zona_horaria="Pacific/Kiritimati")).state.proxy
+    assert proxy.hoy() == datetime.now(zona_horaria("Pacific/Kiritimati")).date()
+    fijo = armar_proxy(config=replace(config, demo_hoy=date(2026, 10, 18))).state.proxy
+    assert fijo.hoy() == date(2026, 10, 18)

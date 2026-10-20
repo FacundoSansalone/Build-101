@@ -94,7 +94,7 @@ from proxy.compras import (
     fusionar_filas,
     misma_fila,
 )
-from proxy.config import Config
+from proxy.config import Config, hoy_en, zona_horaria
 from proxy.consola import RUTAS_ABIERTAS as RUTAS_CONSOLA
 from proxy.consola import rutas_consola
 from proxy.esperas import Apertura, EsperaCompartida, EsperaLocal, Esperas
@@ -718,6 +718,8 @@ class ProxyGuard:
                 "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
                 "Guard real; /guard/state y cada evento veredicto lo marcan."
             )
+        # La zona del "hoy" del agente de intención (sin DEMO_HOY).
+        self.zona = zona_horaria(config.zona_horaria)
         if config.demo_hoy is not None:
             logger.warning(
                 "DEMO_HOY=%s: el agente de intención toma esa fecha como hoy "
@@ -729,8 +731,9 @@ class ProxyGuard:
 
     def hoy(self) -> date:
         """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
-        ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
-        return self.config.demo_hoy or date.today()
+        ofertas de la demo tienen fechas fijas) y si no, el del reloj en la
+        zona de `KAIAI_ZONA_HORARIA` (no la del sistema: Vercel corre en UTC)."""
+        return self.config.demo_hoy or hoy_en(self.zona)
 
     def firmar_veredicto(self, veredicto: Veredicto) -> Veredicto:
         """El veredicto con el recibo firmado: con la `ClaveRecibo` inyectada

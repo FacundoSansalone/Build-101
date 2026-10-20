@@ -9,10 +9,11 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger("proxy.config")
 
@@ -22,6 +23,8 @@ _VERDADEROS = {"1", "true", "t", "yes", "y", "si", "sí", "on"}
 _FALSOS = {"0", "false", "f", "no", "n", "off"}
 
 MAX_RESPUESTA_BYTES = 5 * 1024 * 1024  # tope por respuesta del comercio
+# La zona del "hoy" del agente de intención (KAIAI_ZONA_HORARIA).
+ZONA_HORARIA_POR_DEFECTO = "America/Argentina/Buenos_Aires"
 MAX_SUSCRIPTORES_SSE = 20
 # Gateway de producción (diseño del gateway, §1.9).
 MAX_CUERPO_V1_BYTES = 1024 * 1024
@@ -104,6 +107,11 @@ class Config:
     # fijas ("el lunes" es el 2026-10-19). No llega al Guard (los vencimientos
     # del checkout firmado se miran con el reloj de verdad).
     demo_hoy: date | None = None
+    # KAIAI_ZONA_HORARIA (IANA): la zona del "hoy" del agente de intención
+    # sin DEMO_HOY. En Vercel el reloj está en UTC: con la fecha del sistema,
+    # un usuario de Argentina entre las 21 y las 24 recibía el día siguiente.
+    # Sin tzdata, ver `zona_horaria`.
+    zona_horaria: str = ZONA_HORARIA_POR_DEFECTO
     # -- gateway de producción (diseño del gateway, §1.1 y §1.9) -------------
     # Sin `GATEWAY_CLAVES_ARCHIVO` (o sin claves activas) no hay oyente
     # público y todo sigue como antes: estos campos no cambian nada.
@@ -251,6 +259,8 @@ class Config:
             ),
             ficha_demo=_bool(env.get("PROXY_FICHA_DEMO", "0"), "PROXY_FICHA_DEMO"),
             demo_hoy=_fecha(env.get("DEMO_HOY"), "DEMO_HOY"),
+            zona_horaria=(env.get("KAIAI_ZONA_HORARIA") or "").strip()
+            or base.zona_horaria,
             gateway_host=(env.get("GATEWAY_HOST") or base.gateway_host).strip(),
             gateway_port=gateway_port,
             # Sin URL pública, la local del puerto que se usa: con otro
@@ -398,6 +408,28 @@ def _validar_varias(config: Config) -> None:
 
 def _jsonl_privado(principal: Path, pedido: Path | None) -> Path:
     return pedido or principal.with_name("guard_events_privados.jsonl")
+
+
+# Argentina no tiene horario de verano desde 2009: UTC-3 fijo sirve igual.
+_UTC_MENOS_3 = timezone(timedelta(hours=-3), "UTC-03")
+
+
+def zona_horaria(nombre: str) -> tzinfo:
+    """La zona de `KAIAI_ZONA_HORARIA`. Si `zoneinfo` no la encuentra (sin
+    tzdata, como puede pasar en Vercel, o un nombre que no existe): la de
+    Argentina, UTC-3 fijo; otra, UTC con un aviso en el log."""
+    try:
+        return ZoneInfo(nombre)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        if nombre == ZONA_HORARIA_POR_DEFECTO:
+            return _UTC_MENOS_3
+        logger.warning("KAIAI_ZONA_HORARIA=%r no se encontró: el hoy va en UTC", nombre)
+        return timezone.utc
+
+
+def hoy_en(zona: tzinfo, ahora: datetime | None = None) -> date:
+    """La fecha de hoy en `zona` (`ahora`, para los tests)."""
+    return (ahora or datetime.now(timezone.utc)).astimezone(zona).date()
 
 
 _FECHA_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
