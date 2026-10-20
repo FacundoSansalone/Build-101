@@ -2,7 +2,9 @@
 
 Cada caso es una respuesta del comercio con la forma real (el `result` de una
 tarea A2A, como la arma `merchant_agent` y `proxy/tests/fake_world.py`), no
-el JSON plano de los fixtures.
+el JSON plano de los fixtures, tal como le llega al filtro: sin el eco exacto
+de nuestro pedido en el `history`, que el proxy saca antes
+(`proxy.a2a.sin_eco_del_pedido`, la misma función).
 
 - Escenarios: `fixtures/scenario_*.json` y los dos proveedores de la demo de
   cuatro corridas, `fixtures/etapa2/computadoras.json` (honesto) y
@@ -37,6 +39,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from proxy.a2a import sin_eco_del_pedido
+
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 ESCENARIOS = ("baseline", "A", "B", "B2", "C")
 
@@ -59,14 +63,29 @@ def _artefacto(nombre: str, data: dict[str, Any]) -> dict[str, Any]:
     return {"artifactId": f"art-{nombre}", "parts": [{"kind": "data", "data": data}]}
 
 
-def _mensaje(texto: str, role: str = "agent") -> dict[str, Any]:
+def _mensaje(texto: str) -> dict[str, Any]:
     return {
         "kind": "message",
         "messageId": "msg-filtro",
-        "role": role,
+        "role": "agent",
         "parts": [{"kind": "text", "text": texto}],
         "contextId": "ctx-filtro",
         "taskId": "task-filtro",
+    }
+
+
+def _pedido(texto: str) -> dict[str, Any]:
+    """Nuestro pedido al comercio, como lo manda el agente del cliente del
+    sample (`role: agent`)."""
+    return {
+        "kind": "message",
+        "messageId": "msg-pedido",
+        "role": "agent",
+        "parts": [
+            {"kind": "text", "text": texto},
+            {"kind": "data", "data": {"shopping_agent_id": "trusted_shopping_agent"}},
+        ],
+        "contextId": "ctx-filtro",
     }
 
 
@@ -76,28 +95,26 @@ def _tarea(
     estado: str = "completed",
     mensaje: str | None = None,
     pedido: str = "Find products that match the user's request.",
+    historial: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """La tarea como le llega al filtro: el comercio devuelve nuestro pedido
+    en el `history` (después de `historial`) y el proxy saca ese eco exacto
+    antes de llamar al filtro (`proxy.a2a.sin_eco_del_pedido`, la misma
+    función)."""
     status: dict[str, Any] = {"state": estado}
     if mensaje is not None:
         status["message"] = _mensaje(mensaje)
+    nuestro = _pedido(pedido)
     tarea: dict[str, Any] = {
         "id": "task-filtro",
         "contextId": "ctx-filtro",
         "kind": "task",
         "status": status,
-        "history": [
-            {
-                **_mensaje(pedido, role="user"),
-                "parts": [
-                    {"kind": "text", "text": pedido},
-                    {"kind": "data", "data": {"shopping_agent_id": "trusted_shopping_agent"}},
-                ],
-            }
-        ],
+        "history": [*(historial or []), {**nuestro, "taskId": "task-filtro"}],
     }
     if artefactos:
         tarea["artifacts"] = artefactos
-    return tarea
+    return sin_eco_del_pedido(tarea, nuestro)
 
 
 def como_tarea(
@@ -195,9 +212,8 @@ def challenge_otp() -> dict[str, Any]:
     """La respuesta del comercio honesto a `initiate_payment`, como le llega al
     filtro: el comercio reenvía tal cual el mensaje del procesador de pagos
     (`input-required`, texto y data part `challenge` con el OTP). En el
-    `history` queda solo el eco de nuestro pedido, que el proxy saca antes de
-    llamar al filtro (`proxy.a2a.sin_eco_del_pedido`); acá va con
-    `role: user`, que el filtro tampoco mira."""
+    `history` venía solo el eco de nuestro pedido, que el proxy saca antes de
+    llamar al filtro (`proxy.a2a.sin_eco_del_pedido`)."""
     return _pedido_de_dato(
         _OTP_TEXTO, {"type": "otp", "display_text": _OTP_DISPLAY}, pedido="Initiate a payment"
     )
@@ -227,7 +243,7 @@ def pago_con_otp_completado() -> dict[str, Any]:
         ],
     }
     desafio = challenge_otp()["status"]["message"]
-    tarea = _tarea(
+    return _tarea(
         [_artefacto("recibo", {"ap2.PaymentReceipt": {
             "status": "Success",
             "iss": "",
@@ -238,9 +254,8 @@ def pago_con_otp_completado() -> dict[str, Any]:
         }})],
         mensaje="{'status': 'success'}",
         pedido="Initiate a payment. Include the challenge response.",
+        historial=[primer_pedido, desafio],
     )
-    tarea["history"] = [primer_pedido, desafio, *tarea["history"]]
-    return tarea
 
 
 def _leer(ruta: Path) -> dict[str, Any]:

@@ -33,7 +33,22 @@ def test_como_tarea_arma_una_tarea_a2a_como_la_del_comercio():
     datos = [p["data"] for a in tarea["artifacts"] for p in a["parts"]]
     assert {"ap2.cart": {"cart_id": "cart_1", "item_label": "x", "amount": 1.0,
                          "currency": "USD"}} in datos
-    assert tarea["history"][0]["role"] == "user"
+    # El eco exacto de nuestro pedido lo sacó el proxy (como antes de llamar al filtro).
+    assert tarea["history"] == []
+
+
+def test_el_eco_de_nuestro_pedido_no_llega_al_filtro_en_ningun_caso():
+    """Los casos son lo que recibe el filtro: el comercio devuelve nuestro
+    pedido en el `history` (con `role: agent`, como el sample) y el proxy saca
+    ese eco exacto. Solo queda lo que no es el eco del pedido actual (el primer
+    pedido de pago en `var_pago_otp_ok`)."""
+    ecos = ("Find products that match the user's request.",
+            "Create a checkout for the selected cart.",
+            "Initiate a payment. Include the challenge response.")
+    for caso in casos():
+        vistos = json.dumps(caso.respuesta.get("history", []), ensure_ascii=False)
+        for eco in ecos:
+            assert eco not in vistos, caso.nombre
 
 
 def test_el_proveedor_malicioso_de_computadoras_es_otra_cosa_dentro_del_tope():

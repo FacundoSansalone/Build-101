@@ -1,13 +1,14 @@
 """Qué textos de la respuesta del proveedor revisa el filtro.
 
 El proveedor controla toda la respuesta (claves y valores, artefactos,
-mensajes de estado, metadatos, errores), así que se recorre entera. Se dejan
-afuera solo dos cosas:
+mensajes de estado, metadatos, errores, el `history` con sus roles), así que
+se recorre entera. Se dejan afuera solo los JWT y SD-JWT (checkout firmado,
+mandatos): son opacos para el agente.
 
-- el eco del pedido del comprador en `history` (mensajes con `role: user` en
-  el `history` de la tarea): es lo que mandó el agente del cliente y nadie lo
-  vuelve a leer;
-- los JWT y SD-JWT (checkout firmado, mandatos): son opacos para el agente.
+El `history` se revisa entero, con cualquier `role`: el rol también lo
+escribe el comercio. El eco exacto de nuestro pedido (que no es texto del
+proveedor) lo saca el proxy antes de llamar al filtro
+(`proxy.a2a.sin_eco_del_pedido`).
 
 Recorre sin recursión y con topes: una respuesta que no se puede recorrer
 entera no se puede declarar segura (`RespuestaExcesiva`, el filtro bloquea).
@@ -158,29 +159,23 @@ def extraer_textos(respuesta: Any) -> list[Texto]:
         vistos.add((campo, texto))
         salida.append(Texto(campo, texto))
 
-    # (valor, campo, es un mensaje del history de la tarea)
-    pila: list[tuple[Any, str, bool]] = [(respuesta, "respuesta", False)]
+    # (valor, campo)
+    pila: list[tuple[Any, str]] = [(respuesta, "respuesta")]
     while pila:
-        valor, campo, en_history = pila.pop()
+        valor, campo = pila.pop()
         nodos += 1
         if nodos > MAX_NODOS:
             raise RespuestaExcesiva("demasiados valores")
         if isinstance(valor, str):
             agregar(campo, valor)
         elif isinstance(valor, dict):
-            if en_history and valor.get("role") == "user":
-                continue  # eco del pedido del comprador
-            hijos: list[tuple[Any, str, bool]] = []
+            hijos: list[tuple[Any, str]] = []
             for clave, hijo in valor.items():
                 nodos += 1
                 if isinstance(clave, str):
                     agregar("clave", clave)
-                es_history = valor is respuesta and clave == "history"
-                if es_history and isinstance(hijo, list):
-                    hijos.extend((m, "history", True) for m in hijo)
-                else:
-                    hijos.append((hijo, str(clave), False))
+                hijos.append((hijo, str(clave)))
             pila.extend(reversed(hijos))
         elif isinstance(valor, list):
-            pila.extend((v, campo, False) for v in reversed(valor))
+            pila.extend((v, campo) for v in reversed(valor))
     return salida

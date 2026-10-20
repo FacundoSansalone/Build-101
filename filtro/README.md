@@ -85,9 +85,12 @@ memoria por contenido, 512 entradas; los errores no se guardan).
 
 Toda la respuesta, claves y valores: artefactos, `ap2.cart` (`item_label`),
 `demo.offer_details` (`title`, `description`), mensajes de estado,
-metadatos, errores. Quedan afuera el eco del pedido del comprador (mensajes
-`role: user` en el `history` de la tarea, que nadie vuelve a leer) y los JWT
-o SD-JWT con cabecera válida (checkout firmado, mandatos), que son opacos
+metadatos, errores y el `history` entero, **con cualquier `role`** (el rol
+también lo escribe el comercio: hasta el 2026-10-20 un mensaje con
+`role: user` no se revisaba y una inyección ahí pasaba). El eco exacto de
+nuestro pedido lo saca el proxy antes de llamar al filtro
+(`proxy.a2a.sin_eco_del_pedido`), no el filtro. Quedan afuera los JWT o
+SD-JWT con cabecera válida (checkout firmado, mandatos), que son opacos
 para el agente. Al modelo solo le llega el **texto libre** del proveedor
 (dos palabras o más), nunca el pedido del usuario.
 
@@ -253,14 +256,18 @@ respuesta.
 - **Codificaciones.** No decodifica base64, ni el contenido de JWT, ni texto
   en imágenes o URLs. Letras separadas por espacios ("i g n o r e") y otros
   idiomas que no sean inglés o castellano quedan para el modelo.
-- **El `history` con `role: user` no se revisa** (es el eco del pedido del
-  comprador). Si algún consumidor empieza a leer el `history`, hay que
-  revisarlo también. El agente del cliente del sample manda sus mensajes con
-  `role: agent`: ese eco lo saca el proxy antes de llamar al filtro
-  (`proxy.a2a.sin_eco_del_pedido`, solo si es idéntico al pedido: mismo
-  `messageId`, rol y partes). En la prueba de punta a punta con Decisions,
-  sin eso el modelo marcaba "Find products that match the user's request."
-  como `instruccion_ia` en una respuesta honesta.
+- **El eco de nuestro pedido en el `history`.** El filtro revisa el
+  `history` entero, con cualquier rol. El eco del pedido actual lo saca el
+  proxy antes de llamar al filtro (`proxy.a2a.sin_eco_del_pedido`, solo si
+  es idéntico al pedido: mismo `messageId`, rol y partes; el agente del
+  cliente del sample manda `role: agent`). En la prueba de punta a punta con
+  Decisions, sin eso el modelo marcaba "Find products that match the user's
+  request." como `instruccion_ia` en una respuesta honesta
+  (`test_filtro_proxy.py` fija que el eco no llega al modelo). Los mensajes
+  nuestros de turnos anteriores de la misma tarea (no son el eco del pedido
+  actual) sí se revisan, también si un integrador los manda con
+  `role: user`: si alguno pareciera una orden al agente, el filtro cortaría
+  una respuesta honesta (fail-closed).
 - **Privacidad.** El texto libre del proveedor va a la API de decisiones
   (OpenAI o TypeSafe); el pedido del usuario no.
 - **Sin cliente de decisiones bloquea todo** lo que tenga texto libre. Es a
