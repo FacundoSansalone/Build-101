@@ -570,6 +570,11 @@ otra cosa (error, timeout, `false`) es no firmar. Este modo no tiene estado:
 no hay aprobaciones ni retención. Un `escalar` se lo mostrás a tu usuario y
 la decisión queda de tu lado.
 
+**Concurrencia:** a lo sumo 2 pedidos en curso por clave entre
+`/v1/evaluar` y `/v1/filtrar` (por instancia del gateway; corren en hilos que
+comparte todo el tráfico). El tercero responde enseguida 429
+`demasiadas_solicitudes` (`detalle.maximo`): reintentá cuando termine uno.
+
 ## 9. `/v1/filtrar`: lo que tu agente lee fuera del gateway
 
 El mismo filtro que revisa las respuestas de los comercios, para el contenido
@@ -595,6 +600,8 @@ curl -s -X POST "$GW/v1/filtrar" \
 - **Falla cerrado:** si el filtro no está, falla o tarda más de 30 s,
   responde 200 `bloqueado` con `senales` `filtro:no_configurado`,
   `filtro:error` o `filtro:timeout`. Tratalo como bloqueado.
+- **Concurrencia:** comparte con `/v1/evaluar` el máximo de 2 pedidos en
+  curso por clave (§8); el tercero da 429 `demasiadas_solicitudes`.
 - **No es una garantía.** El filtro está calibrado para respuestas de
   comercios; con páginas web puede equivocarse para los dos lados. Lo que
   protege la compra es la verificación antes de la firma.
@@ -647,6 +654,7 @@ reabrirías el canal que el gateway cierra.
 | 409 | `sin_webhook` | Tu clave no tiene webhook |
 | 413 | `cuerpo_demasiado_grande` | Más de 1 MB |
 | 415 | `se_espera_json` | Falta `Content-Type: application/json` |
+| 429 | `demasiadas_solicitudes` | Ya tenés 2 pedidos en curso entre `/v1/evaluar` y `/v1/filtrar` (`detalle.maximo`); reintentá cuando termine uno |
 | 429 | `demasiadas_compras` | Llegaste al máximo de compras activas (`detalle.maximo`): las que todavía no resolvieron la negociación (`creada`, `esperando_contexto`, `negociando`, `esperando_decision`) |
 | 503 | `estado_no_disponible` | El gateway no pudo leer o guardar su estado: reintentá |
 | 503 | `sin_clave_recibo` | El gateway no tiene clave de recibos publicada |

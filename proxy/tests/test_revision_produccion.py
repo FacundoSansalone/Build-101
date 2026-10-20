@@ -863,3 +863,64 @@ async def test_cabeceras_de_la_plataforma_no_llegan_al_comercio(armar_proxy, mer
     assert recibidos["content-type"] == "application/json"
     assert recibidos["x-a2a-extensions"] == HEADERS_A2A["X-A2A-Extensions"]
     assert recibidos["x-otra-cosa"] == "sigue"
+
+
+# ---------------------------------------------------------------------------
+# 14. /v1/filtrar y /v1/evaluar: a lo sumo 2 en curso por integrador
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_un_integrador_no_ocupa_todos_los_hilos_del_filtro(config):
+    import threading
+    from dataclasses import replace
+
+    from proxy.tests.gateway_ayudantes import (
+        CLAVE_OTRO,
+        GATEWAY_PUBLIC_URL,
+        armar_gateway,
+        cliente_publico,
+    )
+
+    soltar = threading.Event()
+    entraron: list[int] = []
+
+    def filtro_lento(objetivo):
+        entraron.append(1)
+        soltar.wait(5)
+        return ResultadoFiltro(pasa=True)
+
+    mundo = armar_gateway(
+        replace(config, gateway_public_url=GATEWAY_PUBLIC_URL), evaluador_espia()[0],
+        filtro=filtro_lento,
+    )
+    cuerpo_filtrar = {"contenido": "hola", "origen": "otro"}
+    async with cliente_publico(mundo.app) as c, cliente_publico(mundo.app, CLAVE_OTRO) as otro:
+        en_curso = [asyncio.create_task(c.post("/v1/filtrar", json=cuerpo_filtrar)) for _ in range(2)]
+        for _ in range(200):
+            if len(entraron) == 2:
+                break
+            await asyncio.sleep(0.01)
+        tercera = await c.post("/v1/filtrar", json=cuerpo_filtrar)
+        assert tercera.status_code == 429, tercera.text
+        error = tercera.json()["error"]
+        assert error["codigo"] == "demasiadas_solicitudes"
+        assert error["detalle"]["maximo"] == 2
+        from proxy.tests.test_api_v1 import CHECKOUT_OK, FICHA_OK
+
+        evaluar = await c.post(
+            "/v1/evaluar",
+            json={"ficha": {"pedido": "20 computadoras", **FICHA_OK}, "checkout": CHECKOUT_OK},
+        )
+        assert evaluar.status_code == 429, evaluar.text  # el mismo cupo
+        # Otro integrador no espera detrás del primero.
+        de_otro = asyncio.create_task(otro.post("/v1/filtrar", json=cuerpo_filtrar))
+        for _ in range(200):
+            if len(entraron) == 3:
+                break
+            await asyncio.sleep(0.01)
+        assert len(entraron) == 3
+        soltar.set()
+        assert [r.status_code for r in await asyncio.gather(*en_curso, de_otro)] == [200] * 3
+        # Libre otra vez.
+        assert (await c.post("/v1/filtrar", json=cuerpo_filtrar)).status_code == 200
