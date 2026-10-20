@@ -207,7 +207,12 @@ que ella es el de la semana siguiente: dicho un lunes, "10 el lunes y otros
 10 el jueves" es el 26 y el 29, no el 22 (el cronograma usa las fechas de la
 respuesta entera). No se corre entre oraciones, ante una alternativa ("el
 viernes, si no el miércoles") ni por una fecha lejana: ahí queda el próximo,
-del lado estricto. Con decisiones real, "para el lunes" dicho un lunes queda
+del lado estricto. Un día de la semana con su fecha es una sola fecha: "el
+viernes 30 de octubre" no suma el próximo viernes (si el 30 es viernes; si
+no, quedan las dos), "el jueves 29" es el primer jueves 29 desde hoy (este
+mes o el que viene; el 29 no es cantidad ni monto) y "el miércoles de la
+semana que viene" es el de esa semana. "Por la mañana" (o "a la", "de la",
+"en la") no es mañana. Con decisiones real, "para el lunes" dicho un lunes queda
 a veces a confirmar (0,59 a 0,88): es ambiguo, y la confirmación lo muestra.
 
 **El tope:** la pregunta no ofrece los números de cosas ("20 computadoras",
