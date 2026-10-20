@@ -152,6 +152,23 @@ def test_talles_se_normalizan_a_enteros():
     assert oferta.moneda == "USD"
 
 
+@pytest.mark.parametrize(
+    ("campo", "valor"),
+    [("stock", 10**400), ("quantity", 10**400), ("quantity", json.loads("1" + "0" * 320)),
+     ("sizes", [json.loads("1" + "0" * 320), 42])],
+    ids=["stock", "quantity", "quantity_json", "sizes"],
+)
+def test_un_entero_que_no_entra_en_un_float_queda_sin_dato(campo, valor):
+    # JSON admite enteros de cualquier largo: no pueden hacer lanzar al extractor.
+    vistas_raras = OfertasVistas(
+        carts=[{"cart_id": "c1", "amount": 10.0, "currency": "USD"}],
+        offer_details=[{"cart_id": "c1", "sku": "S", campo: valor}],
+    )
+    (oferta,) = extraer_ofertas(vistas_raras)
+    assert oferta.stock is None and oferta.cantidad is None
+    assert oferta.talles == ([42] if campo == "sizes" else [])
+
+
 # --- montos inválidos ----------------------------------------------------------
 
 

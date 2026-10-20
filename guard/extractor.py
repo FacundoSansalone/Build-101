@@ -199,7 +199,7 @@ def _entero(valor: Any) -> int | None:
         return None
     try:
         numero = float(valor)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # un entero de JSON que no entra en un float
         return None
     return int(numero) if numero.is_integer() else None
 
