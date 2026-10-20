@@ -2,8 +2,10 @@
 
 El proveedor controla toda la respuesta (claves y valores, artefactos,
 mensajes de estado, metadatos, errores, el `history` con sus roles), así que
-se recorre entera. Se dejan afuera solo los JWT y SD-JWT (checkout firmado,
-mandatos): son opacos para el agente.
+se recorre entera. Los JWT y SD-JWT (checkout firmado, mandatos) son opacos
+para el agente: no van al modelo (`Texto.opaco`), pero las heurísticas los
+miran igual, porque la firma es base64url sin otra forma que validar y puede
+traer texto con guiones.
 
 El `history` se revisa entero, con cualquier `role`: el rol también lo
 escribe el comercio. El eco exacto de nuestro pedido (que no es texto del
@@ -38,10 +40,11 @@ class RespuestaExcesiva(ValueError):
 class Texto:
     campo: str  # la clave bajo la que vino ("item_label", "text", ...) o "clave"
     texto: str
+    opaco: bool = False  # un JWT: lo miran las heurísticas, nunca el modelo
 
     @property
     def libre(self) -> bool:
-        return es_libre(self.texto)
+        return not self.opaco and es_libre(self.texto)
 
 
 # ---------------------------------------------------------------------------
@@ -181,10 +184,10 @@ def extraer_textos(respuesta: Any) -> list[Texto]:
         caracteres += len(texto)
         if caracteres > MAX_CARACTERES:
             raise RespuestaExcesiva("demasiado texto")
-        if not texto.strip() or es_jwt(texto) or (campo, texto) in vistos:
+        if not texto.strip() or (campo, texto) in vistos:
             return
         vistos.add((campo, texto))
-        salida.append(Texto(campo, texto))
+        salida.append(Texto(campo, texto, opaco=es_jwt(texto)))
 
     # (valor, campo)
     pila: list[tuple[Any, str]] = [(respuesta, "respuesta")]

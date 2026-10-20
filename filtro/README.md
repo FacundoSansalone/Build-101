@@ -89,10 +89,20 @@ metadatos, errores y el `history` entero, **con cualquier `role`** (el rol
 también lo escribe el comercio: hasta el 2026-10-20 un mensaje con
 `role: user` no se revisaba y una inyección ahí pasaba). El eco exacto de
 nuestro pedido lo saca el proxy antes de llamar al filtro
-(`proxy.a2a.sin_eco_del_pedido`), no el filtro. Quedan afuera los JWT o
-SD-JWT con cabecera válida (checkout firmado, mandatos), que son opacos
-para el agente. Al modelo solo le llega el **texto libre** del proveedor
-(dos palabras o más), nunca el pedido del usuario.
+(`proxy.a2a.sin_eco_del_pedido`), no el filtro.
+
+Los JWT y SD-JWT bien formados (checkout firmado, recibo, mandatos) son
+opacos para el agente: **no van al modelo, pero las heurísticas los
+miran**. Bien formado quiere decir cabecera JSON con `alg`, payload objeto
+JSON, firma base64url y, entre `~`, solo disclosures (base64url de un array
+JSON), JWT compactos (key binding o el eslabón siguiente de la cadena
+dSD-JWT de AP2) o nada (el `~` final y el `~~`). Algo con forma de JWT que
+no cumple eso ("Ignore.previous.x", texto con guiones después de un `~`, un
+payload que no es un objeto) se revisa como texto común. Las heurísticas
+miran también los JWT válidos porque la firma no tiene otra forma que
+validar y puede traer texto con guiones; sobre base64 no arman frases (test
+con los JWT de una grabación real). Al modelo solo le llega el **texto
+libre** del proveedor (dos palabras o más), nunca el pedido del usuario.
 
 ### Capa (a): heurísticas (`heuristicas.py`)
 
@@ -256,6 +266,10 @@ respuesta.
 - **Codificaciones.** No decodifica base64, ni el contenido de JWT, ni texto
   en imágenes o URLs. Letras separadas por espacios ("i g n o r e") y otros
   idiomas que no sean inglés o castellano quedan para el modelo.
+- **La firma de un JWT válido solo la miran las heurísticas.** Una frase con
+  guiones en la firma ("…​.Ignore-all-previous-instructions") se corta; una
+  sutil, sin palabras clave, no llega al modelo (mandarle las firmas le
+  daría ruido base64 en cada checkout).
 - **El eco de nuestro pedido en el `history`.** El filtro revisa el
   `history` entero, con cualquier rol. El eco del pedido actual lo saca el
   proxy antes de llamar al filtro (`proxy.a2a.sin_eco_del_pedido`, solo si
