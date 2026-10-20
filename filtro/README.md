@@ -250,9 +250,17 @@ procesador de pagos, el código incorrecto y el pago completado
 arriba se midieron con el texto anterior del caso; el modelo no vuelve a ver
 este caso porque las heurísticas lo cortan antes.
 
+**Arreglos del 2026-10-20** (`history` con cualquier rol, JWT validados,
+texto pegado, falsos positivos con α7 y publicidad): con solo heurísticas la
+tabla no cambia (12/18 y 0/18). Las filas del modelo no se volvieron a
+medir: desde entonces también le llegan las tres palabras pegadas (algunas
+claves del protocolo, como `shopping_agent_id`, y el `fake_risk_data` del
+sample). Antes de confiar en ellas, correr `--decisiones` de nuevo.
+
 Costo: una llamada por respuesta del proveedor con texto libre (las repetidas
 salen de la caché), unos 0,4 s cada una. Las heurísticas tardan ~2 ms por
-respuesta.
+respuesta; con el tope de 300k caracteres, el peor caso medido es ~0,8 s de
+CPU (camelCase, que se revisa dos veces).
 
 ## Límites
 
