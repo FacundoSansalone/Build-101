@@ -28,7 +28,7 @@ bash world/run_world.sh B      # arranca en el escenario B
 | 8001 | Merchant Agent por A2A, **el atacante** |
 | 8002 | Credentials Provider |
 | 8003 | Merchant Payment Processor |
-| 8011 | Catálogo público del comercio (`/products`, `/products/<sku>`) |
+| 8011 | Catálogo público del comercio (`/products`, `/products/<sku>`), en `127.0.0.1` salvo `PUBLIC_CATALOG_HOST=<host>` |
 
 La dev-ui de ADK no tiene autenticación y maneja la compra entera (billetera,
 tarjeta, OTP), así que `run_world.sh` la levanta en `127.0.0.1`

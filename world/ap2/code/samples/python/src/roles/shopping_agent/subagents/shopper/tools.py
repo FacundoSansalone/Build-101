@@ -23,6 +23,11 @@ from common.artifact_utils import find_canonical_objects
 from google.adk.tools.tool_context import ToolContext
 from roles.shopping_agent.remote_agents import merchant_agent_client
 
+# HACKATHON (Pre-Sign Guard): el contexto del comercio de la compra en curso.
+# Lo abre la primera búsqueda y lo cierra el fin de la compra: el recibo del
+# pago o un corte del Guard (búsqueda o checkout bloqueados).
+CONTEXTO_COMPRA_KEY = "guard_contexto_compra"
+
 
 async def find_products(
     catalog_search: str,
@@ -45,8 +50,15 @@ async def find_products(
     RuntimeError: If the merchant agent fails to find products.
   """
   risk_data = _collect_risk_data(tool_context)
+  # HACKATHON (Pre-Sign Guard): otra búsqueda de la misma compra sigue en el
+  # contexto del comercio de la anterior. El proxy del Guard agrupa la compra
+  # por contexto: con uno nuevo por búsqueda, le volvía a preguntar el porqué
+  # al usuario cada vez que el agente buscaba de nuevo.
+  builder = A2aMessageBuilder()
+  if tool_context.state.get(CONTEXTO_COMPRA_KEY):
+    builder.set_context_id(tool_context.state[CONTEXTO_COMPRA_KEY])
   message = (
-      A2aMessageBuilder()
+      builder
       .add_text("Find products that match the user's request.")
       .add_data("catalog_search", catalog_search)
       .add_data("risk_data", risk_data)
@@ -63,6 +75,9 @@ async def find_products(
     # hasta 5 veces y cada reintento era una compra nueva para el Guard.
     veredicto = _veredicto_guard(task.artifacts)
     if veredicto is not None and veredicto.get("status") == "bloqueado":
+      # La compra terminó: la próxima búsqueda es otra (en este contexto el
+      # proxy cortaría todo lo que siga).
+      tool_context.state[CONTEXTO_COMPRA_KEY] = None
       return (
           "Pre-Sign Guard blocked this conversation with the merchant before"
           f" any of its content reached you: {veredicto.get('motivo', '')}"
@@ -70,9 +85,11 @@ async def find_products(
           " find_products again for this request. Tell the user the purchase"
           " was stopped for safety."
       )
+    tool_context.state[CONTEXTO_COMPRA_KEY] = task.context_id  # el reintento sigue
     raise RuntimeError(f"Failed to find products: {task.status}")
 
   tool_context.state["shopping_context_id"] = task.context_id
+  tool_context.state[CONTEXTO_COMPRA_KEY] = task.context_id  # HACKATHON
   carts = find_canonical_objects(task.artifacts, CART_DATA_KEY, Cart)
   tool_context.state["available_carts"] = [
       c.model_dump(mode="json") for c in carts

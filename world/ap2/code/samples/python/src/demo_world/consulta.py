@@ -11,8 +11,10 @@ que sale de acá. Entiende castellano e inglés:
 - fecha límite relativa a `hoy`: ISO, dd/mm, "30 de octubre", "October 30",
   "en N días", "in N days", "hoy", "mañana", "pasado mañana", "esta semana",
   "la semana que viene", "fin de mes" y días de la semana (el próximo: si hoy
-  es lunes, "el lunes" es el de la semana que viene). Gana la explícita; una
-  fecha pasada no cuenta;
+  es lunes, "el lunes" es el de la semana que viene). Con un número sin mes
+  ("el lunes 26"), el primer día desde hoy con ese número en ese día de la
+  semana (si no hay en 12 meses, el próximo). Gana la explícita; una fecha
+  pasada no cuenta;
 - tope y moneda: "hasta 400 USD", "up to 1,500 USD", "USD 1.200", "$300",
   "500 mil pesos", "presupuesto de 150 euros", "under 250";
 - atributos con unidad (pulgadas, GB/TB, kg/g, horas, litros, W, MP, cm) y
@@ -242,11 +244,31 @@ _P_MANANA = re.compile(r"\b(?:manana|tomorrow)\b")
 _P_MANANA_HORA = re.compile(r"\b(?:a|por|de|en)\s+la\s+manana\b|\bin\s+the\s+morning\b")  # no es fecha
 _P_HOY = re.compile(r"\b(?:hoy|today)\b")
 _P_DIA = re.compile(rf"\b({_DIAS_RE})\b")
+# "el lunes 26": el día de la semana y un número sin mes. La palabra que sigue
+# (grupo 3, sin consumir) dice si el número es el día o una cantidad ("el
+# lunes 20 computadoras").
+_P_DIA_NUMERO = re.compile(
+    rf"\b({_DIAS_RE})\s+(?:the\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\b(?![.,/:]\d)(?=\s*([a-z]*))"
+)
 
 
 def proximo_dia(hoy: date, dia_semana: int) -> date:
   """El próximo `dia_semana` después de hoy (si hoy es ese día, el de la semana que viene)."""
   return hoy + timedelta(days=((dia_semana - hoy.weekday() - 1) % 7) + 1)
+
+
+def dia_con_numero(hoy: date, dia_semana: int, numero: int) -> date | None:
+  """El primer día desde hoy que es `numero` del mes y cae en `dia_semana`
+  ("el lunes 26"), en los próximos 12 meses; None si no hay."""
+  for meses in range(13):
+    anio, mes = divmod(hoy.month - 1 + meses, 12)
+    try:
+      fecha = date(hoy.year + anio, mes + 1, numero)
+    except ValueError:
+      continue
+    if fecha >= hoy and fecha.weekday() == dia_semana:
+      return fecha
+  return None
 
 
 def _fecha(anio: int | None, mes: int, dia: int, hoy: date) -> date | None:
@@ -324,6 +346,16 @@ def _fechas(texto: str, hoy: date, ocupados: _Ocupados) -> date | None:
       ocupados.marcar(m.span())
   tomar(_P_MANANA, relativas, lambda _: hoy + timedelta(days=1))
   tomar(_P_HOY, relativas, lambda _: hoy)
+  for m in _P_DIA_NUMERO.finditer(texto):
+    numero = int(m[2])
+    if not 1 <= numero <= 31 or (m[3] and m[3] not in _VACIAS) or not ocupados.libre(m.span()):
+      continue  # "el lunes 20 computadoras": el 20 es la cantidad
+    ocupados.marcar(m.span())
+    fecha = dia_con_numero(hoy, _DIAS[m[1]], numero)
+    if fecha is not None:
+      explicitas.append(fecha)
+    else:  # no hay un viernes 31 en un año: el próximo viernes
+      semana.append(proximo_dia(hoy, _DIAS[m[1]]))
   tomar(_P_DIA, semana, lambda m: proximo_dia(hoy, _DIAS[m[1]]))
 
   for grupo in (explicitas, relativas, semana):

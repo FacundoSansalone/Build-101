@@ -95,6 +95,32 @@ def test_parser_las_fechas_son_relativas_a_hoy():
 
 
 @pytest.mark.parametrize(
+    ("texto", "fecha", "cantidad"),
+    [
+        # Un día de la semana seguido de un número sin mes: el primer día desde
+        # hoy con ese número que cae en ese día de la semana.
+        ("20 computadoras para el lunes 26", date(2026, 10, 26), 20),
+        ("20 computadoras para el lunes 26, hasta 20000 USD", date(2026, 10, 26), 20),
+        ("20 laptops by Monday the 26th", date(2026, 10, 26), 20),
+        ("monitor para el viernes 13 hasta 400 USD", date(2026, 11, 13), 1),
+        ("monitor para el domingo 18", HOY, 1),  # con el número, hoy es hoy
+        ("monitor para el lunes 2", date(2026, 11, 2), 1),
+        # Si no existe en los próximos 12 meses, el próximo día de la semana.
+        ("monitor para el lunes 31", date(2027, 5, 31), 1),
+        ("monitor para el viernes 31", VIERNES, 1),
+        # El número que sigue es la cantidad, no el día.
+        ("para el lunes 20 computadoras", LUNES, 20),
+        ("para el lunes 20 unidades de monitor", LUNES, 20),
+        ("para el lunes 26 de noviembre", date(2026, 11, 26), 1),
+        ("para el lunes 26/10", date(2026, 10, 26), 1),
+    ],
+)
+def test_parser_dia_de_la_semana_con_numero(texto, fecha, cantidad):
+  c = consulta.parsear(texto, HOY)
+  assert (c.fecha_limite, c.cantidad) == (fecha, cantidad)
+
+
+@pytest.mark.parametrize(
     ("texto", "tope", "moneda"),
     [
         ("notebook hasta USD 1.200", 1200.0, "USD"),
@@ -544,3 +570,142 @@ def test_el_comercio_pasa_la_busqueda_y_el_contexto(monkeypatch):
     for cart in carts:  # cada compra guarda sus propios carts (H7)
       assert storage.get_cart_data(cart["cart_id"])["amount"] == cart["amount"]
   assert not set(ids["ctx-1"]) & set(ids["ctx-2"])
+
+
+# ---------------------------------------------------------------------------
+# El agente del cliente (shopper): una compra, un contexto del comercio
+# ---------------------------------------------------------------------------
+
+
+class _ComercioEnProceso:
+  """El `merchant_agent_client` del shopper con el comercio del sample en el
+  mismo proceso. Un mensaje sin contextId abre uno nuevo, como el servidor
+  A2A; uno con contextId sigue en ese contexto."""
+
+  def __init__(self, escenario, cortar=(), fallar=()):
+    self.escenario = escenario
+    self.cortar = set(cortar)  # números de mensaje que el Guard corta
+    self.fallar = set(fallar)  # números de mensaje que fallan sin el Guard
+    self.contextos = []  # el contextId de cada mensaje (None: ninguno)
+
+  async def send_a2a_message(self, message):
+    from a2a.types import Artifact, DataPart, Part, Task, TaskStatus
+    from roles.merchant_agent.sub_agents import catalog_agent
+
+    self.contextos.append(message.context_id)
+    numero = len(self.contextos)
+    contexto = message.context_id or f"ctx-{numero}"
+    if numero in self.cortar:
+      veredicto = {"guard.veredicto": {"status": "bloqueado", "motivo": "Filtro de seguridad."}}
+      partes = [[Part(root=DataPart(data=veredicto))]]
+      estado = "failed"
+    elif numero in self.fallar:
+      partes, estado = [], "failed"
+    else:
+      datos = [p.root.data for p in message.parts if hasattr(p.root, "data")]
+      datos.append({scenario.SCENARIO_DATA_KEY: self.escenario})
+      updater = _Updater(contexto)
+      await catalog_agent.find_items_workflow(datos, updater, None)
+      partes, estado = updater.artifacts, updater.estado
+    return Task(
+        id=f"task-{numero}",
+        context_id=contexto,
+        status=TaskStatus(state=estado),
+        artifacts=[Artifact(artifact_id=f"a-{numero}-{i}", parts=p) for i, p in enumerate(partes)],
+    )
+
+
+def _shopper(monkeypatch, comercio):
+  from types import SimpleNamespace
+
+  from roles.shopping_agent.subagents.shopper import tools as shopper
+
+  monkeypatch.setenv("DEMO_HOY", HOY.isoformat())
+  monkeypatch.setattr(shopper, "merchant_agent_client", comercio)
+  return shopper, SimpleNamespace(state={})
+
+
+def test_otra_busqueda_de_la_misma_compra_sigue_en_su_contexto(monkeypatch):
+  """El proxy agrupa la compra por contexto: si cada búsqueda abriera uno
+  nuevo, nuestro agente le volvería a preguntar el porqué al usuario en cada
+  búsqueda del agente (pasó con `general_sin_stock`: buscó 3 veces)."""
+  from roles.merchant_agent import storage
+
+  comercio = _ComercioEnProceso("general_sin_stock")
+  shopper, contexto = _shopper(monkeypatch, comercio)
+  primera = asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  segunda = asyncio.run(shopper.find_products("10 computadoras para el lunes", contexto))
+  tercera = asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  assert comercio.contextos == [None, "ctx-1", "ctx-1"]
+  assert contexto.state["shopping_context_id"] == "ctx-1"
+  assert primera and segunda and tercera
+  # El comercio atiende cada búsqueda del mismo contexto: sus carts quedan
+  # guardados (la misma oferta, el mismo cart) y el risk_data del contexto.
+  assert [c.cart_id for c in tercera] == [c.cart_id for c in primera]
+  assert not {c.cart_id for c in segunda} & {c.cart_id for c in primera}
+  for cart in [*primera, *segunda]:
+    assert storage.get_cart_data(cart.cart_id)["amount"] == cart.amount
+  assert [c["cart_id"] for c in contexto.state["available_carts"]] == [c.cart_id for c in tercera]
+  assert storage.get_risk_data("ctx-1")
+
+
+def test_una_compra_cortada_por_el_guard_no_presta_su_contexto(monkeypatch):
+  """Si el Guard cortó la búsqueda, el shopper sigue devolviendo el motivo
+  (no reintenta) y la próxima búsqueda es otra compra: en el contexto cortado
+  el proxy cortaría todo lo que siga. Una falla sin el Guard tira error (el
+  agente reintenta) y el reintento sigue en la misma compra."""
+  comercio = _ComercioEnProceso("general", cortar={3}, fallar={1})
+  shopper, contexto = _shopper(monkeypatch, comercio)
+  with pytest.raises(RuntimeError, match="Failed to find products"):
+    asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  cortada = asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  assert isinstance(cortada, str) and "blocked" in cortada and "Filtro de seguridad." in cortada
+  asyncio.run(shopper.find_products(MONITOR, contexto))
+  assert comercio.contextos == [None, "ctx-1", "ctx-1", None]
+
+
+def test_una_compra_pagada_o_frenada_antes_de_firmar_no_presta_su_contexto(monkeypatch):
+  """Con el recibo del pago, o si el Guard bloqueó el checkout (el agente le
+  dice al usuario que la compra se frenó), la próxima búsqueda abre otra
+  compra. Retenida para revisión humana (`escalar`) sigue siendo la misma."""
+  from a2a.types import Artifact, DataPart, Part, Task, TaskStatus
+  from common.constants import PAYMENT_RECEIPT_DATA_KEY
+  from roles.shopping_agent import tools as raiz
+
+  def tarea(datos):
+    return Task(
+        id="t", context_id="ctx-x", status=TaskStatus(state="completed"),
+        artifacts=[Artifact(artifact_id="a", parts=[Part(root=DataPart(data=datos))])],
+    )
+
+  class _Checkout:
+    def __init__(self, status):
+      self.status = status
+
+    async def send_a2a_message(self, message):
+      return tarea({"guard.veredicto": {"status": self.status, "motivo": "Guard."}})
+
+  recibo = {
+      "status": "Success", "iss": "pp", "iat": 1, "reference": "h", "payment_id": "p",
+      "psp_confirmation_id": "c", "network_confirmation_id": "n",
+  }
+  comercio = _ComercioEnProceso("general")
+  shopper, contexto = _shopper(monkeypatch, comercio)
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  raiz._store_receipt_if_present(tarea({PAYMENT_RECEIPT_DATA_KEY: recibo}), contexto)
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))  # la compra nueva sigue
+  assert comercio.contextos == [None, None, "ctx-2"]
+
+  contexto.state["chosen_cart_id"] = contexto.state["available_carts"][0]["cart_id"]
+  monkeypatch.setattr(raiz, "merchant_agent_client", _Checkout("escalar"))
+  with pytest.raises(RuntimeError, match="human review"):
+    asyncio.run(raiz.create_checkout(contexto))
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  assert comercio.contextos[-1] == "ctx-2"
+
+  monkeypatch.setattr(raiz, "merchant_agent_client", _Checkout("bloqueado"))
+  assert "blocked" in asyncio.run(raiz.create_checkout(contexto))
+  asyncio.run(shopper.find_products(COMPUTADORAS_TOPE, contexto))
+  assert comercio.contextos[-1] is None

@@ -353,3 +353,57 @@ def test_adk_web_listens_only_on_loopback_unless_asked():
   assert len(adk) == 1
   assert '--host "${ADK_HOST:-127.0.0.1}"' in adk[0]
   assert not any("0.0.0.0" in line for line in commands)
+
+
+def test_public_catalog_listens_only_on_loopback_unless_asked(monkeypatch):
+  """El catálogo público (:8011) era el único servicio de world en 0.0.0.0:
+  disparaba el firewall de Windows y lo exponía a la LAN. Escucha en
+  127.0.0.1 salvo que se pida otro host con PUBLIC_CATALOG_HOST (el túnel de
+  la demo lo lee por 127.0.0.1)."""
+  from demo_world import public_catalog
+
+  hosts = []
+  monkeypatch.setattr(public_catalog.app, "run", lambda host, port: hosts.append((host, port)))
+  monkeypatch.delenv("PUBLIC_CATALOG_HOST", raising=False)
+  public_catalog.main()
+  monkeypatch.setenv("PUBLIC_CATALOG_HOST", "0.0.0.0")
+  public_catalog.main()
+  assert hosts == [("127.0.0.1", public_catalog.PORT), ("0.0.0.0", public_catalog.PORT)]
+
+
+def test_set_active_scenario_replaces_the_file_atomically(monkeypatch, tmp_path):
+  """El comercio lee el archivo en cada búsqueda: si la escritura se corta,
+  queda el escenario anterior entero (nunca un archivo vacío o a medias), y
+  no quedan temporales."""
+  monkeypatch.setenv("TEMP_DB_DIR", str(tmp_path))
+  path = scenario.set_active_scenario("B")
+  assert path.read_text("utf-8") == "B" and scenario.active_scenario() == "B"
+
+  def falla(*args, **kwargs):
+    raise OSError("disco lleno")
+
+  monkeypatch.setattr(scenario.os, "replace", falla)
+  with pytest.raises(OSError):
+    scenario.set_active_scenario("C")
+  assert path.read_text("utf-8") == "B"
+  assert [p.name for p in tmp_path.iterdir()] == [path.name]
+
+
+def test_an_empty_or_unreadable_scenario_file_fails_instead_of_switching(monkeypatch, tmp_path):
+  """Sin archivo, la variable DEMO_SCENARIO o baseline (como siempre). Con un
+  archivo vacío o ilegible, el comercio no cae en silencio a otro escenario
+  (zapatillas): la búsqueda falla con el motivo."""
+  monkeypatch.setenv("TEMP_DB_DIR", str(tmp_path))
+  monkeypatch.setenv("DEMO_SCENARIO", "C")
+  assert scenario.active_scenario() == "C"
+  monkeypatch.delenv("DEMO_SCENARIO")
+  assert scenario.active_scenario() == "baseline"
+  archivo = tmp_path / scenario.SCENARIO_FILE_NAME
+  archivo.write_text(" \n", encoding="utf-8")
+  with pytest.raises(ValueError, match="vacío"):
+    scenario.active_scenario()
+  assert scenario.active_scenario([{scenario.SCENARIO_DATA_KEY: "B"}]) == "B"
+  archivo.unlink()
+  archivo.mkdir()  # existe pero no se puede leer como archivo
+  with pytest.raises(ValueError, match="leer"):
+    scenario.active_scenario()

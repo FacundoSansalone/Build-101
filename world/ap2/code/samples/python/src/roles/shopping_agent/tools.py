@@ -49,6 +49,7 @@ from google.adk.tools.tool_context import ToolContext
 from jwcrypto.jwk import JWK
 
 from .remote_agents import credentials_provider_client, merchant_agent_client
+from .subagents.shopper.tools import CONTEXTO_COMPRA_KEY  # HACKATHON
 
 
 _logger = logging.getLogger("shopping_agent")
@@ -148,6 +149,8 @@ async def create_checkout(
       # Bloqueado: se devuelve el motivo en vez de tirar error. Con el error,
       # RetryingLlmAgent reintentaba el turno y el agente inventaba un resumen
       # del carrito pidiendo confirmar una compra que no se puede firmar.
+      # La compra terminó: la próxima búsqueda abre otra.
+      tool_context.state[CONTEXTO_COMPRA_KEY] = None
       return (
           f"Pre-Sign Guard blocked this purchase before signing: {motivo} "
           "There is no checkout for this cart. Do not create mandates, do not"
@@ -371,3 +374,6 @@ def _store_receipt_if_present(task, tool_context: ToolContext) -> None:
     tool_context.state["payment_receipt"] = artifact_utils.only(
         payment_receipts
     ).model_dump(mode="json")
+    # HACKATHON (Pre-Sign Guard): la compra terminó; la próxima búsqueda
+    # abre otra en el comercio (ver shopper/tools.py).
+    tool_context.state[CONTEXTO_COMPRA_KEY] = None
