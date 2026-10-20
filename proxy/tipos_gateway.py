@@ -26,7 +26,7 @@ PREFIJO_CLAVE = "psg_"
 ID_COMPRA_RE = re.compile(r"cmp-[0-9a-f]{16}")
 ID_ESPERA_RE = re.compile(r"esp-[0-9a-f]{16}")                  # esperas (004_serverless.sql)
 ID_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")             # integradores y comercios
-ID_SEGURO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}")  # contexto, cart, task, aprobación, merchant.id
+ID_SEGURO_RE = a2a.ID_SEGURO_RE                                  # contexto, cart, task, aprobación, merchant.id
 KID_RE = re.compile(r"[0-9a-f]{12}")
 
 RUTAS_V1_PUBLICAS: frozenset[str] = frozenset(

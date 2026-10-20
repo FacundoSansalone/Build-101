@@ -419,12 +419,12 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
      "El Guard sobre un `ap2.checkout`, para quien no pasa por el gateway. Firmá solo "
      "si la respuesta es 200 y `llega_a_firma` es true.",
      "SolicitudEvaluar", {"200": ("Veredicto", "ResultadoEvaluar")},
-     ["400", "401", "403", "413", "415"], False),
+     ["400", "401", "403", "413", "415", "429"], False),
     ("post", "/v1/filtrar", "Filtrar contenido externo",
      "El filtro de seguridad sobre lo que el agente lee fuera del gateway (búsquedas, "
      "páginas). Es defensa en profundidad: no garantiza detectar todo.",
      "SolicitudFiltrar", {"200": ("Resultado", "ResultadoFiltrar")},
-     ["400", "401", "413", "415"], False),
+     ["400", "401", "413", "415", "429"], False),
     ("get", "/v1/comercios", "Comercios permitidos",
      "Los comercios que el integrador puede usar, con su URL A2A.",
      None, {"200": ("Comercios", "ListaComercios")}, ["401"], False),
@@ -453,7 +453,7 @@ ERRORES: dict[str, str] = {
     "409": "estado, oportunidad_distinta, sin_escalar, cart_distinto, sin_webhook",
     "413": "cuerpo_demasiado_grande",
     "415": "se_espera_json",
-    "429": "demasiadas_compras",
+    "429": "demasiadas_compras, demasiadas_solicitudes",
     "503": "estado_no_disponible, sin_clave_recibo",
     "500": "interno",
 }

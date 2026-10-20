@@ -93,6 +93,15 @@ son las mismas; cambia esto:
   compra y sus esperas viven en la base, así que contestar el porqué, decidir
   o aprobar funciona desde cualquier pedido, aunque la búsqueda siga abierta
   en otra.
+- **`tasks/get` y `tasks/resubscribe` de un checkout se bloquean si caen en
+  otra instancia** que la que evaluó la tarea: la decisión del Guard sobre
+  esa tarea vive en la memoria de la instancia que la evaluó, y una tarea
+  con `ap2.checkout` que el gateway no evaluó nunca pasa (fail-closed). Para
+  el checkout, mandá otra vez `create_checkout` (se evalúa de nuevo).
+- **Webhooks en línea:** 2 intentos de 5 s (con 1 s entre medio) antes de
+  que el gateway responda el pedido que los disparó; no hay reintentos en
+  segundo plano (ver §7). Lo que no se entregó ahí no se vuelve a intentar:
+  reconciliá con `GET /v1/compras/{id}`.
 
 ## 4. Autenticación
 
@@ -290,6 +299,13 @@ Lo que puede pasar mientras esa llamada está abierta:
 
 Si nada de eso aplica, la respuesta del comercio llega intacta.
 
+**Con `message/stream` no se buscan propuestas.** En un stream la respuesta
+del comercio sale evento por evento (después del filtro): no se puede
+retener para consultar a tu usuario. La pregunta del porqué y el filtro
+funcionan igual; la compra queda `sin_oportunidad` y el Guard evalúa el
+checkout con la ficha que autorizaste. Si querés propuestas, buscá con
+`message/send`.
+
 ### 5.4 Pedir el checkout (`create_checkout`)
 
 Tu agente pide el checkout del cart elegido, con el `contextId` de la
@@ -304,8 +320,8 @@ dárselo y agrega a la tarea un artefacto con el veredicto:
 | `status` | Qué recibe tu agente | Qué hacés |
 |---|---|---|
 | `aprobado`, `con_avisos` | La tarea intacta, con el `ap2.checkout` del comercio byte a byte | Firmar (con `con_avisos`, mostrale el motivo al usuario) |
-| `escalar` | Tarea `failed`, **sin** el checkout: "requiere aprobación humana" | Mostrarle la evidencia a tu usuario y, si aprueba, ver abajo |
-| `bloqueado` | Tarea `failed`, sin el checkout | No hay nada que firmar. Tu agente puede elegir otro cart |
+| `escalar` | Tarea `failed`, **sin** el checkout ni nada más del comercio (solo el `guard.veredicto` y el texto): "requiere aprobación humana" | Mostrarle la evidencia a tu usuario y, si aprueba, ver abajo |
+| `bloqueado` | Tarea `failed`, sin el checkout ni nada más del comercio | No hay nada que firmar. Tu agente puede elegir otro cart |
 
 **Regla para tu agente: firmá solo si la tarea trae el `ap2.checkout` y el
 `guard.veredicto` dice `aprobado` o `con_avisos`.** El texto de la tarea es
@@ -519,6 +535,8 @@ Además:
 - **Reintentos:** hasta 6 intentos, con espera creciente (1 s, 4 s, 16 s,
   1 min, 5 min, con algo de azar), ante error de red, timeout, 5xx, 408 o
   429. Otro 4xx o una redirección cuentan como falla y no se reintentan.
+  **En Vercel no:** son 2 intentos de 5 s, con 1 s entre medio, antes de
+  responder el pedido que los disparó (§3), y después no hay más.
 - **Solo `https`** y a una IP pública: un webhook que resuelve a una IP
   privada se descarta (`destino_no_permitido`).
 - **No sobreviven a un reinicio del gateway.** Si el gateway se reinicia con
@@ -565,10 +583,21 @@ curl -s -X POST "$GW/v1/evaluar" \
 Respuesta: un `VistaVeredicto` (con `contexto_id: null`) más
 `comercio_firmado` (el `merchant.id` del checkout).
 
+**El recibo atestigua solo lo que mandaste.** En este modo el gateway no vio
+la negociación: el recibo firma el veredicto sobre la ficha, el checkout y
+las ofertas de **tu** pedido (más el catálogo del comercio, si lo indicaste).
+No prueba que esas fueran las ofertas que el comercio le mostró a tu agente
+ni que la ficha sea la que autorizó tu usuario: eso queda de tu lado.
+
 **Firmá solo si la respuesta es 200 y `llega_a_firma` es `true`.** Cualquier
 otra cosa (error, timeout, `false`) es no firmar. Este modo no tiene estado:
 no hay aprobaciones ni retención. Un `escalar` se lo mostrás a tu usuario y
 la decisión queda de tu lado.
+
+**Concurrencia:** a lo sumo 2 pedidos en curso por clave entre
+`/v1/evaluar` y `/v1/filtrar` (por instancia del gateway; corren en hilos que
+comparte todo el tráfico). El tercero responde enseguida 429
+`demasiadas_solicitudes` (`detalle.maximo`): reintentá cuando termine uno.
 
 ## 9. `/v1/filtrar`: lo que tu agente lee fuera del gateway
 
@@ -595,6 +624,8 @@ curl -s -X POST "$GW/v1/filtrar" \
 - **Falla cerrado:** si el filtro no está, falla o tarda más de 30 s,
   responde 200 `bloqueado` con `senales` `filtro:no_configurado`,
   `filtro:error` o `filtro:timeout`. Tratalo como bloqueado.
+- **Concurrencia:** comparte con `/v1/evaluar` el máximo de 2 pedidos en
+  curso por clave (§8); el tercero da 429 `demasiadas_solicitudes`.
 - **No es una garantía.** El filtro está calibrado para respuestas de
   comercios; con páginas web puede equivocarse para los dos lados. Lo que
   protege la compra es la verificación antes de la firma.
@@ -631,8 +662,8 @@ reabrirías el canal que el gateway cierra.
 
 | HTTP | `codigo` | Qué significa |
 |---|---|---|
-| 400 | `json_invalido` | El cuerpo no es JSON estricto (sin `NaN`, `Infinity` ni números que desbordan) o tiene más de 32 niveles de objetos y listas |
-| 400 | `validacion` | Falta algo, sobra una clave o un valor no sirve (`detalle.campos`) |
+| 400 | `json_invalido` | El cuerpo no es JSON estricto (sin `NaN`, `Infinity` ni números que desbordan), tiene más de 32 niveles de objetos y listas o trae texto que no es UTF-8 (un surrogate suelto, como el escape de `U+D800`) |
+| 400 | `validacion` | Falta algo, sobra una clave o un valor no sirve (`detalle.campos`; un número que no entra en un float, como un entero de más de 308 dígitos, es "número fuera de rango") |
 | 400 | `ficha_sin_tope` | La ficha no tiene precio máximo y moneda obligatorios |
 | 400 | `requisito_no_soportado` | Un requisito que el Guard no sabe verificar |
 | 400 | `checkout_invalido` | `/v1/evaluar` con un checkout que no es un `ap2.checkout` |
@@ -647,7 +678,8 @@ reabrirías el canal que el gateway cierra.
 | 409 | `sin_webhook` | Tu clave no tiene webhook |
 | 413 | `cuerpo_demasiado_grande` | Más de 1 MB |
 | 415 | `se_espera_json` | Falta `Content-Type: application/json` |
-| 429 | `demasiadas_compras` | Llegaste al máximo de compras activas (`detalle.maximo`) |
+| 429 | `demasiadas_solicitudes` | Ya tenés 2 pedidos en curso entre `/v1/evaluar` y `/v1/filtrar` (`detalle.maximo`); reintentá cuando termine uno |
+| 429 | `demasiadas_compras` | Llegaste al máximo de compras activas (`detalle.maximo`): las que todavía no resolvieron la negociación (`creada`, `esperando_contexto`, `negociando`, `esperando_decision`) |
 | 503 | `estado_no_disponible` | El gateway no pudo leer o guardar su estado: reintentá |
 | 503 | `sin_clave_recibo` | El gateway no tiene clave de recibos publicada |
 | 500 | `interno` | Error interno (sin detalle) |

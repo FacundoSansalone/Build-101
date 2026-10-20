@@ -225,7 +225,9 @@ class FakeMerchant:
             results = [self.tareas[body["params"]["id"]]]
             if self.manipular_sse is not None:
                 results = self.manipular_sse(results, body)
-            contenido = results if isinstance(results, bytes) else sse_de(results)
+            contenido = (
+                results if isinstance(results, bytes) else sse_de(results, body.get("id"))
+            )
             self.ultima_respuesta = contenido
             return Response(
                 contenido, headers={"content-type": self.content_type_sse, **self.headers_extra}
@@ -399,14 +401,15 @@ class FakeMerchant:
             if isinstance(manipulado, bytes):
                 return manipulado
             eventos = manipulado
-        return sse_de(eventos)
+        return sse_de(eventos, (pedido or {}).get("id", 1))
 
 
-def sse_de(results: list[Any]) -> bytes:
-    """Cuerpo SSE con un evento JSON-RPC por cada `result` (como el SDK)."""
+def sse_de(results: list[Any], rpc_id: Any = 1) -> bytes:
+    """Cuerpo SSE con un evento JSON-RPC por cada `result` (como el SDK: con
+    el `id` del pedido)."""
     bloques = [
         "data: "
-        + json.dumps({"id": 1, "jsonrpc": "2.0", "result": e}, ensure_ascii=False)
+        + json.dumps({"id": rpc_id, "jsonrpc": "2.0", "result": e}, ensure_ascii=False)
         + "\r\n\r\n"
         for e in results
     ]

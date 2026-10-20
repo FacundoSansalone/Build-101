@@ -66,9 +66,15 @@ MAX_COMPRAS = 200
 LARGO_MAXIMO_RESPUESTA = 1000
 MAX_VEREDICTOS_POR_COMPRA = 20
 MAX_CONTEXTOS_POR_COMPRA = 20
-# Una compra de API en estos estados ya no acepta tráfico A2A ni cuenta como
-# activa para el límite del integrador.
+# Una compra de API en estos estados ya no acepta tráfico A2A.
 ESTADOS_TERMINALES_API = frozenset({"bloqueada", "vencida"})
+# Una compra de API en estos estados todavía no resolvió la negociación: es la
+# única que cuenta para el límite de compras activas del integrador. Las
+# demás (resueltas o terminales) pueden salir de memoria: si llega tráfico,
+# se hidratan del almacén. Mismos valores que `estado.ESTADOS_ACTIVOS`.
+ESTADOS_ACTIVOS_API = frozenset(
+    {"creada", "esperando_contexto", "negociando", "esperando_decision"}
+)
 ESTADOS_COMPRA: frozenset[str] = frozenset(get_args(EstadoCompra))
 # Una compra en estos estados tiene una espera abierta (el porqué o la decisión).
 ESTADOS_ESPERANDO = frozenset({"esperando_contexto", "esperando_decision"})
@@ -689,13 +695,13 @@ class RegistroCompras:
 
         - Las de la demo (`origen="agente"`): las más viejas, cuando pasan de
           `maximo` (como siempre).
-        - Las de integrador: solo las que ya no pueden recibir tráfico
-          (bloqueadas, vencidas o pasadas de su TTL) y sin una espera abierta.
-          Una viva no sale nunca: con ella se irían las ataduras
-          contexto → compra, que son las que dicen que es de un integrador
-          (el dashboard no la puede aprobar) y qué ficha autorizó, y su
-          espera se cerraría al hidratarla de nuevo (`desde_fila`). Cuántas
-          hay lo acota el límite de compras activas de cada integrador.
+        - Las de integrador: solo las terminadas (bloqueadas o vencidas),
+          las resueltas (sin oportunidad, aceptadas o rechazadas: si llega
+          su checkout, se hidratan del almacén con sus ataduras, como
+          después de un reinicio) o las pasadas de su TTL, y nunca con una
+          espera abierta. Una que negocia no sale: su espera se cerraría al
+          hidratarla de nuevo (`desde_fila`). Cuántas hay lo acota el límite
+          de compras activas de cada integrador, que cuenta justo esas.
         """
         demo = [cid for cid, c in self._compras.items() if c.origen != "api"]
         for compra_id in demo[: max(0, len(demo) - self._maximo)]:
@@ -710,11 +716,11 @@ class RegistroCompras:
                 sobran -= 1
 
     def _terminada(self, compra: Compra) -> bool:
-        """Una compra de integrador que ya no recibe tráfico A2A ni espera
-        nada del integrador (se puede sacar de memoria)."""
-        if compra.estado in ("esperando_contexto", "esperando_decision"):
+        """Una compra de integrador que se puede sacar de memoria: no espera
+        nada y ya no negocia (terminal o resuelta), o pasó su TTL."""
+        if compra.estado in ESTADOS_ESPERANDO:
             return False
-        if compra.estado in ESTADOS_TERMINALES_API:
+        if compra.estado not in ESTADOS_ACTIVOS_API:
             return True
         if self._ttl_s is None:
             return False

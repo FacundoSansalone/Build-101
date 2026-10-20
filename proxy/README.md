@@ -129,7 +129,7 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
 | Llamada | Qué hace el proxy |
 |---|---|
 | `GET /a2a/merchant_agent/.well-known/agent-card.json` (o `agent.json`) | Pide la card al comercio y reescribe `url` y `additionalInterfaces[].url` con `PROXY_PUBLIC_URL`. Sin esto, el cliente del sample manda el JSON-RPC directo a `:8001`. Devuelve solo el JSON (`Content-Type: application/json`), **sin ningún header del comercio** (nunca `Set-Cookie`). Cualquier otra ruta bajo `/a2a/merchant_agent/` da 404 y no se pide al comercio. Con filtro (`GUARD_FILTRO`) y el Guard prendido (siempre, con un integrador), la card del comercio pasa por el filtro antes de llegar al agente: nombre, descripciones y skills son texto del comercio. Si el filtro la corta, falla o tarda de más, 502 `card_bloqueada` y un evento `error` con motivo fijo. Lo que dijo el filtro (pasa o corta) queda 5 min por sha256 de los bytes de la card (hasta 64 cards): la misma card no se vuelve a filtrar en cada GET; una distinta sí, y una falla no se guarda. Más de 64 niveles de anidamiento: 502 `card_ilegible`. |
-| `POST /a2a/merchant_agent` | Reenvía el JSON-RPC (bytes del pedido tal cual, con `X-A2A-Extensions`). Respuesta JSON (`message/send`, lo que usa el sample) o SSE (`message/stream`, `tasks/resubscribe`), detectada con `"text/event-stream" in content-type.lower()`. Del comercio al cliente solo pasa `X-A2A-Extensions`; el `Content-Type` se normaliza. Si el cliente se va a mitad de un SSE, la respuesta del comercio se cierra igual (tarea de fondo de la `StreamingResponse`). |
+| `POST /a2a/merchant_agent` | Reenvía el JSON-RPC (bytes del pedido tal cual, con `X-A2A-Extensions`). Respuesta JSON (`message/send`, lo que usa el sample) o SSE (`message/stream`, `tasks/resubscribe`), detectada con `"text/event-stream" in content-type.lower()`. Del comercio al cliente solo pasa `X-A2A-Extensions`; el `Content-Type` se normaliza. Con el Guard prendido, del sobre JSON-RPC de cada respuesta (JSON o evento SSE) pasa solo `jsonrpc` (`"2.0"`), el `id` del pedido y `result` o `error`: el filtro revisa el `result`, y otras claves de primer nivel no las vio nadie (lista blanca). Si el sobre ya era solo eso, los bytes del comercio pasan tal cual. Si el cliente se va a mitad de un SSE, la respuesta del comercio se cierra igual (tarea de fondo de la `StreamingResponse`). |
 | `find_products` (pedido con `catalog_search`) | Pasa sin cambios. **Solo de estas respuestas** salen las ofertas: carts, offer_details y escenario, guardados (copiados) por el `context_id` de la respuesta. Una búsqueda nueva del cliente en el mismo contexto las reemplaza; ninguna otra respuesta las toca. |
 | `create_checkout` (pedido con `cart_id`) | Exige **un solo** `ap2.checkout`, en los artefactos de una tarea, con `cart_id` = el del pedido y `contextId` = el del pedido. Evalúa con las ofertas del contexto del pedido: `evaluar(ficha, OfertasVistas(...), cart_id_del_pedido, catalogo, politica=None, checkout_hash=..., checkout=CheckoutVisto.model_validate(ap2.checkout))` (siempre con `checkout=`). |
 | `tasks/get`, `tasks/resubscribe` | Con checkout: usa la decisión guardada por `(task_id, sha256 del data part ap2.checkout completo en JSON canónico, cart_id)`. Si cambia cualquier campo del data part (el JWT, `checkout_hash`, `amount`, `amount_cents`, `currency`, `item_label`…), se reevalúa; el orden de las claves no cuenta. Si la tarea fue bloqueada o retenida, **nunca** devuelve el checkout (aunque se apague el Guard). Si el proxy no evaluó esa tarea, bloquea. |
@@ -140,9 +140,9 @@ PYTHONUTF8=1 PYTHONPATH=. world/ap2/.venv/Scripts/python -m proxy.scripts.smoke_
 | Veredicto | Al agente | Eventos |
 |---|---|---|
 | `aprobado`, `con_avisos` | Tarea intacta + artefacto aparte `{"guard.veredicto": <versión para el agente>}` | `veredicto`, `reenviado` |
-| `escalar` | **Retenido**: la misma tarea (mismos ids) en `failed`, sin el `ap2.checkout`, con `guard.veredicto` y el texto "KaiAI: escalar. <motivo> El checkout requiere aprobación humana…" | `veredicto`, `bloqueado` con `requiere_aprobacion: true` |
+| `escalar` | **Retenido**: una tarea `failed` con los mismos ids (si son seguros; si no, unos del proxy) y solo lo del proxy: `guard.veredicto` y el texto "KaiAI: escalar. <motivo> El checkout requiere aprobación humana…". Nada más de la tarea del comercio (ni el checkout, ni `history`, `metadata` u otros artefactos) | `veredicto`, `bloqueado` con `requiere_aprobacion: true` |
 | `escalar` + aprobación humana vigente (mismo contexto, cart y monto) | Tarea intacta (checkout byte a byte el del comercio) + `guard.veredicto` | `veredicto`, `reenviado` con `aprobacion_humana: true` |
-| `bloqueado` | Tarea `failed`, sin el checkout, con `guard.veredicto` y "KaiAI: bloqueado. <motivo> No se presenta para firma." | `veredicto`, `bloqueado` |
+| `bloqueado` | Tarea `failed`, igual que la retenida (sin nada del comercio), con `guard.veredicto` y "KaiAI: bloqueado. <motivo> No se presenta para firma." | `veredicto`, `bloqueado` |
 | No se pudo evaluar | Tarea `failed` (la del comercio o una armada por el proxy) con un `guard.veredicto` `bloqueado` y un motivo fijo del proxy | `error`, `bloqueado` |
 
 El texto para el agente es siempre la plantilla fija
@@ -333,8 +333,10 @@ prendido; con el interruptor apagado el proxy no pregunta ni retiene nada.
    su propuesta; si no hay, si no devuelve un ID del subconjunto del repo o
    si falla, la de las palabras del pedido (`taxonomia.categoria_por_palabras`,
    tabla determinística; el pedido manda sobre las respuestas). Si las dos
-   están y la de las palabras es más específica dentro de la rama de la
-   propuesta, esa. Los eventos llevan el ID y la ruta del árbol
+   están en la misma rama, la más específica; si no tienen relación de
+   rama, la de las palabras ("notebooks" es Laptops aunque el clasificador
+   proponga Desktop Computers: si no, el Guard escalaba las notebooks de
+   verdad). Los eventos llevan el ID y la ruta del árbol
    (`categoria_ruta`); nada del comercio. Las categorías del catálogo que se
    le ofrecen al intake van primero las del pedido (las de su rama de la
    taxonomía o las que nombra): el intake ofrece como mucho 40.
@@ -388,7 +390,12 @@ Reglas que no dependen de la demo:
 - **Tiempo.** Las dos esperas caen en la misma llamada del agente del
   cliente, que espera hasta 600 s. El proxy usa un presupuesto de 570 s por
   llamada (los plazos se recortan a lo que queda), y cada llamada al agente
-  de intención tiene un tope de 45 s.
+  de intención tiene un tope de 45 s. Las esperas del intake (el porqué y
+  las repreguntas) dejan además 30 s para la llamada al comercio. Si al
+  detectar una oportunidad no le quedan al usuario al menos 30 s (o la
+  espera configurada, si es más corta), no se consulta: sigue el pedido
+  literal y sale un evento `error` que lo dice (una consulta que vencía
+  antes de que el usuario la viera cortaba la compra).
 - **Filtro.** Corre en un hilo, con un tope de 30 s. Si vence o falla,
   bloquea. Tiene su propio pool (`ProxyGuard.ejecutor_filtro`, 16 hilos) y el
   agente de intención y el fabricante, otro (`ejecutor_llm`, 16): un LLM
@@ -427,7 +434,8 @@ Reglas que no dependen de la demo:
 | `PROXY_ESPERA_DECISION_S` | `420` | Cuánto se espera la decisión sobre la oportunidad |
 | `PROXY_PERMITIR_SIN_FILTRO` | `0` | Con la intención activa, sin `GUARD_FILTRO` el proxy no arranca; `1` lo permite (solo tests y demo, se avisa en el log) |
 | `PROXY_FICHA_DEMO` | `0` | `0` (etapa 3): no se usan las fichas de la demo (`scenarios.json`, `fixtures/`), como con un comercio real. Mandan los parámetros que armó y confirmó el intake; sin compra, el Guard escala. `1`: manda la ficha del escenario fijo (grabaciones, benchmark por el proxy, `smoke_checkout.py`). `/guard/state` lo muestra en `ficha_demo` |
-| `DEMO_HOY` | — | Sin fijar, el hoy del reloj. Fecha `YYYY-MM-DD` que el agente de intención toma como hoy, solo para reproducir una grabación de un escenario fijo, que tiene fechas fijas (hoy = domingo `2026-10-18`, "el lunes" = `2026-10-19`): `DEMO_HOY=2026-10-18`. Se avisa en el log al arrancar; otro formato no arranca. No llega al Guard: los vencimientos del checkout firmado se miran con el reloj de verdad |
+| `DEMO_HOY` | — | Sin fijar, el hoy del reloj (en la zona de `KAIAI_ZONA_HORARIA`). Fecha `YYYY-MM-DD` que el agente de intención toma como hoy, solo para reproducir una grabación de un escenario fijo, que tiene fechas fijas (hoy = domingo `2026-10-18`, "el lunes" = `2026-10-19`): `DEMO_HOY=2026-10-18`. Se avisa en el log al arrancar; otro formato no arranca. No llega al Guard: los vencimientos del checkout firmado se miran con el reloj de verdad |
+| `KAIAI_ZONA_HORARIA` | `America/Argentina/Buenos_Aires` | Zona IANA del "hoy" del agente de intención (sin `DEMO_HOY`, que sigue mandando). No se usa la fecha del sistema: en Vercel el reloj está en UTC y un usuario de Argentina entre las 21 y las 24 recibía el día siguiente. Si `zoneinfo` no encuentra la zona (sin `tzdata`, o un nombre que no existe): para la de por defecto, UTC-3 fijo (Argentina no tiene horario de verano); para otra, UTC con un aviso en el log. No llega al Guard |
 | `FABRICANTE_FUENTE` | `fixture` | Ficha del fabricante por GTIN: `fixture` (`fixtures/fabricante/`, datos de prueba rotulados), `icecat` (en vivo) o `ninguna`. Un valor inválido (o `icecat` sin `ICECAT_USUARIO`) no arranca. Ver [`fabricante/README.md`](../fabricante/README.md) (`FABRICANTE_FIXTURES_DIR`, `ICECAT_*`) |
 | `FILTRO_SOLO_HEURISTICAS`, `DECISIONES_PROVEEDOR`, `DECISIONES_MODELO_*`, `FILTRO_TIMEOUT_S` | — | Del filtro y del cliente de decisiones: ver [`filtro/README.md`](../filtro/README.md) |
 
@@ -458,7 +466,10 @@ escenarios fijos (`PROXY_FICHA_DEMO`); también solo informa.
   reducida); `id`/`event` del SSE se sanean.
 - Ningún header del comercio llega al cliente salvo `X-A2A-Extensions`. Al
   revés, los headers de control propios (`X-Guard-Token`, `X-Compra-Id`)
-  nunca llegan al comercio, tampoco en el tráfico anónimo.
+  nunca llegan al comercio, tampoco en el tráfico anónimo, ni los que agrega
+  la plataforma delante del proxy con la IP o la ubicación de quien llama
+  (`X-Forwarded-*`, `X-Real-IP`, `Forwarded`, `True-Client-IP`, `X-Vercel-*`,
+  `CF-*`). `Content-Type`, `Accept` y las extensiones A2A pasan igual.
 - JSON estricto (sin `NaN`/`Infinity`), lectura con tope de bytes y SSE leído
   línea a línea con el mismo tope. Una respuesta (o un evento SSE) del
   comercio con más de 64 niveles de anidamiento se trata como ilegible: más
@@ -856,10 +867,14 @@ intención queda apagada (pedido literal).
   ocuparle uno a otra compra, que quedaría cortada por `contexto_ajeno`. Es
   denegación de servicio, no fuga (no ve nada de la otra compra). Los
   comercios reales usan UUID; si importa, atar solo los que crea el comercio.
-- **Memoria:** una compra de integrador viva (no bloqueada ni vencida,
-  dentro de su TTL, o con una espera abierta) nunca sale de memoria: la
-  acota el límite de compras activas de cada integrador, no el tope de 200
-  de la demo. Las terminadas salen cuando hay más de 200.
+- **Memoria y compras activas:** cuentan como activas (para el 429
+  `demasiadas_compras`) solo las que todavía no resolvieron la negociación:
+  `creada`, `esperando_contexto`, `negociando` y `esperando_decision`. Una
+  sin oportunidad, aceptada, rechazada, bloqueada o vencida ya no ocupa
+  lugar. Las activas nunca salen de memoria (las acota ese límite, no el
+  tope de 200 de la demo); las demás salen cuando hay más de 200 y, si
+  llega tráfico (su checkout, una aprobación), se hidratan del almacén con
+  sus ataduras, como después de un reinicio.
 - **Activas tras un reinicio:** una fila que quedó en `esperando_*` cuenta
   como activa para el 429 hasta que se hidrata o se lista (ahí se
   normaliza) o hasta su TTL.

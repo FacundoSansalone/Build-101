@@ -34,11 +34,13 @@ almacén. Los métodos que escriben terminan con la barrera
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import dataclasses
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Literal
 
 from contracts import Evento
@@ -83,6 +85,12 @@ _PASO_RESOLUCION_S = 0.01
 ESPERA_RESOLUCION_COMPARTIDA_S = 3.0
 # Fotos del listado armadas a la vez (cada una son dos lecturas al almacén).
 _FOTOS_A_LA_VEZ = 8
+# `/v1/filtrar` y `/v1/evaluar` corren en los hilos del proxy (el pool del
+# filtro y el del LLM/fabricante), los mismos que usa todo el tráfico: un
+# integrador con muchas a la vez dejaba sin hilos al filtro de los demás (que
+# vence y falla cerrado: todo bloqueado). A lo sumo estas en curso por
+# integrador, entre las dos rutas y en esta instancia; si no, 429.
+MAX_SIN_ESTADO_POR_INTEGRADOR = 2
 
 
 def _no_disponible() -> ErrorApi:
@@ -110,6 +118,8 @@ class NucleoProxy:
         # sola instancia): sin él, N POST concurrentes leen el mismo conteo y
         # se pasan todos del límite de compras activas.
         self._candados_creacion: dict[str, asyncio.Lock] = {}
+        # `/v1/filtrar` y `/v1/evaluar` en curso por integrador (`_cupo_sin_estado`).
+        self._sin_estado_en_curso: dict[str, int] = {}
         self.espera_resolucion_s = ESPERA_RESOLUCION_S
         self.espera_resolucion_compartida_s = ESPERA_RESOLUCION_COMPARTIDA_S
 
@@ -650,9 +660,32 @@ class NucleoProxy:
 
     # -- servicios sin estado --------------------------------------------------
 
+    @contextlib.contextmanager
+    def _cupo_sin_estado(self, integrador: Integrador) -> Iterator[None]:
+        """Un lugar de los `MAX_SIN_ESTADO_POR_INTEGRADOR` del integrador, o 429
+        sin esperar. Sin await entre mirar y sumar: no hace falta candado."""
+        en_curso = self._sin_estado_en_curso.get(integrador.id, 0)
+        if en_curso >= MAX_SIN_ESTADO_POR_INTEGRADOR:
+            raise ErrorApi(
+                429, "demasiadas_solicitudes",
+                "Hay demasiadas solicitudes en curso para esta clave en /v1/filtrar y "
+                "/v1/evaluar; reintentá cuando terminen.",
+                {"maximo": MAX_SIN_ESTADO_POR_INTEGRADOR},
+            )
+        self._sin_estado_en_curso[integrador.id] = en_curso + 1
+        try:
+            yield
+        finally:
+            quedan = self._sin_estado_en_curso.get(integrador.id, 1) - 1
+            if quedan > 0:
+                self._sin_estado_en_curso[integrador.id] = quedan
+            else:
+                self._sin_estado_en_curso.pop(integrador.id, None)
+
     async def evaluar(self, integrador: Integrador, solicitud: SolicitudEvaluar) -> dict[str, Any]:
-        # La barrera: el registro del veredicto en Supabase antes de responder.
-        return await self._con_barrera(self._evaluar(integrador, solicitud))
+        with self._cupo_sin_estado(integrador):
+            # La barrera: el registro del veredicto en Supabase antes de responder.
+            return await self._con_barrera(self._evaluar(integrador, solicitud))
 
     async def _evaluar(self, integrador: Integrador, solicitud: SolicitudEvaluar) -> dict[str, Any]:
         proxy = self.proxy
@@ -709,9 +742,10 @@ class NucleoProxy:
         return resultado
 
     async def filtrar(self, integrador: Integrador, solicitud: SolicitudFiltrar) -> dict[str, Any]:
-        resultado = await sin_estado.filtrar_contenido(
-            self.proxy.filtro, solicitud, ejecutor=self.proxy.ejecutor_filtro
-        )
+        with self._cupo_sin_estado(integrador):
+            resultado = await sin_estado.filtrar_contenido(
+                self.proxy.filtro, solicitud, ejecutor=self.proxy.ejecutor_filtro
+            )
         logger.info(
             "/v1/filtrar del integrador %s (%s): %s",
             integrador.id, solicitud.origen, resultado.get("status"),

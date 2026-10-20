@@ -7,6 +7,7 @@ re-arma desde un modelo.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import codecs
 import copy
@@ -39,6 +40,8 @@ MANDATO_KEYS = (
 # Métodos que devuelven una tarea ya existente (no crean un checkout nuevo).
 METODOS_DE_TAREA = ("tasks/get", "tasks/resubscribe")
 ESTADOS_TERMINALES = {"completed", "failed", "canceled", "rejected"}
+# Los `kind` de un result de A2A. Otro lo eligió el comercio: no va a ningún texto.
+KINDS_A2A = ("task", "message", "status-update", "artifact-update")
 
 TipoPedido = Literal["find_products", "create_checkout", "otro"]
 
@@ -220,14 +223,23 @@ def _es_parte_veredicto(parte: Any) -> bool:
     )
 
 
+def tipo_de(result: Any) -> str:
+    """El `kind` de un result si es uno de A2A (`KINDS_A2A`); si no, el tipo de
+    Python (`dict`, `list`…). Para los motivos: nunca texto del comercio."""
+    kind = result.get("kind") if isinstance(result, dict) else None
+    return kind if isinstance(kind, str) and kind in KINDS_A2A else type(result).__name__
+
+
 def es_final(result: dict[str, Any]) -> bool:
-    """¿Este evento cierra la tarea para el cliente?"""
+    """¿Este evento cierra la tarea para el cliente? Un `status` o un `state`
+    de otro tipo (lo elige el comercio) no cierra nada."""
     kind = result.get("kind")
     if kind == "status-update":
         return bool(result.get("final"))
     if kind == "task":
-        estado = (result.get("status") or {}).get("state")
-        return estado in ESTADOS_TERMINALES
+        status = result.get("status")
+        estado = status.get("state") if isinstance(status, dict) else None
+        return isinstance(estado, str) and estado in ESTADOS_TERMINALES
     return kind == "message"
 
 
@@ -359,6 +371,10 @@ def sin_eco_del_pedido(result: Any, mensaje: dict[str, Any] | None) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _texto(valor: Any) -> str | None:
+    return valor if isinstance(valor, str) else None
+
+
 @dataclass
 class Respuesta:
     task_id: str | None = None
@@ -368,22 +384,26 @@ class Respuesta:
     escenario: str | None = None
 
     def ingerir(self, result: dict[str, Any]) -> None:
-        """Acepta un Task, un TaskArtifactUpdateEvent o un TaskStatusUpdateEvent."""
+        """Acepta un Task, un TaskArtifactUpdateEvent o un TaskStatusUpdateEvent.
+
+        Los ids solo si son strings y los artefactos solo si son una lista:
+        lo de otro tipo (lo elige el comercio) se ignora, como lo ilegible."""
         kind = result.get("kind")
         if kind == "task":
-            self.task_id = result.get("id") or self.task_id
-            self.contexto_id = result.get("contextId") or self.contexto_id
+            self.task_id = _texto(result.get("id")) or self.task_id
+            self.contexto_id = _texto(result.get("contextId")) or self.contexto_id
             # Un Task es una foto completa: reemplaza lo acumulado.
             self.carts = []
-            for artifact in result.get("artifacts") or []:
+            artifacts = result.get("artifacts")
+            for artifact in artifacts if isinstance(artifacts, list) else []:
                 self._artefacto(artifact)
         elif kind in ("artifact-update", "status-update"):
-            self.task_id = result.get("taskId") or self.task_id
-            self.contexto_id = result.get("contextId") or self.contexto_id
+            self.task_id = _texto(result.get("taskId")) or self.task_id
+            self.contexto_id = _texto(result.get("contextId")) or self.contexto_id
             if kind == "artifact-update":
                 self._artefacto(result.get("artifact"))
         elif kind == "message":
-            self.contexto_id = result.get("contextId") or self.contexto_id
+            self.contexto_id = _texto(result.get("contextId")) or self.contexto_id
 
     def _artefacto(self, artifact: Any) -> None:
         if not isinstance(artifact, dict):
@@ -465,11 +485,19 @@ def _es_entero(v: Any) -> bool:
 
 
 _CART_ID_SEGURO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+# Contexto, cart, task, aprobación, merchant.id (`tipos_gateway.ID_SEGURO_RE`).
+ID_SEGURO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}")
 
 
 def cart_id_seguro(valor: Any) -> str | None:
     """El cart_id si es un identificador corto y sin texto libre; si no, None."""
     return valor if isinstance(valor, str) and _CART_ID_SEGURO.fullmatch(valor) else None
+
+
+def id_seguro(valor: Any) -> str | None:
+    """El id (de tarea o de contexto) si es un identificador sin texto libre;
+    si no, None. Un id que eligió el comercio puede traer una inyección."""
+    return valor if isinstance(valor, str) and ID_SEGURO_RE.fullmatch(valor) else None
 
 
 def veredicto_para_agente(veredicto_json: dict[str, Any]) -> dict[str, Any]:
@@ -512,27 +540,6 @@ def tarea_con_artefacto(task: dict[str, Any], artefacto: dict[str, Any]) -> dict
     return {**task, "artifacts": [*(task.get("artifacts") or []), artefacto]}
 
 
-def _sin_checkout(artifacts: list[Any]) -> list[Any]:
-    """Saca las partes con ap2.checkout; descarta artefactos que quedan vacíos."""
-    resultado = []
-    for artifact in artifacts:
-        if not isinstance(artifact, dict):
-            resultado.append(artifact)
-            continue
-        parts = [
-            p
-            for p in artifact.get("parts") or []
-            if not (
-                isinstance(p, dict)
-                and isinstance(p.get("data"), dict)
-                and CHECKOUT_KEY in p["data"]
-            )
-        ]
-        if parts:
-            resultado.append({**artifact, "parts": parts})
-    return resultado
-
-
 def _ahora_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -552,30 +559,24 @@ def estado_fallido(texto: str, task_id: str | None, contexto_id: str | None) -> 
 
 
 def tarea_bloqueada(
-    task: dict[str, Any], texto: str, artefacto: dict[str, Any] | None
+    task: dict[str, Any], texto: str, artefacto: dict[str, Any]
 ) -> dict[str, Any]:
-    """La misma tarea (mismos ids), `failed`, sin el checkout y con el motivo."""
-    artifacts = _sin_checkout(task.get("artifacts") or [])
-    if artefacto is not None:
-        artifacts.append(artefacto)
-    nueva = {
-        **task,
-        "status": estado_fallido(texto, task.get("id"), task.get("contextId")),
-    }
-    if artifacts:
-        nueva["artifacts"] = artifacts
-    else:
-        nueva.pop("artifacts", None)
-    return nueva
+    """La tarea retenida o bloqueada: los mismos ids (si son seguros), `failed`,
+    con el motivo y solo el artefacto del veredicto. Nada más de la tarea del
+    comercio (ni el checkout, ni `history`, `metadata` u otros artefactos):
+    el agente no tiene por qué leer texto del comercio en una tarea que no
+    sigue. El agente del sample lee el veredicto de `task.artifacts`."""
+    return tarea_sintetica_bloqueada(task.get("id"), task.get("contextId"), texto, artefacto)
 
 
 def tarea_sintetica_bloqueada(
     task_id: str | None, contexto_id: str | None, texto: str, artefacto: dict[str, Any]
 ) -> dict[str, Any]:
     """Una tarea `failed` armada por el proxy cuando no hay una tarea legible
-    del comercio (respuesta ilegible, error de red, timeout, etc.)."""
-    task_id = task_id or f"guard-bloqueo-{uuid.uuid4().hex}"
-    contexto_id = contexto_id or f"guard-contexto-{uuid.uuid4().hex}"
+    del comercio (respuesta ilegible, error de red, timeout, etc.). Los ids
+    solo si son seguros (`id_seguro`); si no, unos del proxy."""
+    task_id = id_seguro(task_id) or f"guard-bloqueo-{uuid.uuid4().hex}"
+    contexto_id = id_seguro(contexto_id) or f"guard-contexto-{uuid.uuid4().hex}"
     return {
         "kind": "task",
         "id": task_id,
@@ -610,6 +611,18 @@ def evento_fallido(
 
 def respuesta_jsonrpc(rpc_id: Any, result: dict[str, Any]) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+
+
+def sobre_jsonrpc(body: dict[str, Any], rpc_id: Any) -> dict[str, Any]:
+    """El sobre JSON-RPC que se reenvía (lista blanca): `jsonrpc`, el `id` del
+    pedido (el comercio solo lo repite) y `result` o, si no hay, `error`. Otras
+    claves de primer nivel no las vio el filtro (revisa el `result`): no pasan."""
+    sobre: dict[str, Any] = {"jsonrpc": "2.0", "id": rpc_id}
+    if "result" in body:
+        sobre["result"] = body["result"]
+    elif "error" in body:
+        sobre["error"] = body["error"]
+    return sobre
 
 
 def error_jsonrpc(rpc_id: Any, mensaje: str, code: int = -32603) -> dict[str, Any]:
@@ -680,31 +693,48 @@ async def leer_acotado(trozos: AsyncIterator[bytes], limite: int) -> bytes:
 
 
 _FIN_DE_LINEA = re.compile(r"\r\n|\r|\n")
+# Cada tantas líneas el lector cede el event loop: un trozo enorme lleno de
+# líneas (un comercio hostil) no frena al resto del proxy.
+_LINEAS_POR_TURNO = 1000
 
 
 async def lineas_acotadas(trozos: AsyncIterator[bytes], limite: int) -> AsyncIterator[str]:
-    """Líneas de un stream (CRLF, CR o LF), con tope de bytes en total."""
+    """Líneas de un stream (CRLF, CR o LF), con tope de bytes en total.
+
+    Lineal en el tamaño: cada trozo se recorre con un índice y lo que queda
+    se recorta una vez por trozo (recortar por línea era cuadrático), y la
+    búsqueda sigue desde donde quedó la anterior. Cede cada
+    `_LINEAS_POR_TURNO` líneas."""
     decodificador = codecs.getincrementaldecoder("utf-8")(errors="replace")
     pendiente = ""
     total = 0
+    lineas = 0
     async for trozo in trozos:
         total += len(trozo)
         if total > limite:
             raise LimiteExcedido(limite)
+        # Lo pendiente no tiene fines de línea, salvo un \r al final.
+        desde = max(0, len(pendiente) - 1)
         pendiente += decodificador.decode(trozo)
+        inicio = 0
         while True:
-            m = _FIN_DE_LINEA.search(pendiente)
+            m = _FIN_DE_LINEA.search(pendiente, max(inicio, desde))
             # Un \r al final puede ser la mitad de un \r\n: esperar más.
             if m is None or (m.group() == "\r" and m.end() == len(pendiente)):
                 break
-            yield pendiente[: m.start()]
-            pendiente = pendiente[m.end():]
+            yield pendiente[inicio: m.start()]
+            inicio = m.end()
+            lineas += 1
+            if lineas % _LINEAS_POR_TURNO == 0:
+                await asyncio.sleep(0)
+        pendiente = pendiente[inicio:]
     pendiente += decodificador.decode(b"", final=True)
-    while (m := _FIN_DE_LINEA.search(pendiente)) is not None:
-        yield pendiente[: m.start()]
-        pendiente = pendiente[m.end():]
-    if pendiente:
-        yield pendiente
+    inicio = 0
+    while (m := _FIN_DE_LINEA.search(pendiente, inicio)) is not None:
+        yield pendiente[inicio: m.start()]
+        inicio = m.end()
+    if inicio < len(pendiente):
+        yield pendiente[inicio:]
 
 
 # Todo lo que `str.splitlines()` toma como fin de línea. El proxy corta el

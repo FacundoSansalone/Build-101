@@ -94,7 +94,7 @@ from proxy.compras import (
     fusionar_filas,
     misma_fila,
 )
-from proxy.config import Config
+from proxy.config import Config, hoy_en, zona_horaria
 from proxy.consola import RUTAS_ABIERTAS as RUTAS_CONSOLA
 from proxy.consola import rutas_consola
 from proxy.esperas import Apertura, EsperaCompartida, EsperaLocal, Esperas
@@ -163,7 +163,14 @@ _HOP_BY_HOP = {
 _NO_HACIA_COMERCIO = _HOP_BY_HOP | {
     "host", "content-length", "accept-encoding", "cookie",
     HEADER_TOKEN.lower(), HEADER_COMPRA.lower(),
+    # Las que agrega la plataforma delante del proxy (Vercel, Cloudflare, un
+    # proxy inverso): traen la IP y la ubicación del integrador o del agente,
+    # no son del pedido A2A.
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port",
+    "x-real-ip", "forwarded", "true-client-ip",
 }
+# Y las de estos prefijos (`x-vercel-ip-country`, `cf-connecting-ip`…).
+_PREFIJOS_NO_HACIA_COMERCIO = ("x-vercel-", "cf-")
 # Del comercio al cliente solo pasa esto (el Content-Type se normaliza). Nunca
 # Set-Cookie: las cookies no distinguen puerto y llegarían al dashboard.
 _DEL_COMERCIO_AL_CLIENTE = {"x-a2a-extensions"}
@@ -291,6 +298,12 @@ _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
 # Motivos fijos cuando el estado no quedó guardado antes de responder
 # (varias instancias, `ProxyGuard.barrera`).
 _MOTIVO_SIN_ESTADO = "el estado del gateway no quedó guardado"
+# Una excepción inesperada al procesar lo que mandó el comercio (fail-closed).
+_MOTIVO_NO_PROCESABLE = "la respuesta del comercio no se pudo procesar"
+_MOTIVO_SIN_TIEMPO_CONSULTA = (
+    "Hay una alternativa, pero no queda tiempo en la llamada para consultarla "
+    "al usuario: no se consulta y sigue el pedido literal."
+)
 _MOTIVO_SIN_ESPERA = (
     "No se pudo guardar la espera en el almacén: la alternativa no se autoriza."
 )
@@ -300,6 +313,12 @@ _INTENTOS_FUSION = 3
 # Una repregunta del intake solo si queda al menos esto de la llamada (si
 # no, sigue con lo que tiene: la consulta de una oportunidad también espera).
 _MINIMO_REPREGUNTA_S = 30.0
+# Las esperas del intake (el porqué, las repreguntas) dejan esto para la
+# llamada al comercio, que viene después en la misma llamada.
+_RESERVA_COMERCIO_S = 30.0
+# La consulta de una oportunidad solo si el usuario tiene al menos esto (o
+# la espera configurada, si es más corta) para verla y contestar.
+_MINIMO_CONSULTA_S = 30.0
 # La taxonomía (unas 3 llamadas cortas) solo si queda al menos esto.
 _MINIMO_TAXONOMIA_S = 10.0
 _TIMEOUT_LLM_S = 45.0
@@ -322,7 +341,11 @@ Accion = Literal["pasar", "retener", "bloquear"]
 
 
 def _filtrar(headers: Any, excluidos: set[str]) -> dict[str, str]:
-    return {k: v for k, v in headers.items() if k.lower() not in excluidos}
+    return {
+        k: v
+        for k, v in headers.items()
+        if k.lower() not in excluidos and not k.lower().startswith(_PREFIJOS_NO_HACIA_COMERCIO)
+    }
 
 
 def _ficha_verificable(
@@ -716,6 +739,8 @@ class ProxyGuard:
                 "EVALUADOR STUB (PROXY_ALLOW_STUB=1): los veredictos NO son del "
                 "Guard real; /guard/state y cada evento veredicto lo marcan."
             )
+        # La zona del "hoy" del agente de intención (sin DEMO_HOY).
+        self.zona = zona_horaria(config.zona_horaria)
         if config.demo_hoy is not None:
             logger.warning(
                 "DEMO_HOY=%s: el agente de intención toma esa fecha como hoy "
@@ -727,8 +752,9 @@ class ProxyGuard:
 
     def hoy(self) -> date:
         """El "hoy" del agente de intención: `DEMO_HOY` si está fijado (las
-        ofertas de la demo tienen fechas fijas) y si no, el del reloj."""
-        return self.config.demo_hoy or date.today()
+        ofertas de la demo tienen fechas fijas) y si no, el del reloj en la
+        zona de `KAIAI_ZONA_HORARIA` (no la del sistema: Vercel corre en UTC)."""
+        return self.config.demo_hoy or hoy_en(self.zona)
 
     def firmar_veredicto(self, veredicto: Veredicto) -> Veredicto:
         """El veredicto con el recibo firmado: con la `ClaveRecibo` inyectada
@@ -1820,7 +1846,9 @@ class ProxyGuard:
                     )
                     texto = _PREGUNTA_POR_DEFECTO
                 compra.nueva_espera(texto)
-                vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_contexto_s))
+                vence = compra.fijar_plazo(
+                    self._plazo(llamada, self.config.espera_contexto_s, _RESERVA_COMERCIO_S)
+                )
                 apertura = await esperas.abrir(compra, "porque", estado_previo="creada")
                 if apertura != "abierta":
                     propia = False
@@ -1893,10 +1921,11 @@ class ProxyGuard:
             llamada, "No se pudo guardar la espera del porqué: sigue el pedido literal"
         )
 
-    def _plazo(self, llamada: Llamada, segundos: float) -> float:
+    def _plazo(self, llamada: Llamada, segundos: float, reserva: float = 0.0) -> float:
         """El plazo de una espera: el configurado, si entra en lo que queda de
-        la llamada (con margen para el LLM y la respuesta)."""
-        return min(segundos, self._restante(llamada) - _MARGEN_S)
+        la llamada (con margen para el LLM y la respuesta, y `reserva` para lo
+        que viene después: la llamada al comercio, en las del intake)."""
+        return min(segundos, self._restante(llamada) - _MARGEN_S - reserva)
 
     def _eventos_del_pedido(self, llamada: Llamada) -> None:
         pedido = llamada.pedido
@@ -1937,8 +1966,11 @@ class ProxyGuard:
         if llamada.guard_activo and self._es_de_checkout(llamada):
             cuerpo = self._bloqueo_sintetico(llamada, f"{motivo}: no hay checkout que evaluar", detalle)
             return Response(cuerpo, status_code=200, media_type="application/json")
-        mensaje = f"Proxy del Guard: {motivo} ({detalle})"
-        self._error(llamada, mensaje)
+        # El detalle (algunas excepciones de h11/httpcore traen bytes de la
+        # respuesta del comercio) va solo al evento `error`; al agente, el
+        # motivo fijo.
+        mensaje = f"Proxy del Guard: {motivo}"
+        self._error(llamada, f"{mensaje} ({detalle})")
         return JSONResponse(a2a.error_jsonrpc(llamada.pedido.rpc_id, mensaje), status_code=502)
 
     def _respuesta_excedida(self, llamada: Llamada, e: a2a.LimiteExcedido) -> Response:
@@ -1956,6 +1988,21 @@ class ProxyGuard:
         return JSONResponse(a2a.error_jsonrpc(llamada.pedido.rpc_id, mensaje), status_code=502)
 
     async def _procesar_json(
+        self, contenido: bytes, llamada: Llamada, status: int
+    ) -> tuple[bytes, int]:
+        """La respuesta JSON del comercio, ya leída. Una excepción que nadie
+        esperaba (un tipo raro del comercio que se escapó de las validaciones)
+        no sale como un 500 sin veredicto: es un bloqueo del proxy, con
+        motivo fijo (fail-closed)."""
+        try:
+            return await self._procesar_cuerpo(contenido, llamada, status)
+        except Exception as e:  # noqa: BLE001 - fail-closed
+            logger.exception("No se pudo procesar la respuesta del comercio")
+            return self._bloqueo_sintetico(
+                llamada, _MOTIVO_NO_PROCESABLE, f"{type(e).__name__}: {e}"[:200]
+            ), 200
+
+    async def _procesar_cuerpo(
         self, contenido: bytes, llamada: Llamada, status: int
     ) -> tuple[bytes, int]:
         pedido, activo = llamada.pedido, llamada.guard_activo
@@ -1993,6 +2040,13 @@ class ProxyGuard:
                 llamada, {}, _MOTIVO_CONTEXTO_AJENO, etapa="seguridad"
             ), 200
 
+        if activo:
+            # Del sobre pasa solo lo que vio el filtro (lista blanca). Si ya era
+            # solo eso, los bytes del comercio tal cual.
+            sobre = a2a.sobre_jsonrpc(body, pedido.rpc_id)
+            if sobre != body:
+                body, salida = sobre, a2a.dumps(sobre)
+
         if "error" in body and "result" not in body:
             self._emitir_busqueda(llamada, None)
             self._emitir_error_comercio(body["error"], llamada)
@@ -2003,10 +2057,10 @@ class ProxyGuard:
             contexto = result.get("contextId") if isinstance(result, dict) else None
             self._emitir_busqueda(llamada, contexto if isinstance(contexto, str) else None)
             if activo and (self._es_de_checkout(llamada) or n_checkouts):
+                # El `kind` solo si es uno de A2A: lo elige el comercio.
                 return self._bloqueo_sintetico(
                     llamada,
-                    f"respuesta de tipo {kind or type(result).__name__} donde se "
-                    "esperaba una tarea",
+                    f"respuesta de tipo {a2a.tipo_de(result)} donde se esperaba una tarea",
                 ), 200
             self._emitir_reenviado(llamada, contexto if isinstance(contexto, str) else None)
             return salida, status
@@ -2089,6 +2143,7 @@ class ProxyGuard:
     async def _sse(self, resp: httpx.Response, llamada: Llamada) -> AsyncIterator[bytes]:
         est = EstadoStream()
         falla: str | None = None
+        inesperada = False  # una excepción que nadie esperaba: se corta siempre
         # Varias instancias: una búsqueda de integrador por stream se retiene
         # hasta el evento final y la barrera. Las ofertas solo salen si su
         # registro quedó guardado (el checkout puede caer en otra instancia).
@@ -2123,6 +2178,11 @@ class ProxyGuard:
             falla = f"el stream del comercio se cortó ({type(e).__name__})"
         except (ValueError, RecursionError) as e:  # defensa (N6): no se puede reescribir
             falla = f"un evento del comercio no se pudo reenviar ({type(e).__name__})"
+        except Exception as e:  # noqa: BLE001 - fail-closed: nunca un stream cortado sin veredicto
+            logger.exception("No se pudo procesar un evento del comercio")
+            self._error(llamada, f"Evento del comercio no procesable: {type(e).__name__}: {e}"[:300])
+            falla, inesperada = _MOTIVO_NO_PROCESABLE, True
+            est.ofertas_registradas = True  # las de un stream a medias no se registran
         finally:
             await resp.aclose()
 
@@ -2142,7 +2202,7 @@ class ProxyGuard:
             retenidos = []
 
         if falla is not None and not est.cortado:
-            for bloque in self._sse_falla(llamada, est, falla):
+            for bloque in self._sse_falla(llamada, est, falla, siempre=inesperada):
                 yield bloque
         elif est.pendiente is not None and not est.cortado:
             for bloque in self._sse_cortar(
@@ -2246,6 +2306,11 @@ class ProxyGuard:
                 return self._sse_cortar_etapa2(llamada, est, corte[0], corte[1])
         if not await self._contexto_respuesta_ok(llamada, result):
             return self._sse_cortar_etapa2(llamada, est, _MOTIVO_CONTEXTO_AJENO)
+        if activo:
+            # Como en JSON: del sobre pasa solo lo que vio el filtro.
+            sobre = a2a.sobre_jsonrpc(body, pedido.rpc_id)
+            if sobre != body:
+                body, crudo = sobre, a2a.bloque_sse(sobre)
         if not isinstance(result, dict):
             if "error" in body:
                 self._emitir_error_comercio(body["error"], llamada)
@@ -2296,7 +2361,7 @@ class ProxyGuard:
         est.checkouts += n
         if kind not in ("task", "artifact-update"):
             return self._sse_cortar(
-                llamada, est, f"un ap2.checkout dentro de un evento {kind}"
+                llamada, est, f"un ap2.checkout dentro de un evento {a2a.tipo_de(result)}"
             )
         checkouts = a2a.checkouts_del_result(result)
         if len(checkouts) != n:
@@ -2381,11 +2446,16 @@ class ProxyGuard:
         decision = self._bloqueo(llamada, cart_id, contexto, motivo, detalle)
         return self._sse_aplicar_retencion(llamada, est, decision, None)
 
-    def _sse_falla(self, llamada: Llamada, est: EstadoStream, motivo: str) -> list[bytes]:
+    def _sse_falla(
+        self, llamada: Llamada, est: EstadoStream, motivo: str, *, siempre: bool = False
+    ) -> list[bytes]:
+        """Un stream que se cortó o no se pudo leer. Si podía traer un checkout
+        (o, con `siempre`, en cualquier caso: una excepción inesperada), el
+        cierre es un bloqueo con `guard.veredicto`."""
         if est.resuelto:  # el evento final ya salió: no hay nada que retener
             self._error(llamada, f"Proxy del Guard: {motivo}", est.contexto_id)
             return []
-        if llamada.guard_activo and (
+        if siempre or llamada.guard_activo and (
             self._es_de_checkout(llamada) or est.checkouts or est.pendiente is not None
         ):
             return self._sse_cortar(llamada, est, motivo)
@@ -2705,7 +2775,10 @@ class ProxyGuard:
                 # ¿Otra pregunta? Solo si el intake la pide y queda tiempo.
                 otra, sin_tiempo = False, False
                 if nuevo is not None and nuevo.siguiente in ("repreguntar", "confirmar"):
-                    otra = self._restante(llamada) - _MARGEN_S >= _MINIMO_REPREGUNTA_S
+                    otra = (
+                        self._restante(llamada) - _MARGEN_S - _RESERVA_COMERCIO_S
+                        >= _MINIMO_REPREGUNTA_S
+                    )
                     sin_tiempo = not otra
                 # La categoría, antes de pedir la confirmación (la ficha que
                 # confirma el usuario ya la lleva) y al cerrar. Con la misma
@@ -2784,7 +2857,9 @@ class ProxyGuard:
         `vence`, fija el plazo acá (el intake de la demo); con `vence`, ya lo
         fijó quien abrió la espera."""
         if vence is None:
-            vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_contexto_s))
+            vence = compra.fijar_plazo(
+                self._plazo(llamada, self.config.espera_contexto_s, _RESERVA_COMERCIO_S)
+            )
         r = estado.resultado
         estado.confirmar = r is not None and r.siguiente == "confirmar"
         datos: dict[str, Any] = {
@@ -3041,6 +3116,15 @@ class ProxyGuard:
         # (el dashboard muestra el SKU), nunca el que declara el vendedor:
         # lo asegura el proxy, cualquiera sea el agente.
         oportunidad = _con_titulo_publico(oportunidad, ofertas)
+        plazo = self._plazo(llamada, self.config.espera_decision_s)
+        if plazo < min(self.config.espera_decision_s, _MINIMO_CONSULTA_S):
+            # Una consulta que vence antes de que el usuario la vea cortaba la
+            # compra ("no respondió"): sin tiempo, no se consulta y sigue el
+            # pedido literal (el Guard igual verifica el checkout).
+            self._error(llamada, _MOTIVO_SIN_TIEMPO_CONSULTA, contexto_id)
+            compra.estado = "sin_oportunidad"
+            self.guardar_compra(compra)
+            return "pasar", None
 
         estado_previo = compra.estado
         compra.oportunidad = oportunidad
@@ -3049,7 +3133,7 @@ class ProxyGuard:
         # reinicio, y otra búsqueda pasaba sin la decisión del usuario.
         compra.resuelta.clear()
         compra.estado = "esperando_decision"
-        vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_decision_s))
+        vence = compra.fijar_plazo(plazo)
         esperas = self._esperas_de(compra)
         # Con varias instancias, la espera y la fila de la compra quedan
         # escritas antes del evento y del webhook (el integrador puede decidir
@@ -3236,11 +3320,13 @@ class ProxyGuard:
         senales: list[str] | None = None,
     ) -> bytes:
         """Una tarea `failed` sin nada del proveedor, solo con el veredicto
-        `bloqueado` del proxy. El motivo y el texto son fijos del proxy."""
-        task_id = result.get("id") if isinstance(result.get("id"), str) else None
-        contexto_id = (
-            result.get("contextId") if isinstance(result.get("contextId"), str) else None
-        ) or llamada.pedido.contexto_id
+        `bloqueado` del proxy. El motivo y el texto son fijos del proxy. Los
+        ids del comercio (o el contexto del pedido) solo si son seguros: uno
+        con texto libre puede ser la inyección que cortó el filtro."""
+        task_id = a2a.id_seguro(result.get("id"))
+        contexto_id = a2a.id_seguro(result.get("contextId")) or a2a.id_seguro(
+            llamada.pedido.contexto_id
+        )
         decision = self._emitir_corte(llamada, contexto_id, motivo, etapa, senales)
         tarea = a2a.tarea_sintetica_bloqueada(
             task_id, contexto_id, texto or decision.texto, decision.artefacto()
