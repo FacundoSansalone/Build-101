@@ -234,6 +234,23 @@ def test_sin_ninguna_fuente_el_obligatorio_escala(ahora):
     assert evaluar(_ficha(), _vistas(), "cart_3", {}, ahora=ahora).status == "bloqueado"
 
 
+@pytest.mark.parametrize("peso", ["1,500 g", "1.500 g"])
+def test_un_peso_con_separador_de_miles_ambiguo_no_se_aprueba(ahora, peso):
+    # "1,500 g" son 1500 g en inglés y 1,5 g leído con coma decimal: no se adivina.
+    ficha = _ficha().model_copy(deep=True)
+    ficha.requisitos = [r for r in ficha.requisitos if r.atributo != "weight"] + [
+        Requisito(campo="atributo", atributo="weight", operador="maximo", valor=1, unidad="kg", obligatorio=True)
+    ]
+    catalogo = _catalogo()
+    catalogo["LM-NB-16"]["atributos"]["weight"] = peso
+    vistas = _vistas()
+    vistas.offer_details[0]["atributos"]["weight"] = peso
+    veredicto = evaluar(ficha, vistas, "cart_1", catalogo, ahora=ahora)
+    assert veredicto.status == "escalar", veredicto.motivo
+    pesos = [c for c in veredicto.chequeos if c.tipo == "cumplimiento" and c.campo == "atributo:weight"]
+    assert [c.resultado for c in pesos] == ["escalar"]
+
+
 def test_un_gtin_que_contradice_al_catalogo_escala(ahora):
     vistas = _vistas()
     vistas.offer_details[0]["gtin"] = GTIN_OR  # dice ser otro producto

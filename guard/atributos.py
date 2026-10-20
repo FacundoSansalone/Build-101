@@ -14,8 +14,8 @@ Sin esquema por categoría: un atributo es un nombre (schema.org, como
 - booleano (`igual` con `true`/`false`; acepta Y/N, sí/no, yes/no).
 
 Si no se puede comparar (falta el dato, dimensiones distintas, unidad de un
-solo lado, texto que no es número), el resultado es None: el chequeo escala
-el obligatorio. Los nombres se canonicalizan con un vocabulario chico de
+solo lado, texto que no es número o con separador de miles ambiguo, como
+"1,500 g"), el resultado es None: el chequeo escala el obligatorio. Los nombres se canonicalizan con un vocabulario chico de
 sinónimos (incluye los nombres de Icecat): no es un mapa de categorías.
 """
 
@@ -200,7 +200,33 @@ _UNIDADES: dict[str, tuple[str, float]] = {
 # Tolerancia relativa cuando hay que convertir (35,6 cm publicados ≈ 14").
 TOLERANCIA_CONVERSION = 0.005
 _TOLERANCIA_MISMA_UNIDAD = 1e-9
-_NUMERO_CON_UNIDAD = re.compile(r"^\s*(-?\d+(?:[.,]\d+)?)\s*([^\d\s][^\d]{0,15})?\s*$")
+_NUMERO_CON_UNIDAD = re.compile(r"^\s*(-?\d[\d.,]*)\s*([^\d\s][^\d]{0,15})?\s*$")
+
+# Números escritos como texto. "1,500" y "1.500" son 1500 en un país y 1,5 en
+# otro: un grupo de miles sin otro separador no se interpreta. Con un solo
+# separador que no agrupa miles ("1,5", "0.500", "12,3456") es el decimal; con
+# los dos separadores, solo la forma inequívoca (miles de a tres y un decimal).
+_SIN_SEPARADOR = re.compile(r"-?\d+")
+_MILES_AMBIGUOS = re.compile(r"-?[1-9]\d{0,2}([.,])\d{3}(?:\1\d{3})*")
+_CON_DECIMAL = re.compile(r"-?\d+[.,]\d+")
+_MILES_Y_DECIMAL = {
+    ",": re.compile(r"-?\d{1,3}(?:,\d{3})+\.\d+"),   # 1,234.5
+    ".": re.compile(r"-?\d{1,3}(?:\.\d{3})+,\d+"),   # 1.234,5
+}
+
+
+def _numero_en_texto(texto: str) -> float | None:
+    """"1,5" → 1,5; "1,234.5" y "1.234,5" → 1234,5; "1,500" o "1.500" → None."""
+    if _SIN_SEPARADOR.fullmatch(texto):
+        return float(texto)
+    if _MILES_AMBIGUOS.fullmatch(texto):
+        return None
+    if _CON_DECIMAL.fullmatch(texto):
+        return float(texto.replace(",", "."))
+    for miles, patron in _MILES_Y_DECIMAL.items():
+        if patron.fullmatch(texto):
+            return float(texto.replace(miles, "").replace(",", "."))
+    return None
 
 
 def unidad_conocida(unidad: str | None) -> bool:
@@ -219,12 +245,15 @@ def _cantidad(valor: Any, unidad: str | None) -> tuple[float, tuple[str, float] 
     """(número, unidad normalizada) o None si no es un número."""
     if isinstance(valor, bool):
         return None
-    como_numero = numero(valor)
-    if como_numero is None and isinstance(valor, str) and unidad is None:
+    if isinstance(valor, str):
+        # "16", "1,5 kg", "16GB". Con la unidad aparte, el texto es solo el número.
         coincidencia = _NUMERO_CON_UNIDAD.match(valor)
-        if coincidencia:
-            como_numero = float(coincidencia.group(1).replace(",", "."))
-            unidad = coincidencia.group(2)
+        if coincidencia is None or (coincidencia.group(2) is not None and unidad is not None):
+            return None
+        como_numero = _numero_en_texto(coincidencia.group(1))
+        unidad = coincidencia.group(2) or unidad
+    else:
+        como_numero = numero(valor)
     if como_numero is None or not math.isfinite(como_numero):
         return None
     return como_numero, _unidad(unidad)

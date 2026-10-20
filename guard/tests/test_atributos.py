@@ -192,6 +192,33 @@ def test_booleanos_enumerados_y_conjuntos(observado, operador, valor, esperado):
     assert comparar(observado, operador, valor, None) is esperado
 
 
+@pytest.mark.parametrize(
+    ("observado", "operador", "valor", "unidad", "esperado"),
+    [
+        # "1,500" y "1.500" son 1500 o 1,5 según el país: no se interpretan
+        (V("1,500 g"), "maximo", 1, "kg", None),
+        (V("1.500 g"), "maximo", 1, "kg", None),
+        (V("1,500,000 g"), "maximo", 1, "kg", None),
+        (V("1.500", "g"), "maximo", 1, "kg", None),
+        (V("1,000 GB"), "igual", 1, "TB", None),
+        # un solo separador que no agrupa miles: decimal
+        (V("1,5 kg"), "maximo", 1.5, "kg", True),
+        (V("1.5 kg"), "maximo", 1.5, "kg", True),
+        (V("1,5 kg"), "minimo", 1.6, "kg", False),
+        (V("0,500 kg"), "maximo", 1, "kg", True),   # un grupo de miles no empieza con 0
+        (V("1500 g"), "maximo", 1, "kg", False),
+        # miles y decimales con separadores distintos: solo si es inequívoco
+        (V("1,234.5 g"), "igual", 1234.5, "g", True),
+        (V("1.234,5 g"), "igual", 1234.5, "g", True),
+        (V("1.23,4 g"), "igual", 123.4, "g", None),
+        (V("1,2.3 g"), "igual", 12.3, "g", None),
+        (V("1.234.5 g"), "igual", 1234.5, "g", None),
+    ],
+)
+def test_numeros_con_separadores_de_miles(observado, operador, valor, unidad, esperado):
+    assert comparar(observado, operador, valor, unidad) is esperado
+
+
 def test_iguales_atributo_para_la_evidencia():
     assert iguales_atributo(V(16, "GB"), V("16", "E34")) is True
     assert iguales_atributo(V(14, "in"), V(35.6, "cm")) is True
