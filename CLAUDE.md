@@ -422,8 +422,10 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     (en Windows, `localhost` tardaba ~2,1 s por conexión). Si otro proceso
     tiene ese puerto en `[::1]`, no arranca. En Windows los sockets usan
     `SO_EXCLUSIVEADDRUSE`.
-  - **Registro del pedido del usuario:** `/demo` registra el primer mensaje de
-    cada compra (`POST /guard/compras/pedido`, con token) y el intake lo lee.
+  - **Registro del pedido del usuario:** `/demo` registra, en cada mensaje al
+    agente, todo lo que el usuario le dijo en la compra (`POST
+    /guard/compras/pedido`, con token; desde el 2026-10-20, no solo el
+    primero) y el intake lo lee.
     Vence a los 180 s y se usa una vez. No autoriza nada.
   - **`computadoras_malicioso`** (`world/`): proveedor malicioso de computadoras
     (tablets con inyección). Las ofertas honestas quedan igual.

@@ -549,6 +549,19 @@ class Conversacion:
         del self.mensajes[:-MAX_MENSAJES]
         return mensaje
 
+    def pedido_con(self, texto: str) -> str:
+        """Lo que el usuario le dijo al agente en esta compra, con `texto` al
+        final (para el intake del proxy). Si no entra en `MAX_TEXTO`, el
+        primer mensaje (el pedido) y el último."""
+        dichos = [
+            m["texto"] for m in self.mensajes
+            if m.get("tipo") == "usuario" and m.get("destino") == "agente"
+        ]
+        todo = " ".join([*dichos, texto])
+        if len(todo) <= MAX_TEXTO or not dichos:
+            return todo[:MAX_TEXTO]
+        return f"{dichos[0]} … {texto}"[:MAX_TEXTO]
+
     def iniciar(self, texto: str) -> None:
         """Le manda el texto al agente en segundo plano (puede tardar minutos)."""
         self.ocupado = True
@@ -946,21 +959,26 @@ async def api_demo_mensaje(request: Request) -> Response:
 
     if conversacion.ocupado:
         return _error(409, "agente_ocupado", destino="agente")
-    if not conversacion.pedido_enviado:
-        # El primer mensaje de la compra: el proxy lo guarda para el intake,
-        # que así lee las palabras del usuario y no solo la paráfrasis del
-        # agente (proxy/pedido_usuario.py). Antes que el agente, que busca
-        # enseguida. Si el proxy no está o no lo acepta, todo sigue igual.
-        # Mientras tanto la conversación queda ocupada: otro mensaje da 409 y
-        # el pedido registrado es el mismo que va al agente.
-        conversacion.ocupado = True
-        try:
-            await _reenviar_json(cfg, "POST", RUTA_PEDIDO_USUARIO, cuerpo={"texto": texto})
-        finally:
-            # Si mientras tanto empezó otra compra, `ocupado` ya es de esa.
-            if conversacion.generacion == generacion:
-                conversacion.ocupado = False
-        if conversacion.generacion != generacion:
-            return _error(409, "compra_reiniciada", destino="agente")
+    # Lo que el usuario le dijo al agente en esta compra: el proxy lo guarda
+    # para el intake, que así lee las palabras del usuario y no solo la
+    # paráfrasis del agente (proxy/pedido_usuario.py). En cada mensaje y no
+    # solo el primero: un mensaje nuevo puede hacer que el agente busque otra
+    # vez, y esa búsqueda es otra compra para el proxy (el agente abre otro
+    # contexto en cada turno del usuario); con todo lo dicho, el intake no
+    # vuelve a pedir el tope o el plazo que el usuario ya dio. Antes que el
+    # agente, que busca enseguida. Si el proxy no está o no lo acepta, todo
+    # sigue igual. Mientras tanto la conversación queda ocupada: otro mensaje
+    # da 409 y el pedido registrado es el mismo que va al agente.
+    conversacion.ocupado = True
+    try:
+        await _reenviar_json(
+            cfg, "POST", RUTA_PEDIDO_USUARIO, cuerpo={"texto": conversacion.pedido_con(texto)}
+        )
+    finally:
+        # Si mientras tanto empezó otra compra, `ocupado` ya es de esa.
+        if conversacion.generacion == generacion:
+            conversacion.ocupado = False
+    if conversacion.generacion != generacion:
+        return _error(409, "compra_reiniciada", destino="agente")
     conversacion.iniciar(texto)
     return JSONResponse({"destino": "agente"}, status_code=202)

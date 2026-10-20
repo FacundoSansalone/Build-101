@@ -3,8 +3,9 @@
 El agente de compras le pasa al comercio una paráfrasis del pedido y puede
 perder datos que el usuario dio: "Comprame 20 computadoras para el lunes,
 hasta 20000 USD." llegó como "20 computadoras por un total de 20000 USD", y
-el intake repreguntaba el plazo. El dashboard registra lo que escribió el
-usuario al empezar una compra y el proxy lo usa en la próxima compra que
+el intake repreguntaba el plazo. El dashboard registra lo que el usuario le
+dijo al agente en la compra (en cada mensaje: una búsqueda en otro turno es
+otra compra para el proxy) y el proxy lo usa en la próxima compra que
 detecta: el intake lee las palabras del usuario y la búsqueda del agente.
 
 Garantías:
