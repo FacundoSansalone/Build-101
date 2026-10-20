@@ -66,8 +66,8 @@ queda como "Detalle técnico" (`/`).
   Si no, va al agente de compras por la API de `adk web` (`ADK_URL`): una
   sesión por compra (`POST /apps/shopping_agent/users/demo/sessions`) y
   `POST /run_sse`, en segundo plano (202). Con el agente trabajando, 409.
-- **El pedido con tus palabras.** El primer mensaje de cada compra que va al
-  agente se registra antes en el proxy (`POST /guard/compras/pedido
+- **El pedido con tus palabras.** Cada mensaje que va al agente registra
+  antes en el proxy todo lo que le dijiste en la compra (`POST /guard/compras/pedido
   {"texto"}`, con el token): el intake de la próxima compra lee lo que
   escribiste además de la paráfrasis que el agente le pasa al comercio, y no
   repregunta lo que ya dijiste ("para el lunes", "hasta 20000"). Vence a los

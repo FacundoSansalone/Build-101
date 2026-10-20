@@ -1024,9 +1024,11 @@ def test_el_relato_conoce_las_flexibilidades_fijas_del_intake():
 # ---------------------------------------------------------------------------
 
 
-def test_el_primer_mensaje_de_la_compra_se_registra_en_el_proxy_antes_que_el_agente(tmp_path):
+def test_lo_que_dijo_el_usuario_se_registra_en_el_proxy_antes_que_el_agente(tmp_path):
     """El agente de compras le pasa al comercio una paráfrasis: el intake del
-    proxy lee además lo que escribió el usuario (una vez por compra)."""
+    proxy lee además lo que escribió el usuario. En cada mensaje al agente va
+    todo lo dicho en la compra: una búsqueda en otro turno es otra compra
+    para el proxy, y así no repregunta lo que el usuario ya dijo."""
     _escribir_token(tmp_path)
     adk, proxy = FakeADK(), FakeProxy()
     orden: list[str] = []
@@ -1042,7 +1044,11 @@ def test_el_primer_mensaje_de_la_compra_se_registra_en_el_proxy_antes_que_el_age
         _post(c, "/api/demo/nueva", {})
         _post(c, "/api/demo/mensaje", {"texto": "Ahora unos auriculares."})
         _esperar(c)
-    assert [json.loads(r.content) for r in proxy.pedidos] == [{"texto": pedido}, {"texto": "Ahora unos auriculares."}]
+    assert [json.loads(r.content) for r in proxy.pedidos] == [
+        {"texto": pedido},
+        {"texto": f"{pedido} Sí, la primera."},
+        {"texto": "Ahora unos auriculares."},  # otra compra: desde cero
+    ]
     for r in proxy.pedidos:  # con el token del proxy, como los otros POST de /guard/*
         assert r.headers["x-guard-token"] == TOKEN and "origin" not in r.headers
     assert orden.index("proxy /guard/compras/pedido") < orden.index("adk /run_sse")
@@ -1149,3 +1155,18 @@ def test_nueva_compra_mientras_se_rutea_el_mensaje_tampoco_lo_usa(tmp_path):
         assert r.status_code == 409 and r.json()["error"] == "compra_reiniciada"
         assert app.state.demo.mensajes == [] and app.state.demo.ocupado is False
     assert adk.mensajes == [] and proxy.pedidos == []
+
+
+def test_lo_dicho_que_no_entra_deja_el_pedido_y_el_ultimo_mensaje(tmp_path):
+    conversacion = demo.Conversacion(Config(repo_root=tmp_path))
+    pedido = "Comprame 20 computadoras para el lunes, hasta 20000 USD."
+    conversacion.registrar("usuario", texto=pedido, destino="agente")
+    conversacion.registrar("usuario", texto="x" * 600, destino="agente")
+    conversacion.registrar("usuario", texto="Entran 10 el lunes.", destino="contexto")  # a nuestro agente
+    texto = conversacion.pedido_con("Subí el tope a 25000 USD.")
+    assert texto == f"{pedido} {'x' * 600} Subí el tope a 25000 USD."  # entra entero
+    assert "Entran 10" not in texto  # lo que fue a nuestro agente no es el pedido
+    conversacion.registrar("usuario", texto="y" * 600, destino="agente")
+    texto = conversacion.pedido_con("Subí el tope a 25000 USD.")
+    assert len(texto) <= demo.MAX_TEXTO
+    assert texto == f"{pedido} … Subí el tope a 25000 USD."
