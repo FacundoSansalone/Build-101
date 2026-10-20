@@ -120,10 +120,10 @@ taxonomía de Google, o "fuera del catálogo público"), cantidad, tope de
 precio y moneda, plazo. Además, los atributos que el usuario mencionó
 (marca, talle, memoria, almacenamiento, color, inalámbrico…), con si los
 exige o los prefiere. Un tamaño de datos sin decir de qué ("16 GB") no se
-adivina, pero no es una cantidad ni un tope. Un producto fuera del catálogo no es un error: la confirmación
-dice que no figura en el catálogo público y que lo que declare el comercio
-se verifica con otras fuentes antes de la firma (lo obligatorio que no se
-pueda verificar, el Guard lo escala).
+adivina, pero no es una cantidad ni un tope. Un producto fuera del catálogo
+no es un error: la confirmación dice que no figura en el catálogo público y
+que lo que declare el comercio se verifica con otras fuentes antes de la
+firma (lo obligatorio que no se pueda verificar, el Guard lo escala).
 
 **Un tipo general es un producto.** "computadoras" no es una categoría del
 catálogo del comercio general (laptops, desktops, tablets…), pero sí de la
