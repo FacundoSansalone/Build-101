@@ -43,6 +43,8 @@ las que el código ya aceptó. El código:
 - descarta la propuesta si contradice lo verificable: si la necesidad tiene
   un cronograma ("10 el lunes y 10 el jueves"), la oferta tiene que cubrirlo
   acumulado (`guard.normalizar.cubre_entregas`);
+- descarta el cronograma del modelo si la respuesta nombra más fechas que
+  las que trae: uno a medias es más laxo que lo que contó el usuario;
 - arma la explicación para el usuario (`Oportunidad.por_que`) con una
   **plantilla**: qué cambia, de qué a qué y la necesidad en palabras del
   usuario. No lleva texto del vendedor (de marca, categoría o uso solo dice
@@ -235,7 +237,11 @@ ella.
 **Contexto y oportunidades:** el intake y el contexto de un turno salen de
 una sola llamada. La necesidad son las palabras del usuario; el cronograma
 ("10 el lunes y otros 10 el jueves") y las flexibilidades son juicios sobre
-candidatos del código. Cada flexibilidad lleva la etiqueta de su campo, como
+candidatos del código. Un par del cronograma es una cantidad y una fecha en
+la misma cláusula; si en una respuesta queda alguna fecha sin su par ("Hay
+dos grupos: 10 empiezan el lunes y 10 el jueves"), esa respuesta no aporta
+cronograma: uno a medias (solo 10 el jueves) habilitaría una oferta que no
+cubre el lunes. Cada flexibilidad lleva la etiqueta de su campo, como
 las de Gemini (otra marca → `Marca: …`, otra cantidad → `Cantidad: …`, otra
 fecha y entregas parciales → `Entregas: …`), y como no hay cita textual que
 comprobar, es `dicha` solo con ≥ 0,80: con menos cuenta como `inferida` y no

@@ -271,6 +271,26 @@ def test_cronograma_candidato(texto, pares):
     assert [(c, f) for c, f, _ in cronograma_candidato([texto], HOY)] == pares
 
 
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # "dos" y "10" en la misma cláusula: el par del lunes no se forma.
+        "Hay dos grupos: 10 empiezan el lunes y 10 el jueves",
+        # "a las 9" también es un número: ninguna cláusula forma su par.
+        "entran 10 a las 9 del lunes y otros 10 a las 9 del jueves",
+    ],
+)
+def test_un_cronograma_a_medias_no_se_arma(texto):
+    """Con solo "10 el jueves", el cronograma sería más laxo que lo que contó
+    (habilitaría una oferta que no llega el lunes): sin cronograma."""
+    assert cronograma_candidato([texto], HOY) == []
+
+
+def test_un_cronograma_a_medias_se_descarta_solo_en_esa_respuesta():
+    respuestas = ["Hay dos grupos: 10 empiezan el lunes y 10 el jueves", "Necesito 20 para el lunes"]
+    assert [(c, f) for c, f, _ in cronograma_candidato(respuestas, HOY)] == [(20, "2026-10-19")]
+
+
 # -- oportunidad: se delega ----------------------------------------------------------------
 
 

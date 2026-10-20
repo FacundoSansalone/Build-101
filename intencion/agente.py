@@ -430,6 +430,10 @@ def armar_contexto(
         ESQUEMA_CONTEXTO,
     )
     cronograma = entregas_validas(datos.get("necesidad_entregas")) or []
+    if len(_fechas_dichas(respuesta, hoy)) > len({f for f, _ in cronograma}):
+        # El usuario nombró más fechas de las que trae el cronograma: uno a
+        # medias es más laxo que lo que contó. Sin cronograma, del lado seguro.
+        cronograma = []
     flexibilidades = [
         flexibilidad
         for item in (datos.get("flexibilidades") or [])[:MAX_FLEXIBILIDADES]
@@ -445,6 +449,18 @@ def armar_contexto(
         ],
         flexibilidades=flexibilidades,
     )
+
+
+def _fechas_dichas(respuesta: str, hoy: date) -> set[date]:
+    """Las fechas (no pasadas) que el código encuentra en la respuesta, con
+    las mismas reglas que el intake (`intake._fechas`)."""
+    from intencion import intake
+
+    original = intake._sin_tildes(respuesta[: intake.LARGO_TEXTO])
+    return {
+        f for _, f in intake._fechas(original.lower(), hoy, intake._idioma(original))
+        if f is not None
+    }
 
 
 def _normalizado(texto: str) -> str:
