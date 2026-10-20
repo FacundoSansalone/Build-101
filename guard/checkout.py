@@ -41,7 +41,7 @@ from typing import Any
 from contracts import CheckoutVisto, Chequeo, Ficha, Oferta, Politica, Requisito
 from guard.b64 import b64url, b64url_decode
 from guard.chequeos import monto
-from guard.normalizar import EPSILON_MONTO, contiene, iguales, monto_valido, numero
+from guard.normalizar import EPSILON_MONTO, iguales, mismo_id, monto_valido, numero
 from guard.textos import acotar, moneda_legible
 
 ORIGEN = "checkout_firmado"
@@ -536,7 +536,7 @@ def _chequeo_comercio(comercio: Any, politica: Politica, comercio_id: str | None
             ),
             esperado=aprobados, observado=acotar(comercio),
         )
-    aprobado = next((a for a in aprobados if iguales(a, comercio)), None)
+    aprobado = next((a for a in aprobados if mismo_id(a, comercio)), None)
     if aprobado is None:
         return Chequeo(
             tipo="politica", resultado="bloquea", campo="comercio", origen=ORIGEN,
@@ -546,13 +546,12 @@ def _chequeo_comercio(comercio: Any, politica: Politica, comercio_id: str | None
             ),
             esperado=aprobados, observado=acotar(comercio),
         )
-    if comercio_id and not contiene([comercio_id], comercio):
+    if comercio_id and not mismo_id(comercio_id, comercio):
         return Chequeo(
             tipo="integridad", resultado="escalar", campo="comercio", origen=ORIGEN,
             detalle=(
                 f"El checkout lo firmó un comercio aprobado ({acotar(aprobado)}) "
-                f"distinto del que se verificó contra el catálogo público "
-                f"({acotar(comercio_id)})."
+                "distinto del que se verificó contra el catálogo público."
             ),
             esperado=acotar(comercio_id), observado=acotar(comercio),
         )

@@ -45,12 +45,12 @@ from guard.atributos import (
 from guard.fuentes import ORIGENES_INDEPENDIENTES, nombre_fuente
 from guard.normalizar import (
     EPSILON_MONTO,
-    contiene,
     contiene_todos,
     cubre_entregas,
     entregas_validas,
     gtin_valido,
     iguales,
+    mismo_id,
     monto_valido,
     numero,
 )
@@ -191,9 +191,13 @@ def cumple(
         pedidos = requisito.valor if isinstance(requisito.valor, (list, tuple)) else [requisito.valor]
         if not pedidos:
             return None  # un "incluye" vacío no se puede chequear
+        if requisito.campo == "comercio":
+            return all(any(mismo_id(e, p) for e in elementos) for p in pedidos)
         return contiene_todos(elementos, pedidos)
     if requisito.operador == "cubre":
         return cubre_entregas(observado, requisito.valor)
+    if requisito.campo == "comercio":
+        return mismo_id(observado, requisito.valor)  # un id: sin normalizar
     return iguales(observado, requisito.valor)
 
 
@@ -397,15 +401,16 @@ def _mostrable(requisito: Requisito, oferta: Oferta, observado: Any) -> Any:
     """El valor observado solo si se puede escribir en un `detalle`; si no, None.
 
     Se puede: el dato de una fuente independiente (catálogo público, página
-    pública, fabricante, comprador), el comercio (lo da quien llama), los
-    talles (enteros), los montos, una moneda ISO, un GTIN validado y, de un
-    atributo declarado, un booleano o un número con una unidad conocida. Lo
-    que declara el comercio como texto va solo en `observado`, acotado.
+    pública, fabricante, comprador), los talles (enteros), los montos, una
+    moneda ISO, un GTIN validado y, de un atributo declarado, un booleano o un
+    número con una unidad conocida. Lo que declara el comercio como texto va
+    solo en `observado`, acotado; también el id del comercio (el proxy usa el
+    `merchant.id` del JWT, que escribe el comercio).
     """
     campo = requisito.campo
-    if observado is None:
+    if observado is None or campo == "comercio":
         return None
-    if campo in ("comercio", "precio", "talle", *CAMPOS_COMPROMISO):
+    if campo in ("precio", "talle", *CAMPOS_COMPROMISO):
         return observado  # enteros y fechas ya validados por el extractor
     if campo == "moneda":
         return moneda_legible(observado) or None
@@ -537,7 +542,11 @@ def chequeos_politica(
 
 
 def _chequeo_comercio(politica: Politica, comercio_id: str | None) -> Chequeo:
+    """El id del comercio lo escribe él (el proxy usa el `merchant.id` del
+    JWT): se compara exacto y va solo en `observado`; el `detalle` nombra el
+    de la política."""
     aprobados = politica.comercios_aprobados
+    aprobado = next((a for a in aprobados if mismo_id(a, comercio_id)), None)
     if not comercio_id:
         # Sin saber quién vende no se puede aprobar: escalar (con la lista
         # vacía tampoco, porque ahí ningún comercio identificado pasa).
@@ -546,14 +555,14 @@ def _chequeo_comercio(politica: Politica, comercio_id: str | None) -> Chequeo:
             "Comercio no identificado: no se puede confirmar que esté entre "
             "los aprobados por la política."
         )
-    elif contiene(aprobados, comercio_id):
+    elif aprobado is not None:
         resultado = "ok"
-        detalle = f"Comercio {formatear(comercio_id)} aprobado por la política."
+        detalle = f"Comercio {formatear(aprobado)} aprobado por la política."
     else:
         resultado = "bloquea"
         detalle = (
-            f"Comercio {formatear(comercio_id)} fuera de los aprobados por la "
-            f"política ({formatear(list(aprobados))})."
+            "Comercio fuera de los aprobados por la política "
+            f"({formatear(list(aprobados))})."
         )
     return Chequeo(
         tipo="politica",

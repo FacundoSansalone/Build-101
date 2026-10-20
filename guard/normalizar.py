@@ -111,6 +111,12 @@ def iguales(a: Any, b: Any) -> bool:
     return na == nb
 
 
+def mismo_id(a: Any, b: Any) -> bool:
+    """Igualdad de identificadores (el `merchant.id`): exacta salvo los espacios
+    de los bordes. Sin normalizar: "MERCHANT_1" no es "merchant_1" ni "7.0" es "7"."""
+    return isinstance(a, str) and isinstance(b, str) and a.strip() == b.strip()
+
+
 def contiene(elementos: list | tuple, valor: Any) -> bool:
     """`valor` está en `elementos` (comparación normalizada, sin hashear)."""
     return any(iguales(elemento, valor) for elemento in elementos)
