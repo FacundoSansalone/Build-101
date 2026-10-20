@@ -2455,8 +2455,11 @@ class ProxyGuard:
         if est.resuelto:  # el evento final ya salió: no hay nada que retener
             self._error(llamada, f"Proxy del Guard: {motivo}", est.contexto_id)
             return []
-        if siempre or llamada.guard_activo and (
-            self._es_de_checkout(llamada) or est.checkouts or est.pendiente is not None
+        # `siempre`: un error inesperado del proxy corta aunque el interruptor
+        # esté apagado (nunca se reenvía lo que no se pudo procesar).
+        if siempre or (
+            llamada.guard_activo
+            and (self._es_de_checkout(llamada) or est.checkouts or est.pendiente is not None)
         ):
             return self._sse_cortar(llamada, est, motivo)
         self._error(llamada, f"Proxy del Guard: {motivo}", est.contexto_id)
@@ -3217,8 +3220,19 @@ class ProxyGuard:
         self, compra: Compra, result: dict[str, Any]
     ) -> tuple[AccionEtapa2, dict[str, Any] | None] | None:
         """Qué recibe una búsqueda de una compra que ya decidió (o no va a
-        decidir): None si la compra sigue negociando (hay que analizar)."""
+        decidir): None si la compra sigue negociando (hay que analizar).
+
+        Los parámetros autorizados nombran la oferta que aceptó el usuario: si
+        esta respuesta no la trae (otra búsqueda de la misma compra), no se le
+        dice al agente que siga con un cart que no está; el Guard igual
+        verifica contra lo autorizado."""
         if compra.estado == "aceptada" and compra.oportunidad and compra.requisitos_autorizados:
+            respuesta = a2a.Respuesta()
+            respuesta.ingerir(result)
+            if not any(
+                c.get("cart_id") == compra.oportunidad.cart_id for c in respuesta.carts
+            ):
+                return "pasar", None
             artefacto = self._artefacto_parametros(
                 compra.oportunidad.cart_id, compra.oportunidad.id, compra.requisitos_autorizados
             )
