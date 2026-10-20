@@ -828,3 +828,38 @@ async def test_una_compra_terminada_no_cuenta_para_el_limite(config):
         # La segunda (creada, sin negociar) sí cuenta.
         otra = await c.post("/v1/compras", json={"pedido": "otra más", "ficha": FICHA})
         assert otra.status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# 13. Las cabeceras de la plataforma (IP del integrador) no llegan al comercio
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_cabeceras_de_la_plataforma_no_llegan_al_comercio(armar_proxy, merchant):
+    de_la_plataforma = {
+        "X-Forwarded-For": "203.0.113.7",
+        "X-Forwarded-Host": "kaiai-motor.vercel.app",
+        "X-Forwarded-Proto": "https",
+        "X-Real-IP": "203.0.113.7",
+        "Forwarded": "for=203.0.113.7",
+        "X-Vercel-Ip-Country": "AR",
+        "X-Vercel-Forwarded-For": "203.0.113.7",
+        "CF-Connecting-IP": "203.0.113.7",
+        "CF-IPCountry": "AR",
+        "True-Client-IP": "203.0.113.7",
+    }
+    async with cliente_de(armar_proxy()) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_find_products("B")),
+            headers={**HEADERS_A2A, **de_la_plataforma, "X-Otra-Cosa": "sigue"},
+        )
+    assert resp.status_code == 200
+    _, recibidos = merchant.recibidos[-1]
+    nombres = {k.lower() for k in recibidos}
+    assert not nombres & {k.lower() for k in de_la_plataforma}
+    assert "203.0.113.7" not in json.dumps(recibidos)
+    # Lo del pedido A2A sigue pasando.
+    assert recibidos["content-type"] == "application/json"
+    assert recibidos["x-a2a-extensions"] == HEADERS_A2A["X-A2A-Extensions"]
+    assert recibidos["x-otra-cosa"] == "sigue"

@@ -466,7 +466,10 @@ escenarios fijos (`PROXY_FICHA_DEMO`); también solo informa.
   reducida); `id`/`event` del SSE se sanean.
 - Ningún header del comercio llega al cliente salvo `X-A2A-Extensions`. Al
   revés, los headers de control propios (`X-Guard-Token`, `X-Compra-Id`)
-  nunca llegan al comercio, tampoco en el tráfico anónimo.
+  nunca llegan al comercio, tampoco en el tráfico anónimo, ni los que agrega
+  la plataforma delante del proxy con la IP o la ubicación de quien llama
+  (`X-Forwarded-*`, `X-Real-IP`, `Forwarded`, `True-Client-IP`, `X-Vercel-*`,
+  `CF-*`). `Content-Type`, `Accept` y las extensiones A2A pasan igual.
 - JSON estricto (sin `NaN`/`Infinity`), lectura con tope de bytes y SSE leído
   línea a línea con el mismo tope. Una respuesta (o un evento SSE) del
   comercio con más de 64 niveles de anidamiento se trata como ilegible: más

@@ -163,7 +163,14 @@ _HOP_BY_HOP = {
 _NO_HACIA_COMERCIO = _HOP_BY_HOP | {
     "host", "content-length", "accept-encoding", "cookie",
     HEADER_TOKEN.lower(), HEADER_COMPRA.lower(),
+    # Las que agrega la plataforma delante del proxy (Vercel, Cloudflare, un
+    # proxy inverso): traen la IP y la ubicación del integrador o del agente,
+    # no son del pedido A2A.
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port",
+    "x-real-ip", "forwarded", "true-client-ip",
 }
+# Y las de estos prefijos (`x-vercel-ip-country`, `cf-connecting-ip`…).
+_PREFIJOS_NO_HACIA_COMERCIO = ("x-vercel-", "cf-")
 # Del comercio al cliente solo pasa esto (el Content-Type se normaliza). Nunca
 # Set-Cookie: las cookies no distinguen puerto y llegarían al dashboard.
 _DEL_COMERCIO_AL_CLIENTE = {"x-a2a-extensions"}
@@ -334,7 +341,11 @@ Accion = Literal["pasar", "retener", "bloquear"]
 
 
 def _filtrar(headers: Any, excluidos: set[str]) -> dict[str, str]:
-    return {k: v for k, v in headers.items() if k.lower() not in excluidos}
+    return {
+        k: v
+        for k, v in headers.items()
+        if k.lower() not in excluidos and not k.lower().startswith(_PREFIJOS_NO_HACIA_COMERCIO)
+    }
 
 
 def _ficha_verificable(
