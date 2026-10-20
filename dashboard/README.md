@@ -24,6 +24,9 @@ PYTHONUTF8=1 world/ap2/.venv/Scripts/python -m dashboard     # Linux/macOS: worl
 | `DASHBOARD_ALLOW_REMOTE` | `0` | `1` para escuchar en la red (no recomendado: muestra mandatos y checkouts completos) |
 | `PROXY_URL` | `http://127.0.0.1:8010` | Proxy del Guard. `127.0.0.1` y no `localhost`: en Windows `localhost` prueba primero `::1`, donde el proxy no escucha, y cada intento fallido suma ~2 s (el panel mostraba "proxy desconectado"). El proxy acepta `Host` `127.0.0.1:8010` y `localhost:8010` |
 | `GUARD_API_TOKEN_PATH` | `.temp-db/guard_api_token` | Token de la API de control del proxy (lo escribe el proxy en cada arranque). El servidor lo agrega en los POST que reenvía; tiene que ser el mismo archivo que usa el proxy |
+| `DASHBOARD_PUBLIC_ORIGINS` · `DASHBOARD_EXTRA_HOSTS` | — | Deploy: dominio público del panel y `Host` extra de un túnel ([`deploy/README.md`](../deploy/README.md)) |
+| `DASHBOARD_ACCESS_TOKEN` | — | Panel **publicado** (cualquiera de las dos de arriba, o escuchando fuera de loopback): contraseña de HTTP Basic que pide todo, páginas, `/api/*` y estáticos (usuario cualquiera; al menos 16 caracteres). **Sin ella, publicado no arranca.** En local no se usa |
+| `DASHBOARD_PERMITIR_SIN_CLAVE` | `0` | `1` para publicar el panel sin contraseña igual (no recomendado) |
 
 Atajos de teclado: `1`–`7` cambian de vista (no mientras se escribe en un
 campo). La vista Agente es la `7`, última, para no correr los atajos de la
@@ -53,8 +56,13 @@ queda como "Detalle técnico" (`/`).
 - **Input único.** `POST /api/demo/mensaje {"texto"}`: si nuestro agente (el
   intake del proxy) tiene una pregunta pendiente **de esta corrida**, la
   respuesta va al proxy con el token (`/guard/compras/contexto`: respuesta,
-  `confirmar` si es el turno de confirmar la ficha y dice "sí", u `omitir`;
-  o `/guard/compras/decision`: "sí" acepta, "no" rechaza, otra cosa da 422).
+  `confirmar` si es el turno de confirmar la ficha y dice solo "sí", u
+  `omitir`; o `/guard/compras/decision`: "sí" acepta, "no" rechaza, otra cosa
+  da 422). "Solo" quiere decir sin nada más que cortesía ("sí, gracias", "no,
+  gracias"): un sí o un no con un número, un plazo o una condición ("sí, pero
+  hasta 300", "no, pero mandalas el viernes") en la confirmación va como
+  corrección de la ficha y en la decisión da 422, nunca se descarta lo que
+  agregó el usuario.
   Si no, va al agente de compras por la API de `adk web` (`ADK_URL`): una
   sesión por compra (`POST /apps/shopping_agent/users/demo/sessions`) y
   `POST /run_sse`, en segundo plano (202). Con el agente trabajando, 409.
@@ -425,6 +433,16 @@ aprobaciones), así que se protege igual que `/guard/*`:
   mismos controles del proxy. Los GET reenviados no llevan el token.
 - Los mandatos y el `checkout_jwt` completos se muestran (la demo lo exige);
   por eso el panel y el proxy escuchan solo en loopback.
+- **Publicado** (`DASHBOARD_PUBLIC_ORIGINS`, `DASHBOARD_EXTRA_HOSTS` o
+  escuchando en la red), Host, Origin y Sec-Fetch-Site no alcanzan: `curl`
+  manda los del dominio público y el panel le agregaría el token del proxy
+  (apagar el Guard, aprobar un `escalar`, decidir una oportunidad). Por eso
+  todo pide HTTP Basic con `DASHBOARD_ACCESS_TOKEN` (401 con
+  `WWW-Authenticate` si no; comparación con `hmac.compare_digest`), antes
+  que los demás controles, y sin contraseña el panel no arranca (salvo
+  `DASHBOARD_PERMITIR_SIN_CLAVE=1`). El navegador pide la contraseña una vez y
+  la vuelve a mandar por su cuenta en los `fetch` y el `EventSource` del mismo
+  origen: el JS no cambia. En local no se pide nada.
 
 ## Tests
 

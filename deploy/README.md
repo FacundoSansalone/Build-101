@@ -53,9 +53,21 @@ tenki login                              # o TENKI_API_KEY=tk_...
 bash deploy/tenki.sh                     # imprime la URL: https://…/demo
 ```
 
+**El panel publicado pide contraseña** (HTTP Basic: el navegador la pide una
+vez; usuario cualquiera, por ejemplo `kaiai`). `tenki.sh` usa
+`DASHBOARD_ACCESS_TOKEN` (del entorno o del `.env`) o, si no hay, genera una
+en `.temp-db/tenki_dashboard_token` (ignorado por git) y la reusa en cada
+redeploy; al terminar imprime de dónde sacarla. Viaja a la VM en
+`.temp-db/deploy.env` (modo 600), no por la línea de comandos. Sin
+contraseña, el panel publicado no arranca: Host, Origin y Sec-Fetch-Site solo
+frenan navegadores, y con `curl` alguien con la URL podría apagar el Guard o
+aprobar compras (el panel les agrega el token del proxy).
+
 - **Redeploy** (código nuevo, misma VM y misma URL):
   `TENKI_SESSION=<id> bash deploy/tenki.sh`. La clave del Guard
-  (`.temp-db/`) se conserva.
+  (`.temp-db/`) se conserva, y la contraseña del panel también.
+- **Cambiar la contraseña:** borrá `.temp-db/tenki_dashboard_token` (o
+  definí otra `DASHBOARD_ACCESS_TOKEN`) y volvé a correr el redeploy.
 - **Pausar fuera de la demo:** `tenki sandbox pause --session <id>`. Se
   conservan la memoria y el disco, pero se cortan las conexiones. Al
   reanudar (`resume`), volvé a correr `tenki.sh` con `TENKI_SESSION`.
@@ -73,6 +85,10 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
   encuentra, pasalo a mano con `TENKI_SESSION`.
 - El formato en que `expose` imprime la URL. Si no la encuentra, pasala con
   `PREVIEW_URL`.
+- Si la CLI falla al consultar la VM mientras espera el arranque (red,
+  rate limit): reintenta, y a las 6 fallas seguidas corta con el error de la
+  CLI (no lo confunde con "start_all.sh terminó": el comando remoto contesta
+  con una marca explícita).
 - Si el túnel le cambia el `Host` al panel. Si `/api/*` da 403
   `host_no_permitido`, agregá el host que aparece en
   `.logs/dashboard.log` con `DASHBOARD_EXTRA_HOSTS`.
@@ -83,6 +99,8 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
 |---|---|---|
 | `DASHBOARD_PUBLIC_ORIGINS` | — | Origen público del panel (`https://dominio`). Lo agrega a los `Origin` y `Host` que acepta `/api/*`. Si está, el panel escucha en `0.0.0.0`. `tenki.sh` lo completa solo. |
 | `DASHBOARD_EXTRA_HOSTS` | — | `Host` extra (si el túnel lo reescribe). |
+| `DASHBOARD_ACCESS_TOKEN` | — | Contraseña del panel publicado (HTTP Basic, usuario cualquiera, al menos 16 caracteres). Con `DASHBOARD_PUBLIC_ORIGINS`, `DASHBOARD_EXTRA_HOSTS` o el panel escuchando en la red es **obligatoria**: sin ella no arranca. `tenki.sh` genera una si no hay. En local no se usa. |
+| `DASHBOARD_PERMITIR_SIN_CLAVE` | `0` | `1` para publicar el panel sin contraseña igual (no recomendado). |
 | `GUARD_FILTRO` | `filtro:filtrar` | Filtro del proxy. |
 | `FILTRO_SOLO_HEURISTICAS` | `1` | Con el modelo, el filtro corta el desafío OTP del comercio honesto ([DEMO.md](../docs/DEMO.md)). |
 | `DEMO_PAUSA_AUTO_S` | `8` | Espacia las respuestas automáticas de `/demo` (plan gratuito de Gemini). `0` con una clave paga. |
@@ -90,8 +108,13 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
 | `PROXY_FICHA_DEMO` | `0` | `0`: manda la ficha que confirmó el usuario. `1`: la del escenario fijo (grabaciones, benchmark por el proxy, `smoke_checkout.py`). |
 | `PROXY_MAX_SUSCRIPTORES_SSE` | `200` | Suscriptores de `/guard/events` a la vez. Cada pestaña del panel abre una: con el default del proxy (20), la pestaña 21 se queda sin eventos. |
 
-El `.env` de la raíz viaja a la VM tal cual (necesita `GOOGLE_API_KEY`; las
-`SUPABASE_*` son opcionales) y puede pisar cualquiera de estas variables.
+El `.env` de la raíz viaja a la VM (necesita `GOOGLE_API_KEY`; las
+`SUPABASE_*` son opcionales) y puede pisar cualquiera de estas variables,
+**menos** `SUPABASE_ACCESS_TOKEN` (token personal con poder sobre toda la
+cuenta de Supabase: solo lo usa `vercel/aplicar_migraciones.py`, en tu
+máquina) y las `VERCEL_*` y `TENKI_*`, que `tenki.sh` saca antes de subirlo.
+El código sube sin lo ignorado por git y sin los archivos versionados que
+borraste del working tree.
 
 Del gateway (todas opcionales; sin `GATEWAY_CLAVES_ARCHIVO` no cambia nada):
 
@@ -194,9 +217,11 @@ están en [`vercel/README.md`](vercel/README.md). Lo que no se sube lo fija
 
 ## A tener en cuenta
 
-- **La URL es pública y no tiene contraseña.** Cualquiera que la tenga gasta
-  la cuota de Gemini (4 agentes llaman al LLM en cada compra). Compartila solo
-  con quien la necesite.
+- **La URL es pública, con contraseña.** Cualquiera que tenga las dos gasta
+  la cuota de Gemini (4 agentes llaman al LLM en cada compra), cambia el
+  comercio y puede aprobar compras retenidas. Compartilas solo con quien las
+  necesite. La contraseña viaja en cada pedido: publicá el panel solo por
+  `https://` (Tenki termina el TLS).
 - **`/demo` es una sola conversación compartida.** Todos los que abren la URL
   ven el mismo chat y el mismo comercio. Alcanza para una demo con una
   persona al mando, no para varios usuarios a la vez.

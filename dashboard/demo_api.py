@@ -180,6 +180,16 @@ _AFIRMATIVAS = frozenset({
 })
 _AFIRMATIVAS_DOBLES = frozenset({"de acuerdo", "esta bien", "me sirve"})
 _NEGATIVAS = frozenset({"no", "nop", "nah", "rechazo", "rechazar", "negativo"})
+# Lo que acompaña a un sí o a un no sin cambiar nada: cortesía y a qué se
+# contesta ("sí, confirmo la ficha", "no, gracias").
+_CORTESIA = frozenset({
+    "gracias", "porfa", "genial", "que", "la", "el", "esa", "esta", "eso", "todo",
+    "ficha", "compra", "alternativa", "oferta", "propuesta",
+})
+_CORTESIA_DOBLES = frozenset({"por favor", "muchas gracias"})
+# Lo que después de un "no" sigue siendo un no ("no acepto", "no me sirve").
+_NEGADAS = frozenset({"acepto", "aceptar", "confirmo", "quiero", "gracias"})
+_NEGADAS_DOBLES = frozenset({"me sirve", "me interesa"})
 _OMITIR = frozenset({"omitir", "omiti", "saltear", "saltea", "skip", "paso"})
 
 
@@ -190,16 +200,40 @@ def _palabras(texto: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", sin_tildes)
 
 
+def _solo_de(palabras: list[str], simples: frozenset[str], dobles: frozenset[str]) -> bool:
+    """¿Todas las palabras (o pares de palabras) están en las tablas?"""
+    i = 0
+    while i < len(palabras):
+        if " ".join(palabras[i:i + 2]) in dobles:
+            i += 2
+        elif palabras[i] in simples:
+            i += 1
+        else:
+            return False
+    return True
+
+
+def _alguna_de(palabras: list[str], simples: frozenset[str], dobles: frozenset[str]) -> bool:
+    pares = {" ".join(palabras[i:i + 2]) for i in range(len(palabras) - 1)}
+    return bool(set(palabras) & simples or pares & dobles)
+
+
 def es_afirmativo(texto: str) -> bool:
+    """Un sí y nada más (cortesía aparte). "Sí, pero hasta 300" o "ok, para
+    el viernes" no: agregan algo que no se puede descartar en silencio."""
     palabras = _palabras(texto)
-    if not palabras or "no" in palabras:
-        return False
-    return palabras[0] in _AFIRMATIVAS or " ".join(palabras[:2]) in _AFIRMATIVAS_DOBLES
+    return _alguna_de(palabras, _AFIRMATIVAS, _AFIRMATIVAS_DOBLES) and _solo_de(
+        palabras, _AFIRMATIVAS | _CORTESIA, _AFIRMATIVAS_DOBLES | _CORTESIA_DOBLES
+    )
 
 
 def es_negativo(texto: str) -> bool:
+    """Un no y nada más ("no", "no, gracias", "no me sirve"). "No, pero
+    mandalas el viernes" no: pide otra cosa."""
     palabras = _palabras(texto)
-    return bool(palabras) and palabras[0] in _NEGATIVAS
+    return bool(palabras) and palabras[0] in _NEGATIVAS and _solo_de(
+        palabras, _NEGATIVAS | _NEGADAS | _CORTESIA, _NEGADAS_DOBLES | _CORTESIA_DOBLES
+    )
 
 
 def compra_pendiente(

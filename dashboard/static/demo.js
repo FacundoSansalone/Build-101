@@ -655,7 +655,8 @@ async function enviar(ev) {
     refrescarEstado();
     refrescarCompras();
   } else if (r.status === 422) {
-    avisar("Nuestro agente espera un sí o un no.", "error");
+    // "Sí, pero…" o "no, pero…": la consulta es sobre esa alternativa tal cual.
+    avisar("Nuestro agente espera solo un sí o un no: la alternativa se acepta o se rechaza tal cual.", "error");
   } else if (r.status === 409 && r.datos?.error === "agente_ocupado") {
     avisar("Tu agente todavía está trabajando: esperá su respuesta.", "error");
   } else if (r.status === 409 && r.datos?.error === "compra_reiniciada") {
