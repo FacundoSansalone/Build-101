@@ -53,8 +53,13 @@ queda como "Detalle técnico" (`/`).
 - **Input único.** `POST /api/demo/mensaje {"texto"}`: si nuestro agente (el
   intake del proxy) tiene una pregunta pendiente **de esta corrida**, la
   respuesta va al proxy con el token (`/guard/compras/contexto`: respuesta,
-  `confirmar` si es el turno de confirmar la ficha y dice "sí", u `omitir`;
-  o `/guard/compras/decision`: "sí" acepta, "no" rechaza, otra cosa da 422).
+  `confirmar` si es el turno de confirmar la ficha y dice solo "sí", u
+  `omitir`; o `/guard/compras/decision`: "sí" acepta, "no" rechaza, otra cosa
+  da 422). "Solo" quiere decir sin nada más que cortesía ("sí, gracias", "no,
+  gracias"): un sí o un no con un número, un plazo o una condición ("sí, pero
+  hasta 300", "no, pero mandalas el viernes") en la confirmación va como
+  corrección de la ficha y en la decisión da 422, nunca se descarta lo que
+  agregó el usuario.
   Si no, va al agente de compras por la API de `adk web` (`ADK_URL`): una
   sesión por compra (`POST /apps/shopping_agent/users/demo/sessions`) y
   `POST /run_sse`, en segundo plano (202). Con el agente trabajando, 409.

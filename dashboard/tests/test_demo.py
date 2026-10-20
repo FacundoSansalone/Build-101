@@ -230,6 +230,54 @@ def test_la_decision_sobre_una_alternativa_es_si_o_no():
     assert demo.rutear(pendiente, "¿cuánto sale?").destino == "aclarar"
 
 
+# Un sí o un no con algo más (un número, un plazo, una condición) no es un sí
+# o un no: lo que agrega el usuario no se descarta en silencio.
+SI_CON_CONDICIONES = (
+    "Sí, pero hasta 300 dólares",
+    "dale pero que sean 25",
+    "si, el tope es 500 en vez de 400",
+    "Ok, mejor para el viernes",
+    "sí 25",
+    "confirmo, si llegan el lunes",
+)
+SI_LIMPIOS = (
+    "sí", "Si, confirmo", "dale", "ok", "okay", "confirmo", "Sí, acepto", "de acuerdo",
+    "perfecto, gracias", "Listo, ¡gracias!", "claro que sí", "sí, por favor", "Está bien",
+    "esta bien, dale", "bueno", "sí, confirmo la ficha", "acepto la alternativa",
+)
+
+
+def test_en_la_confirmacion_un_si_con_condiciones_es_una_correccion():
+    pendiente = [_compra("esperando_contexto", confirmar=True)]
+    for texto in SI_CON_CONDICIONES:
+        ruta = demo.rutear(pendiente, texto)
+        assert ruta.destino == "contexto", texto
+        assert ruta.cuerpo == {"compra_id": "cmp-test01", "respuesta": texto}
+    for texto in SI_LIMPIOS:
+        assert demo.rutear(pendiente, texto).destino == "confirmar", texto
+
+
+def test_en_la_decision_un_si_o_un_no_con_condiciones_pide_aclarar():
+    pendiente = [_compra("esperando_decision")]
+    for texto in (*SI_CON_CONDICIONES, "no, pero mandalas el viernes", "no hasta el lunes",
+                  "no, 25", "si no llegan, no", "no sé", "no, está bien", "gracias"):
+        assert demo.rutear(pendiente, texto).destino == "aclarar", texto
+    for texto in SI_LIMPIOS:
+        assert demo.rutear(pendiente, texto).cuerpo == {"compra_id": "cmp-test01", "decision": "aceptar"}, texto
+    for texto in ("no", "No.", "no, gracias", "nop", "rechazo", "no, no me sirve", "no acepto",
+                  "no, muchas gracias"):
+        assert demo.rutear(pendiente, texto).cuerpo == {"compra_id": "cmp-test01", "decision": "rechazar"}, texto
+
+
+def test_un_si_o_un_no_con_condiciones_en_la_decision_da_422_sin_llamar_al_proxy(tmp_path):
+    proxy = FakeProxy(compras=[_compra("esperando_decision")])
+    with TestClient(_app(tmp_path, proxy=proxy), base_url=BASE) as c:
+        for texto in ("Sí, pero hasta 300 dólares", "no, pero mandalas el viernes"):
+            r = _post(c, "/api/demo/mensaje", {"texto": texto})
+            assert r.status_code == 422 and r.json()["error"] == "se_espera_si_o_no", texto
+    assert proxy.posts == []
+
+
 def test_no_se_contesta_una_pregunta_vencida_ni_de_una_corrida_anterior():
     vencida = _compra("esperando_contexto", vence=_ahora() - timedelta(seconds=1))
     assert demo.rutear([vencida], "para programar").destino == "agente"
