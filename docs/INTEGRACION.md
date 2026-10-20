@@ -93,6 +93,15 @@ son las mismas; cambia esto:
   compra y sus esperas viven en la base, así que contestar el porqué, decidir
   o aprobar funciona desde cualquier pedido, aunque la búsqueda siga abierta
   en otra.
+- **`tasks/get` y `tasks/resubscribe` de un checkout se bloquean si caen en
+  otra instancia** que la que evaluó la tarea: la decisión del Guard sobre
+  esa tarea vive en la memoria de la instancia que la evaluó, y una tarea
+  con `ap2.checkout` que el gateway no evaluó nunca pasa (fail-closed). Para
+  el checkout, mandá otra vez `create_checkout` (se evalúa de nuevo).
+- **Webhooks en línea:** 2 intentos de 5 s (con 1 s entre medio) antes de
+  que el gateway responda el pedido que los disparó; no hay reintentos en
+  segundo plano (ver §7). Lo que no se entregó ahí no se vuelve a intentar:
+  reconciliá con `GET /v1/compras/{id}`.
 
 ## 4. Autenticación
 
@@ -289,6 +298,13 @@ Lo que puede pasar mientras esa llamada está abierta:
    autorización.
 
 Si nada de eso aplica, la respuesta del comercio llega intacta.
+
+**Con `message/stream` no se buscan propuestas.** En un stream la respuesta
+del comercio sale evento por evento (después del filtro): no se puede
+retener para consultar a tu usuario. La pregunta del porqué y el filtro
+funcionan igual; la compra queda `sin_oportunidad` y el Guard evalúa el
+checkout con la ficha que autorizaste. Si querés propuestas, buscá con
+`message/send`.
 
 ### 5.4 Pedir el checkout (`create_checkout`)
 
@@ -519,6 +535,8 @@ Además:
 - **Reintentos:** hasta 6 intentos, con espera creciente (1 s, 4 s, 16 s,
   1 min, 5 min, con algo de azar), ante error de red, timeout, 5xx, 408 o
   429. Otro 4xx o una redirección cuentan como falla y no se reintentan.
+  **En Vercel no:** son 2 intentos de 5 s, con 1 s entre medio, antes de
+  responder el pedido que los disparó (§3), y después no hay más.
 - **Solo `https`** y a una IP pública: un webhook que resuelve a una IP
   privada se descarta (`destino_no_permitido`).
 - **No sobreviven a un reinicio del gateway.** Si el gateway se reinicia con
@@ -564,6 +582,12 @@ curl -s -X POST "$GW/v1/evaluar" \
 
 Respuesta: un `VistaVeredicto` (con `contexto_id: null`) más
 `comercio_firmado` (el `merchant.id` del checkout).
+
+**El recibo atestigua solo lo que mandaste.** En este modo el gateway no vio
+la negociación: el recibo firma el veredicto sobre la ficha, el checkout y
+las ofertas de **tu** pedido (más el catálogo del comercio, si lo indicaste).
+No prueba que esas fueran las ofertas que el comercio le mostró a tu agente
+ni que la ficha sea la que autorizó tu usuario: eso queda de tu lado.
 
 **Firmá solo si la respuesta es 200 y `llega_a_firma` es `true`.** Cualquier
 otra cosa (error, timeout, `false`) es no firmar. Este modo no tiene estado:
