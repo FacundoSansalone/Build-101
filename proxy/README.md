@@ -388,7 +388,12 @@ Reglas que no dependen de la demo:
 - **Tiempo.** Las dos esperas caen en la misma llamada del agente del
   cliente, que espera hasta 600 s. El proxy usa un presupuesto de 570 s por
   llamada (los plazos se recortan a lo que queda), y cada llamada al agente
-  de intención tiene un tope de 45 s.
+  de intención tiene un tope de 45 s. Las esperas del intake (el porqué y
+  las repreguntas) dejan además 30 s para la llamada al comercio. Si al
+  detectar una oportunidad no le quedan al usuario al menos 30 s (o la
+  espera configurada, si es más corta), no se consulta: sigue el pedido
+  literal y sale un evento `error` que lo dice (una consulta que vencía
+  antes de que el usuario la viera cortaba la compra).
 - **Filtro.** Corre en un hilo, con un tope de 30 s. Si vence o falla,
   bloquea. Tiene su propio pool (`ProxyGuard.ejecutor_filtro`, 16 hilos) y el
   agente de intención y el fabricante, otro (`ejecutor_llm`, 16): un LLM

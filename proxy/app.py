@@ -293,6 +293,10 @@ _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
 _MOTIVO_SIN_ESTADO = "el estado del gateway no quedó guardado"
 # Una excepción inesperada al procesar lo que mandó el comercio (fail-closed).
 _MOTIVO_NO_PROCESABLE = "la respuesta del comercio no se pudo procesar"
+_MOTIVO_SIN_TIEMPO_CONSULTA = (
+    "Hay una alternativa, pero no queda tiempo en la llamada para consultarla "
+    "al usuario: no se consulta y sigue el pedido literal."
+)
 _MOTIVO_SIN_ESPERA = (
     "No se pudo guardar la espera en el almacén: la alternativa no se autoriza."
 )
@@ -302,6 +306,12 @@ _INTENTOS_FUSION = 3
 # Una repregunta del intake solo si queda al menos esto de la llamada (si
 # no, sigue con lo que tiene: la consulta de una oportunidad también espera).
 _MINIMO_REPREGUNTA_S = 30.0
+# Las esperas del intake (el porqué, las repreguntas) dejan esto para la
+# llamada al comercio, que viene después en la misma llamada.
+_RESERVA_COMERCIO_S = 30.0
+# La consulta de una oportunidad solo si el usuario tiene al menos esto (o
+# la espera configurada, si es más corta) para verla y contestar.
+_MINIMO_CONSULTA_S = 30.0
 # La taxonomía (unas 3 llamadas cortas) solo si queda al menos esto.
 _MINIMO_TAXONOMIA_S = 10.0
 _TIMEOUT_LLM_S = 45.0
@@ -1825,7 +1835,9 @@ class ProxyGuard:
                     )
                     texto = _PREGUNTA_POR_DEFECTO
                 compra.nueva_espera(texto)
-                vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_contexto_s))
+                vence = compra.fijar_plazo(
+                    self._plazo(llamada, self.config.espera_contexto_s, _RESERVA_COMERCIO_S)
+                )
                 apertura = await esperas.abrir(compra, "porque", estado_previo="creada")
                 if apertura != "abierta":
                     propia = False
@@ -1898,10 +1910,11 @@ class ProxyGuard:
             llamada, "No se pudo guardar la espera del porqué: sigue el pedido literal"
         )
 
-    def _plazo(self, llamada: Llamada, segundos: float) -> float:
+    def _plazo(self, llamada: Llamada, segundos: float, reserva: float = 0.0) -> float:
         """El plazo de una espera: el configurado, si entra en lo que queda de
-        la llamada (con margen para el LLM y la respuesta)."""
-        return min(segundos, self._restante(llamada) - _MARGEN_S)
+        la llamada (con margen para el LLM y la respuesta, y `reserva` para lo
+        que viene después: la llamada al comercio, en las del intake)."""
+        return min(segundos, self._restante(llamada) - _MARGEN_S - reserva)
 
     def _eventos_del_pedido(self, llamada: Llamada) -> None:
         pedido = llamada.pedido
@@ -2748,7 +2761,10 @@ class ProxyGuard:
                 # ¿Otra pregunta? Solo si el intake la pide y queda tiempo.
                 otra, sin_tiempo = False, False
                 if nuevo is not None and nuevo.siguiente in ("repreguntar", "confirmar"):
-                    otra = self._restante(llamada) - _MARGEN_S >= _MINIMO_REPREGUNTA_S
+                    otra = (
+                        self._restante(llamada) - _MARGEN_S - _RESERVA_COMERCIO_S
+                        >= _MINIMO_REPREGUNTA_S
+                    )
                     sin_tiempo = not otra
                 # La categoría, antes de pedir la confirmación (la ficha que
                 # confirma el usuario ya la lleva) y al cerrar. Con la misma
@@ -2827,7 +2843,9 @@ class ProxyGuard:
         `vence`, fija el plazo acá (el intake de la demo); con `vence`, ya lo
         fijó quien abrió la espera."""
         if vence is None:
-            vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_contexto_s))
+            vence = compra.fijar_plazo(
+                self._plazo(llamada, self.config.espera_contexto_s, _RESERVA_COMERCIO_S)
+            )
         r = estado.resultado
         estado.confirmar = r is not None and r.siguiente == "confirmar"
         datos: dict[str, Any] = {
@@ -3084,6 +3102,15 @@ class ProxyGuard:
         # (el dashboard muestra el SKU), nunca el que declara el vendedor:
         # lo asegura el proxy, cualquiera sea el agente.
         oportunidad = _con_titulo_publico(oportunidad, ofertas)
+        plazo = self._plazo(llamada, self.config.espera_decision_s)
+        if plazo < min(self.config.espera_decision_s, _MINIMO_CONSULTA_S):
+            # Una consulta que vence antes de que el usuario la vea cortaba la
+            # compra ("no respondió"): sin tiempo, no se consulta y sigue el
+            # pedido literal (el Guard igual verifica el checkout).
+            self._error(llamada, _MOTIVO_SIN_TIEMPO_CONSULTA, contexto_id)
+            compra.estado = "sin_oportunidad"
+            self.guardar_compra(compra)
+            return "pasar", None
 
         estado_previo = compra.estado
         compra.oportunidad = oportunidad
@@ -3092,7 +3119,7 @@ class ProxyGuard:
         # reinicio, y otra búsqueda pasaba sin la decisión del usuario.
         compra.resuelta.clear()
         compra.estado = "esperando_decision"
-        vence = compra.fijar_plazo(self._plazo(llamada, self.config.espera_decision_s))
+        vence = compra.fijar_plazo(plazo)
         esperas = self._esperas_de(compra)
         # Con varias instancias, la espera y la fila de la compra quedan
         # escritas antes del evento y del webhook (el integrador puede decidir

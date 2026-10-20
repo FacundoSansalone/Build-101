@@ -550,3 +550,80 @@ def test_el_proxy_usa_la_zona_y_demo_hoy_sigue_mandando(armar_proxy, config):
     assert proxy.hoy() == datetime.now(zona_horaria("Pacific/Kiritimati")).date()
     fijo = armar_proxy(config=replace(config, demo_hoy=date(2026, 10, 18))).state.proxy
     assert fijo.hoy() == date(2026, 10, 18)
+
+
+# ---------------------------------------------------------------------------
+# 8. Sin tiempo para la consulta, no se consulta: sigue el pedido literal
+# ---------------------------------------------------------------------------
+
+
+def _restante_fijo(proxy: Any, monkeypatch) -> dict[str, float]:
+    """Lo que le queda a la llamada, a mano (la instancia, no la clase)."""
+    restante = {"s": 500.0}
+    monkeypatch.setattr(proxy, "_restante", lambda llamada: restante["s"])
+    return restante
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("queda", [40.0, 10.0])
+async def test_sin_tiempo_para_consultar_sigue_el_pedido_literal(
+    armar_proxy, config, monkeypatch, queda
+):
+    from dataclasses import replace
+
+    from proxy.tests.test_etapa2 import (
+        RESPUESTA_USUARIO,
+        AgenteFalso,
+        _buscar,
+        _carts,
+        _compra,
+        _parametros,
+    )
+
+    app = armar_proxy(
+        config=replace(config, espera_contexto_s=5.0, espera_decision_s=60.0), agente=AgenteFalso()
+    )
+    restante = _restante_fijo(app.state.proxy, monkeypatch)
+    async with cliente_de(app) as c:
+        busqueda = _buscar(c)
+        compra = await _compra(c, "esperando_contexto")
+        restante["s"] = queda  # el usuario tardó: queda poco de la llamada
+        await c.post(
+            "/guard/compras/contexto",
+            json={"compra_id": compra["compra_id"], "respuesta": RESPUESTA_USUARIO},
+        )
+        task = (await asyncio.wait_for(busqueda, 5)).json()["result"]
+        historial = (await c.get("/guard/events/history")).json()
+        estado = (await c.get("/guard/compras")).json()["compras"][0]
+    assert task["status"]["state"] != "failed"
+    assert _carts(task) == ["cart_1", "cart_2"] and _parametros(task) == []
+    assert estado["estado"] == "sin_oportunidad"
+    tipos = [e["tipo"] for e in historial]
+    assert "oportunidad" not in tipos and "bloqueado" not in tipos
+    errores = [e["datos"]["mensaje"] for e in historial if e["tipo"] == "error"]
+    assert any("no queda tiempo" in m for m in errores), errores
+
+
+@pytest.mark.anyio
+async def test_las_esperas_del_intake_reservan_tiempo_para_el_comercio(
+    armar_proxy, config, monkeypatch
+):
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from proxy.tests.test_etapa2 import AgenteFalso, _buscar, _compra
+
+    app = armar_proxy(config=replace(config, espera_contexto_s=120.0), agente=AgenteFalso())
+    restante = _restante_fijo(app.state.proxy, monkeypatch)
+    restante["s"] = 100.0
+    async with cliente_de(app) as c:
+        busqueda = _buscar(c)
+        compra = await _compra(c, "esperando_contexto")
+        vence = datetime.fromisoformat(compra["vence"])
+        await c.post(
+            "/guard/compras/contexto", json={"compra_id": compra["compra_id"], "omitir": True}
+        )
+        await busqueda
+    # 100 s de la llamada - 20 de margen - 30 para el comercio = 50 (antes, 80).
+    segundos = (vence - datetime.now(timezone.utc)).total_seconds()
+    assert 40 < segundos <= 50, segundos
