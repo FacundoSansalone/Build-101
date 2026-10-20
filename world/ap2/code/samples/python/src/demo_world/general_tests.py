@@ -95,6 +95,32 @@ def test_parser_las_fechas_son_relativas_a_hoy():
 
 
 @pytest.mark.parametrize(
+    ("texto", "fecha", "cantidad"),
+    [
+        # Un día de la semana seguido de un número sin mes: el primer día desde
+        # hoy con ese número que cae en ese día de la semana.
+        ("20 computadoras para el lunes 26", date(2026, 10, 26), 20),
+        ("20 computadoras para el lunes 26, hasta 20000 USD", date(2026, 10, 26), 20),
+        ("20 laptops by Monday the 26th", date(2026, 10, 26), 20),
+        ("monitor para el viernes 13 hasta 400 USD", date(2026, 11, 13), 1),
+        ("monitor para el domingo 18", HOY, 1),  # con el número, hoy es hoy
+        ("monitor para el lunes 2", date(2026, 11, 2), 1),
+        # Si no existe en los próximos 12 meses, el próximo día de la semana.
+        ("monitor para el lunes 31", date(2027, 5, 31), 1),
+        ("monitor para el viernes 31", VIERNES, 1),
+        # El número que sigue es la cantidad, no el día.
+        ("para el lunes 20 computadoras", LUNES, 20),
+        ("para el lunes 20 unidades de monitor", LUNES, 20),
+        ("para el lunes 26 de noviembre", date(2026, 11, 26), 1),
+        ("para el lunes 26/10", date(2026, 10, 26), 1),
+    ],
+)
+def test_parser_dia_de_la_semana_con_numero(texto, fecha, cantidad):
+  c = consulta.parsear(texto, HOY)
+  assert (c.fecha_limite, c.cantidad) == (fecha, cantidad)
+
+
+@pytest.mark.parametrize(
     ("texto", "tope", "moneda"),
     [
         ("notebook hasta USD 1.200", 1200.0, "USD"),
