@@ -534,15 +534,20 @@ def campos_cambiables(contexto: Contexto) -> set[str]:
     """
     if not contexto.respuesta:
         return set()
-    campos = {
+    campos = _dichos(contexto)
+    if contexto.necesidad_entregas:
+        campos |= CAMPOS_CRONOGRAMA
+    return campos
+
+
+def _dichos(contexto: Contexto) -> set[str]:
+    """Los campos que el usuario dijo flexibles (`origen == "dicha"`)."""
+    return {
         campo
         for flexibilidad in contexto.flexibilidades
         if flexibilidad.origen == "dicha"
         and (campo := campo_de_flexibilidad(flexibilidad)) is not None
     }
-    if contexto.necesidad_entregas:
-        campos |= CAMPOS_CRONOGRAMA
-    return campos
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +632,11 @@ def _cubre_lo_verificable(contexto: Contexto, oferta: Oferta, faltan: list[Requi
     cantidad tiene que alcanzar el total), aunque el usuario haya dicho que
     las fechas pueden variar. Sin cronograma no hay nada que comprobar: qué
     campos se pueden cambiar lo decide `campos_cambiables()`.
+
+    Si la cantidad cambia solo por el cronograma (el usuario no dijo que la
+    cantidad puede variar), la oferta tiene que traer el total del
+    cronograma, ni más ni menos: un cronograma que repite el pedido ("son 20
+    que entran el lunes") no habilita una oferta de 40.
     """
     if not contexto.necesidad_entregas:
         return True
@@ -636,6 +646,8 @@ def _cubre_lo_verificable(contexto: Contexto, oferta: Oferta, faltan: list[Requi
             return False
     if any(r.campo == "cantidad" for r in faltan):
         if oferta.cantidad is None or oferta.cantidad < total:
+            return False
+        if "cantidad" not in _dichos(contexto) and oferta.cantidad != total:
             return False
     return True
 
@@ -766,9 +778,7 @@ def _por_que(contexto: Contexto, cambios: list[Cambio]) -> str:
     if contexto.necesidad_entregas and CAMPOS_CRONOGRAMA.intersection(campos):
         necesidad = _cronograma(contexto.necesidad_entregas, "para el ")
         frases.append(f"Según eso, necesitás {necesidad}, y esta oferta lo cubre.")
-    dichos = {
-        campo_de_flexibilidad(f) for f in contexto.flexibilidades if f.origen == "dicha"
-    }
+    dichos = _dichos(contexto)
     flexibles = [_ETIQUETAS[c].lower() for c in campos if c in dichos]
     if flexibles:
         frases.append(f"Me dijiste que puede variar: {_enumerar(flexibles)}.")

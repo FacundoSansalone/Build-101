@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from contracts import Contexto, Entrega, Ficha, Flexibilidad, OfertasVistas
+from contracts import Contexto, Entrega, Ficha, Flexibilidad, Oferta, OfertasVistas, Requisito
 from guard.extractor import extraer_ofertas
 from intencion.agente import armar_contexto, campos_cambiables, detectar_oportunidad
 
@@ -318,6 +318,61 @@ def test_fechas_flexibles_dichas_sin_cronograma_habilitan_entregas(datos):
         contexto, _ficha(datos), _ofertas(datos), ClienteFalso(_elige("cart_2"))
     )
     assert oportunidad is not None and [c.campo for c in oportunidad.cambios] == ["entregas"]
+
+
+# -- la cantidad que habilita el cronograma -------------------------------------------
+
+FICHA_20 = Ficha(
+    pedido_original="20 computadoras para el lunes, hasta 20000 USD",
+    confirmada=True,
+    requisitos=[
+        Requisito(campo="precio", operador="maximo", valor=20000, obligatorio=True),
+        Requisito(campo="moneda", operador="igual", valor="USD", obligatorio=True),
+        Requisito(campo="cantidad", operador="igual", valor=20, obligatorio=True),
+        Requisito(campo="entregas", operador="cubre", valor=[{"cantidad": 20, "fecha": "2026-10-19"}],
+                  obligatorio=True),
+    ],
+)
+
+
+def _oferta(cantidad: int, entregas: list[tuple[int, str]]) -> Oferta:
+    return Oferta(
+        cart_id="a", sku="a", titulo="x", marca="m", categoria="laptops", uso="", precio=19000.0,
+        moneda="USD", cantidad=cantidad,
+        entregas=[Entrega(cantidad=c, fecha=date.fromisoformat(f)) for c, f in entregas],
+    )
+
+
+@pytest.mark.parametrize(
+    "cantidad, entregas",
+    [(40, [(40, "2026-10-19")]), (25, [(25, "2026-10-19")])],
+)
+def test_el_cronograma_no_habilita_otra_cantidad_que_la_que_conto(cantidad, entregas):
+    """"Son 20 personas que entran el lunes": el cronograma repite el pedido.
+    Una oferta del doble (o de 25) no cubre mejor la necesidad: no se propone."""
+    contexto = _contexto(entregas=((20, "2026-10-19"),))
+    cliente = ClienteFalso(_elige("a"))
+    assert detectar_oportunidad(contexto, FICHA_20, [_oferta(cantidad, entregas)], cliente) is None
+    assert cliente.pedidos == []  # ni le llega al modelo
+
+
+def test_el_cronograma_habilita_la_cantidad_que_conto():
+    # Contó 10 el lunes y 15 el jueves: necesita 25, y la oferta trae eso.
+    contexto = _contexto(entregas=((10, "2026-10-19"), (15, "2026-10-22")))
+    oferta = _oferta(25, [(10, "2026-10-19"), (15, "2026-10-22")])
+    oportunidad = detectar_oportunidad(contexto, FICHA_20, [oferta], ClienteFalso(_elige("a")))
+    assert oportunidad is not None
+    assert {c.campo for c in oportunidad.cambios} == {"cantidad", "entregas"}
+
+
+def test_con_la_cantidad_flexible_dicha_puede_sobrar():
+    contexto = _contexto(
+        entregas=((20, "2026-10-19"),),
+        flexibilidades=[Flexibilidad(descripcion="Cantidad: pueden ser más", origen="dicha")],
+    )
+    oferta = _oferta(25, [(25, "2026-10-19")])
+    oportunidad = detectar_oportunidad(contexto, FICHA_20, [oferta], ClienteFalso(_elige("a")))
+    assert oportunidad is not None and [c.campo for c in oportunidad.cambios] == ["cantidad"]
 
 
 # -- campos_cambiables() ---------------------------------------------------------------

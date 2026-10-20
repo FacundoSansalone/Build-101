@@ -67,7 +67,9 @@ las que el código ya aceptó. El código:
   `origen == "dicha"` atada a cantidad, entregas, marca, categoría, uso o
   talle;
 - cantidad y entregas, si la necesidad tiene un cronograma: la oferta tiene
-  que cubrirlo.
+  que cubrirlo. Si la cantidad cambia solo por el cronograma (el usuario no
+  dijo que puede variar), la oferta trae el total del cronograma, ni más ni
+  menos: "son 20 que entran el lunes" no habilita una oferta de 40.
 
 Una flexibilidad `inferida` no habilita ningún cambio. Precio y moneda (el
 mandato) nunca. Sin respuesta del usuario, ninguno.
