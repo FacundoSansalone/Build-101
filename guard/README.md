@@ -24,7 +24,7 @@ el recibo referencia). **Ningún texto del comercio llega a `motivo` ni a
 | `ficha.py` | `ficha_desde_intent()`: `Ficha.desde_intent()` + `intent.attributes` + `google_product_category` |
 | `chequeos.py` | Ficha (mandato y confirmación), mandato, cumplimiento, cantidad sin autorizar, evidencia y política. Publica lo que sabe chequear: `CAMPOS_SOPORTADOS` y `OPERADORES_SOPORTADOS` (todo el contrato, con `atributo` y `minimo`); el intake los lee para armar la ficha autorizada |
 | `categorias.py` | Categoría de la taxonomía de Google con jerarquía: la oferta tiene que caer en la rama de `Ficha.categoria_taxonomia`. El árbol (subconjunto del repo) se carga una vez al importar; sin árbol, escala |
-| `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección. La categoría y "una unidad" cuentan como obligatorios implícitos |
+| `ranking.py` | Ranking propio (obligatorios → preferidos → precio) e integridad de la elección. La categoría y "una unidad" cuentan como obligatorios implícitos; lo que se cumple solo según el fabricante de un GTIN sin atar desempata antes que los preferidos |
 | `checkout.py` | `ap2.checkout` firmado: decodifica el payload del JWT (sin verificar la firma), recalcula `checkout_hash`, lo ata al cart evaluado y exige que sea coherente consigo mismo (`line_items`, `exp`, `iat`) |
 | `recibo.py` | Arma el `Recibo` (sin I/O) y lo firma/verifica (JWS compacto ES256); clave PEM y JWK |
 | `textos.py` | `acotar()` (sin caracteres de control, 80 caracteres) y `moneda_legible()` para no interpolar texto del comercio |
@@ -199,8 +199,14 @@ solo declarado).
   verifican solo las fuentes por SKU (página, catálogo, comprador): el
   fabricante se busca por GTIN y no puede verificarlo. Si una fuente por SKU
   dice otro GTIN, `contradicho` (escala) y el fabricante se busca con el de
-  la fuente. Sin fuente por SKU, el GTIN queda como aviso: es la declaración
-  del comercio que ata la oferta al producto.
+  la fuente. Sin fuente por SKU, el GTIN queda como aviso y nada lo ata a lo
+  que se vende (puede ser el de otro producto): la ficha del fabricante de
+  ese GTIN sigue desmintiendo lo declarado (un obligatorio que no cumple
+  `bloquea`), pero no confirma un obligatorio (`escalar`, ver
+  `verificador.fabricante_sin_atar`). En el ranking, lo que se cumple solo
+  según esa ficha no cuenta como cumplido: desempata antes que los
+  preferidos, para que la oferta que el fabricante desmiente no quede
+  primera ni "domine".
 - Se verifican los atributos que pide la ficha (por nombre; los nombres que
   inventa el comercio no llegan a ningún texto).
 - Un campo que no declara el comercio ni tiene ninguna fuente (talles de una
@@ -214,11 +220,13 @@ solo declarado).
   de la oferta se verifica además contra las fuentes, como cualquier campo.
 
 Escenarios de `world/` (`fixtures/etapa2/`), con la ficha del fabricante y
-sin catálogo público para esos productos: la honesta da `con_avisos` (SKU y
-precio sin catálogo; la categoría, dentro de la rama pero solo declarada, es
-otro aviso), el ataque `bloqueado` (`memoria_ram 8 GB no cumple el
-obligatorio (mínimo 16 GB)`; `cancelacion_ruido (no) no cumple el
-obligatorio (sí)`). Sin ninguna fuente, lo obligatorio escala.
+sin catálogo público para esos productos: la honesta da `escalar` (el GTIN
+solo lo declara el comercio, así que sus obligatorios no tienen respaldo y
+decide una persona; sigue primera en el ranking), el ataque `bloqueado`
+(`memoria_ram 8 GB no cumple el obligatorio (mínimo 16 GB)`;
+`cancelacion_ruido (no) no cumple el obligatorio (sí)`). Con el GTIN en el
+catálogo (como el comercio general), el fabricante respalda. Sin ninguna
+fuente, lo obligatorio escala.
 `notebook_dato_falso` es el mismo dato falso **sin inyección** (el filtro no
 tiene nada que ver): el Guard no lee texto libre y lo bloquea igual.
 
@@ -376,10 +384,12 @@ veredicto = veredicto.model_copy(update={"recibo": firmar_recibo(veredicto.recib
   nunca `verificado`, y no se completa con el dato público. Si es un
   preferido, es un aviso; como la elegida no lo demuestra, otra oferta igual
   en lo demostrado y más barata la domina (`escalar`).
-- **Obligatorio respaldado solo por lo declarado** (SKU fuera del catálogo o
-  dato que el catálogo no publica) → `escalar`. Un no obligatorio sigue en
-  `aviso`. En el ranking, un obligatorio cuenta solo con respaldo: una oferta
-  inverificable no desplaza (ni "domina") a una verificada.
+- **Obligatorio respaldado solo por lo declarado** (SKU fuera del catálogo,
+  dato que el catálogo no publica, o confirmado solo por la ficha del
+  fabricante de un GTIN que ninguna fuente por SKU ata) → `escalar`. Un no
+  obligatorio sigue en `aviso`. En el ranking, un obligatorio cuenta solo con
+  respaldo: una oferta inverificable no desplaza (ni "domina") a una
+  verificada.
 - **Ficha sin tope de precio obligatorio válido, sin moneda obligatoria o sin
   confirmar** → chequeo `mandato` (origen `ficha`) `escalar`.
 - **Comercio no identificado** (`comercio_id` vacío) → `escalar`, también con

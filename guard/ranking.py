@@ -4,6 +4,11 @@ Decisión 2 del paso 0: se ordena por obligatorios cumplidos (más es mejor),
 después por preferidos cumplidos (más es mejor) y después por precio (menor
 es mejor). Los empates respetan el orden en que llegaron las ofertas.
 
+Un obligatorio que se cumple solo según la ficha del fabricante de un GTIN
+que declara el comercio (sin una fuente por SKU que lo ate) no cuenta como
+cumplido, pero desempata antes que los preferidos: entre ofertas sin
+respaldo, la que el fabricante desmiente no queda primera ni "domina".
+
 Se usa la oferta ya verificada: los campos tienen el dato público cuando el
 catálogo lo tiene, y el precio es el `amount` del ap2.cart (lo que se cobra).
 
@@ -19,7 +24,13 @@ from dataclasses import dataclass
 
 from contracts import Chequeo, Ficha, Oferta
 from guard.categorias import cumple_categoria, exige_categoria
-from guard.chequeos import cantidad_sin_autorizar, cumple, cumple_respaldado, monto
+from guard.chequeos import (
+    cantidad_sin_autorizar,
+    cumple,
+    cumple_respaldado,
+    cumple_sin_atar,
+    monto,
+)
 from guard.normalizar import EPSILON_MONTO
 from guard.textos import acotar
 from guard.verificador import sku_publico
@@ -38,6 +49,8 @@ class Puntaje:
     precio: float            # lo que se cobra (NaN si es ilegible)
     posicion: int            # orden de llegada, para desempatar
     sku_publico: str | None = None  # el SKU solo si está en el catálogo público
+    # obligatorios que se cumplen solo según el fabricante de un GTIN sin atar
+    obligatorios_sin_atar: int = 0
 
     @property
     def precio_orden(self) -> float:
@@ -46,7 +59,10 @@ class Puntaje:
 
     def clave(self) -> tuple:
         """Clave de orden: menor es mejor."""
-        return (-self.obligatorios, -self.preferidos, self.precio_orden, self.posicion)
+        return (
+            -self.obligatorios, -self.obligatorios_sin_atar, -self.preferidos,
+            self.precio_orden, self.posicion,
+        )
 
     @property
     def cumple_obligatorios(self) -> bool:
@@ -72,6 +88,7 @@ def puntuar(
     obligatorios = [r for r in ficha.requisitos if r.obligatorio]
     preferidos = [r for r in ficha.requisitos if not r.obligatorio]
     cumplidos = sum(cumple_respaldado(r, oferta, comercio_id) for r in obligatorios)
+    sin_atar = sum(cumple_sin_atar(r, oferta, comercio_id) for r in obligatorios)
     total = len(obligatorios)
     if exige_categoria(ficha):
         total += 1
@@ -89,6 +106,7 @@ def puntuar(
         precio=oferta.precio,
         posicion=posicion,
         sku_publico=sku_publico(oferta),
+        obligatorios_sin_atar=sin_atar,
     )
 
 
@@ -112,15 +130,19 @@ def rankear(
 def domina(a: Puntaje, b: Puntaje) -> bool:
     """True si `a` es igual o mejor que `b` en todo y estrictamente mejor en algo.
 
-    "Todo" = obligatorios cumplidos, preferidos cumplidos y precio.
+    "Todo" = obligatorios cumplidos (y, entre los que no cuentan, los que se
+    cumplen solo según el fabricante de un GTIN sin atar), preferidos
+    cumplidos y precio.
     """
     igual_o_mejor = (
         a.obligatorios >= b.obligatorios
+        and a.obligatorios_sin_atar >= b.obligatorios_sin_atar
         and a.preferidos >= b.preferidos
         and a.precio_orden <= b.precio_orden + EPSILON_MONTO
     )
     estrictamente_mejor = (
         a.obligatorios > b.obligatorios
+        or a.obligatorios_sin_atar > b.obligatorios_sin_atar
         or a.preferidos > b.preferidos
         or a.precio_orden < b.precio_orden - EPSILON_MONTO
     )
@@ -134,9 +156,13 @@ def describir(puntaje: Puntaje, moneda: str) -> str:
     comercio. La oferta se nombra por su orden de llegada.
     """
     sku = puntaje.sku_publico or "SKU fuera del catálogo público"
+    sin_atar = (
+        f" (y {puntaje.obligatorios_sin_atar} solo según el fabricante del GTIN declarado)"
+        if puntaje.obligatorios_sin_atar else ""
+    )
     return (
         f"oferta {puntaje.posicion + 1} ({sku}): {puntaje.obligatorios}/"
-        f"{puntaje.total_obligatorios} obligatorios, {puntaje.preferidos}/"
+        f"{puntaje.total_obligatorios} obligatorios{sin_atar}, {puntaje.preferidos}/"
         f"{puntaje.total_preferidos} preferidos, {monto(puntaje.precio, moneda)}"
     )
 

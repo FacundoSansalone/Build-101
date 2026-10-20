@@ -66,6 +66,27 @@ def test_dominancia(otro, domina_esperado):
     assert domina(otro, _puntaje()) is domina_esperado
 
 
+def test_lo_cumplido_segun_un_fabricante_sin_atar_desempata_pero_no_cuenta():
+    # Ninguna cuenta como cumplida, pero la que el fabricante desmiente no
+    # queda primera ni domina por ser más barata.
+    confirmada = Puntaje(
+        cart_id="a", sku="S", obligatorios=2, total_obligatorios=4, preferidos=1,
+        total_preferidos=1, precio=1099.0, posicion=0, obligatorios_sin_atar=2,
+    )
+    desmentida = Puntaje(
+        cart_id="b", sku="S", obligatorios=2, total_obligatorios=4, preferidos=1,
+        total_preferidos=1, precio=899.0, posicion=1, obligatorios_sin_atar=1,
+    )
+    assert sorted([desmentida, confirmada], key=Puntaje.clave) == [confirmada, desmentida]
+    assert not domina(desmentida, confirmada)
+    # Un obligatorio respaldado sigue pesando más que cualquier desempate.
+    respaldada = Puntaje(
+        cart_id="c", sku="S", obligatorios=3, total_obligatorios=4, preferidos=0,
+        total_preferidos=1, precio=2000.0, posicion=2,
+    )
+    assert sorted([confirmada, respaldada], key=Puntaje.clave)[0] is respaldada
+
+
 def test_precio_ilegible_es_el_peor():
     assert domina(_puntaje(precio=500.0), _puntaje(precio=float("nan")))
 

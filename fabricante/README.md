@@ -9,6 +9,10 @@ El Guard no hace I/O: esto se consulta **afuera** de `evaluar()` y entra en el
 mismo `catalogo` como `DatoExterno` con origen `"fabricante"`. El contrato
 `Evaluador` no cambia.
 
+La ficha es la del GTIN, no la de lo que se vende: si el GTIN solo lo declara
+el comercio (ninguna fuente por SKU lo publica), la ficha puede desmentir lo
+declarado pero no confirma un obligatorio, que escala (ver `guard/README.md`).
+
 ```python
 from fabricante import datos_externos, fuente_desde_entorno
 from guard.fuentes import con_fuentes

@@ -165,15 +165,92 @@ def test_malicioso_que_miente_se_bloquea_con_el_dato_publico(ahora):
 # -- fuentes de verdad ----------------------------------------------------------
 
 
-def test_sin_catalogo_el_fabricante_respalda_los_atributos(ahora):
+def test_sin_catalogo_el_fabricante_de_un_gtin_sin_atar_no_respalda(ahora):
+    # El GTIN solo lo declara el comercio: puede ser el de otro producto, así
+    # que la ficha del fabricante de ese GTIN no respalda un obligatorio.
     catalogo = con_fuentes({}, _fabricante())
     veredicto = evaluar(_ficha(), _vistas(), "cart_1", catalogo, ahora=ahora)
-    assert veredicto.status == "con_avisos", veredicto.motivo  # SKU y precio sin catálogo
+    assert veredicto.status == "escalar", veredicto.motivo
     ram = _por_campo(veredicto, "cumplimiento")["atributo:memoria_ram"]
-    assert ram.resultado == "ok" and ram.origen == "fabricante"
+    assert ram.resultado == "escalar" and ram.origen == "fabricante"
+    assert "GTIN" in ram.detalle and "fuente por SKU" in ram.detalle
+    assert _por_campo(veredicto, "evidencia")["gtin"].resultado == "aviso"  # solo declarado
     peso = _por_campo(veredicto, "evidencia")["atributo:weight"]
     assert peso.resultado == "ok" and peso.origen == "fabricante"  # 1350 g = 1,35 kg
     assert _por_campo(veredicto, "evidencia")["marca"].origen == "fabricante"
+
+
+def test_un_gtin_ajeno_no_hace_pasar_el_obligatorio(ahora):
+    # Un SKU que no está en ninguna fuente declara el GTIN de una notebook real
+    # de 16 GB: lo que se vende puede ser cualquier cosa.
+    vistas = OfertasVistas(
+        carts=[{"cart_id": "c1", "item_label": "Tablet", "amount": 300.0, "currency": "USD"}],
+        offer_details=[{
+            "cart_id": "c1", "sku": "ZZZ-TABLET", "title": "Lumen Book 14 Pro", "brand": "Lumen",
+            "category": "laptops", "price": 300.0, "currency": "USD", "gtin": GTIN_LM,
+            "categoria_taxonomia": "328",
+            "atributos": {"memoria_ram": _gb(16), "almacenamiento": _gb(512)},
+        }],
+        comercio_id="merchant_1",
+    )
+    veredicto = evaluar(_ficha(), vistas, "c1", con_fuentes(_catalogo(), _fabricante()), ahora=ahora)
+    assert veredicto.status == "escalar", veredicto.motivo
+    cumplimiento = _por_campo(veredicto, "cumplimiento")
+    assert cumplimiento["atributo:memoria_ram"].resultado == "escalar"
+    assert cumplimiento["atributo:almacenamiento"].resultado == "escalar"
+    # La categoría del fabricante de ese GTIN tampoco la confirma.
+    assert cumplimiento["categoria_taxonomia"].resultado != "ok"
+
+
+def _sin_atributos_en_el_catalogo(sin_gtin=False):
+    catalogo = _catalogo()
+    for producto in catalogo.values():
+        del producto["atributos"]
+        if sin_gtin:
+            del producto["gtin"]
+    return con_fuentes(catalogo, _fabricante())
+
+
+def test_el_gtin_que_ata_el_catalogo_deja_respaldar_al_fabricante(ahora):
+    # El catálogo publica el GTIN del SKU (no los atributos): el fabricante de ese GTIN sí respalda.
+    veredicto = evaluar(_ficha(), _vistas(), "cart_1", _sin_atributos_en_el_catalogo(), ahora=ahora)
+    assert veredicto.status == "aprobado", veredicto.motivo
+    ram = _por_campo(veredicto, "cumplimiento")["atributo:memoria_ram"]
+    assert ram.resultado == "ok" and ram.origen == "fabricante"
+    assert _por_campo(veredicto, "evidencia")["gtin"].resultado == "ok"
+
+
+def test_sin_gtin_declarado_el_fabricante_se_busca_con_el_del_catalogo(ahora):
+    vistas = _vistas()
+    for detalle in vistas.offer_details:
+        del detalle["gtin"]
+    veredicto = evaluar(_ficha(), vistas, "cart_1", _sin_atributos_en_el_catalogo(), ahora=ahora)
+    assert veredicto.status == "aprobado", veredicto.motivo
+    assert _por_campo(veredicto, "cumplimiento")["atributo:memoria_ram"].origen == "fabricante"
+
+
+def test_un_sku_del_catalogo_sin_gtin_no_ata_el_que_declara_el_comercio(ahora):
+    veredicto = evaluar(
+        _ficha(), _vistas(), "cart_1", _sin_atributos_en_el_catalogo(sin_gtin=True), ahora=ahora
+    )
+    assert veredicto.status == "escalar", veredicto.motivo
+    assert _por_campo(veredicto, "cumplimiento")["atributo:memoria_ram"].resultado == "escalar"
+
+
+def test_la_categoria_del_fabricante_de_un_gtin_sin_atar_es_solo_declarada(ahora):
+    fabricante = [
+        dato_externo("fabricante", gtin=gtin, datos={"categoria_taxonomia": "328"})
+        for gtin in (GTIN_LM, GTIN_OR, GTIN_ZT)
+    ]
+    sin_atar = evaluar(_ficha(), _vistas(), "cart_1", con_fuentes({}, fabricante), ahora=ahora)
+    categoria = _por_campo(sin_atar, "cumplimiento")["categoria_taxonomia"]
+    assert categoria.resultado == "aviso" and categoria.origen == "declarado"
+    catalogo = _catalogo()
+    for producto in catalogo.values():
+        del producto["categoria_taxonomia"]
+    atado = evaluar(_ficha(), _vistas(), "cart_1", con_fuentes(catalogo, fabricante), ahora=ahora)
+    categoria = _por_campo(atado, "cumplimiento")["categoria_taxonomia"]
+    assert categoria.resultado == "ok" and categoria.origen == "fabricante"
 
 
 def test_sin_catalogo_el_fabricante_desmiente_al_comercio(ahora):

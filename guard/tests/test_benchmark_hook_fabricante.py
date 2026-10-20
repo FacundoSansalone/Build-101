@@ -1,8 +1,9 @@
 """El adaptador del benchmark consulta al fabricante afuera de `evaluar()`.
 
-Sin red: catálogo vacío (el comercio no publica) y una fuente falsa en
-formato Icecat. Con la ficha del fabricante el atributo se verifica; sin
-ella, el obligatorio escala.
+Sin red: una fuente falsa en formato Icecat y un catálogo vacío (el comercio
+no publica) o uno que solo publica el GTIN de cada SKU. La ficha del
+fabricante desmiente lo declarado siempre, pero confirma un obligatorio solo
+si una fuente por SKU ata el GTIN; sin ficha, el obligatorio escala.
 """
 
 import pytest
@@ -86,12 +87,24 @@ def test_consulta_al_fabricante_por_los_gtin_declarados(fuente):
     )
 
 
-def test_con_el_fabricante_la_honesta_llega_a_la_firma(fuente):
+def test_sin_catalogo_el_gtin_declarado_no_ata_al_fabricante(fuente):
+    # El GTIN solo lo declara el comercio: puede ser el de otro producto.
     resultado = evaluate(INTENT, OFFERS_SEEN, "cart_1")
-    assert resultado["status"] == "con_avisos"  # SKU y precio sin catálogo: avisos
+    assert resultado["status"] == "escalar"
+    ram = _chequeo(resultado, "atributo:memoria_ram")
+    assert ram["resultado"] == "escalar" and ram["origen"] == "fabricante"
+    assert "fixture" in _chequeo(resultado, "atributo:memoria_ram", "evidencia")["detalle"]
+    assert resultado["cart_id_recomendado"] == "cart_1"  # la que el fabricante desmiente no queda primera
+
+
+def test_con_el_gtin_en_el_catalogo_la_honesta_llega_a_la_firma(fuente, monkeypatch):
+    productos = {d["sku"]: {"sku": d["sku"], "gtin": d["gtin"]} for d in OFFERS_SEEN["offer_details"]}
+    catalogo = CatalogoPublico(comercio_id="merchant_1", productos=productos, fuente="fixture")
+    monkeypatch.setattr(benchmark_hook, "cargar_catalogo", lambda *a, **k: catalogo)
+    resultado = evaluate(INTENT, OFFERS_SEEN, "cart_1")
+    assert resultado["status"] == "con_avisos"  # título, marca y precio sin catálogo: avisos
     ram = _chequeo(resultado, "atributo:memoria_ram")
     assert ram["resultado"] == "ok" and ram["origen"] == "fabricante"
-    assert "fixture" in _chequeo(resultado, "atributo:memoria_ram", "evidencia")["detalle"]
 
 
 def test_con_el_fabricante_la_mentira_se_bloquea(fuente):

@@ -55,7 +55,12 @@ from guard.normalizar import (
     numero,
 )
 from guard.textos import ELEMENTOS_MAXIMOS, LARGO_MAXIMO, acotar, moneda_legible, sin_control
-from guard.verificador import PREFIJO_ATRIBUTO, acotar_atributo, clave_evidencia_atributo
+from guard.verificador import (
+    PREFIJO_ATRIBUTO,
+    acotar_atributo,
+    clave_evidencia_atributo,
+    fabricante_sin_atar,
+)
 
 # Campo de la ficha -> atributo de Oferta. "comercio" sale de OfertasVistas.
 ATRIBUTO_POR_CAMPO: dict[str, str] = {
@@ -326,7 +331,9 @@ def respaldado(requisito: Requisito, oferta: Oferta) -> bool:
 
     Precio y moneda son lo que se cobra (ap2.cart) y el comercio lo da quien
     llama: no aplican. Para el resto hace falta evidencia que no sea
-    `solo_declarado` (una oferta sin verificar no tiene respaldo).
+    `solo_declarado` (una oferta sin verificar no tiene respaldo) ni la ficha
+    del fabricante de un GTIN que solo declara el comercio
+    (`fabricante_sin_atar`: puede ser el de otro producto).
     """
     if (
         requisito.campo in CAMPOS_MANDATO
@@ -335,7 +342,11 @@ def respaldado(requisito: Requisito, oferta: Oferta) -> bool:
     ):
         return True
     evidencia = oferta.evidencia.get(clave_evidencia(requisito))
-    return evidencia is not None and evidencia.estado != "solo_declarado"
+    return (
+        evidencia is not None
+        and evidencia.estado != "solo_declarado"
+        and not fabricante_sin_atar(evidencia, oferta)
+    )
 
 
 def cumple_respaldado(
@@ -343,6 +354,16 @@ def cumple_respaldado(
 ) -> bool:
     """Cumple con un dato que no es solo lo que declara el comercio (ranking)."""
     return cumple(requisito, oferta, comercio_id) is True and respaldado(requisito, oferta)
+
+
+def cumple_sin_atar(
+    requisito: Requisito, oferta: Oferta, comercio_id: str | None = None
+) -> bool:
+    """Cumple solo según la ficha del fabricante de un GTIN sin atar (ranking:
+    desempate, nunca respaldo)."""
+    return cumple(requisito, oferta, comercio_id) is True and fabricante_sin_atar(
+        oferta.evidencia.get(clave_evidencia(requisito)), oferta
+    )
 
 
 def _chequeo_requisito(
@@ -360,7 +381,14 @@ def _chequeo_requisito(
         resultado = "bloquea" if requisito.obligatorio else "aviso"
     observado = observado_de(requisito, oferta, comercio_id)
     clave = clave_evidencia(requisito)
-    if sin_respaldo and requisito.campo == "atributo":
+    if sin_respaldo and fabricante_sin_atar(oferta.evidencia.get(clave), oferta):
+        nombre = nombre_campo(clave if requisito.campo == "atributo" else requisito.campo)
+        detalle = (
+            f"{nombre}: el dato es de la ficha del fabricante del GTIN que declara el "
+            "comercio, sin una fuente por SKU que lo confirme (puede ser otro "
+            f"producto), y es obligatorio ({_pedido(requisito)})."
+        )
+    elif sin_respaldo and requisito.campo == "atributo":
         detalle = (
             f"{nombre_campo(clave)}: solo lo declara el comercio (no hay una fuente "
             "independiente: fabricante, página pública ni catálogo) y es obligatorio "

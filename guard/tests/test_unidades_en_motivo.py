@@ -40,7 +40,10 @@ def _ficha(*requisitos: Requisito) -> Ficha:
 
 
 def _fabricante(atributos: dict) -> dict:
-    return con_fuentes({}, [dato_externo("fabricante", gtin=GTIN, datos={"atributos": atributos})])
+    # El catálogo publica el GTIN del SKU (como el comercio general): eso ata
+    # la ficha del fabricante a la oferta.
+    catalogo = {"MN-27": {"sku": "MN-27", "gtin": GTIN}}
+    return con_fuentes(catalogo, [dato_externo("fabricante", gtin=GTIN, datos={"atributos": atributos})])
 
 
 def _cumplimiento(veredicto, campo):

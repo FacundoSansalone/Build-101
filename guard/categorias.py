@@ -20,7 +20,7 @@ completa con el dato público).
 | la oferta es más general (un ancestro de la pedida) | `escalar` |
 | fuera de la rama | `escalar` |
 | dentro de la rama (igual o descendiente), con fuente independiente | `ok` |
-| dentro de la rama, solo declarado | `aviso` |
+| dentro de la rama, solo declarado (o confirmado solo por el fabricante de un GTIN sin atar) | `aviso` |
 
 Fuera de la rama escala y no bloquea: una clasificación puede discutirse
 (una 2 en 1 entre laptops y tablets); que decida una persona.
@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Literal
 from contracts import Chequeo, Ficha, Oferta, Origen
 from guard.fuentes import ORIGENES_INDEPENDIENTES, nombre_fuente
 from guard.textos import LARGO_MAXIMO, acotar, sin_control
+from guard.verificador import fabricante_sin_atar
 
 if TYPE_CHECKING:
     from taxonomia.arbol import Categoria, Taxonomia
@@ -118,10 +119,13 @@ def ubicar(ficha: Ficha, oferta: Oferta) -> Ubicacion:
         return Ubicacion("pedido_desconocido", id_pedido=id_pedido)
 
     evidencia = oferta.evidencia.get(CAMPO)
+    # El fabricante de un GTIN que solo declara el comercio puede desmentirlo
+    # (la categoría es la del fabricante), pero no confirmarlo.
     independiente = (
         evidencia is not None
         and evidencia.estado in ("verificado", "contradicho")
         and evidencia.origen_usado in ORIGENES_INDEPENDIENTES
+        and not (evidencia.estado == "verificado" and fabricante_sin_atar(evidencia, oferta))
     )
     origen: Origen = evidencia.origen_usado if independiente else "declarado"
     base = {
