@@ -229,6 +229,8 @@ que nunca son el tope. Con "20" entre las opciones, "hasta 20000 USD"
 quedaba en 0,59 con decisiones real; sin ella, 0,80 a 0,95. Un precio por
 cosa no es un número de cosas: "800 cada notebook", "100 por teclado" (con
 `cada`, `por`, `c/u`, `per`, `each`, `la` o `el` en el medio) sí se ofrecen.
+Un número pegado a la moneda ("USD20000", "u$s20.000", "20000USD") es un
+monto en esa moneda, como "USD 20000".
 
 **Preguntas:** todas con plantilla (es/en según el pedido); el modelo no
 redacta nada. La primera es el porqué más lo que falte; después, "me falta

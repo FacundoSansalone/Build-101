@@ -91,6 +91,24 @@ def test_encuentra_los_montos(texto, esperado):
     assert esperado in [c.valor for c in extraer([texto], HOY).montos]
 
 
+@pytest.mark.parametrize(
+    "texto, monto, codigo",
+    [
+        ("5 notebooks, presupuesto USD20000", 20000.0, "USD"),
+        ("5 notebooks hasta u$s20.000", 20000.0, "USD"),
+        ("max US$1500", 1500.0, "USD"),
+        ("hasta 20000USD", 20000.0, "USD"),
+        ("hasta EUR900", 900.0, "EUR"),
+        ("hasta ARS80.000", 80000.0, "ARS"),
+    ],
+)
+def test_un_numero_pegado_a_la_moneda_es_un_monto(texto, monto, codigo):
+    cands = extraer([texto], HOY)
+    assert monto in [c.valor for c in cands.montos]
+    assert monto not in [c.valor for c in cands.cantidades]  # es dinero
+    assert codigo in cands.monedas_dichas
+
+
 def test_signo_pesos_solo_es_ambiguo_y_us_no():
     assert extraer(["hasta $150"], HOY).simbolo_ambiguo is True
     explicito = extraer(["hasta US$ 150"], HOY)

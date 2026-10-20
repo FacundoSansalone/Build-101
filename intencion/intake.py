@@ -572,6 +572,13 @@ def _fechas(texto: str, hoy: date, idioma: Idioma) -> list[tuple[tuple[int, int]
 # -- números, montos y monedas ----------------------------------------------------
 
 _P_NUMERO = re.compile(r"(?<![\w.,])(\d[\d.,]*\d|\d)(?![\d])")
+# Un número pegado a la moneda ("USD20000", "u$s20.000", "20000USD"): se
+# separa con un espacio y lo leen las mismas reglas que "USD 20000".
+_P_PEGADO = re.compile(
+    r"(?<=\b(?:usd|ars|eur|brl|mxn|gbp))(?=\d)|(?<=u\$s|us\$|u\$d)(?=\d)|(?<=r\$)(?=\d)"
+    r"|(?<=\d)(?=(?:usd|ars|eur|brl|mxn|gbp)\b)",
+    re.IGNORECASE,
+)
 _P_MULTIPLICADOR = re.compile(
     r"^\s*(k|mil|lucas|thousand|millon(?:es)?|millions?)\b"
 )
@@ -762,7 +769,7 @@ def extraer(textos: Sequence[str], hoy: date) -> Candidatos:
     vistas_fecha: set[str] = set()
 
     for crudo in textos:
-        original = _sin_tildes((crudo or "")[:LARGO_TEXTO])
+        original = _P_PEGADO.sub(" ", _sin_tildes((crudo or "")[:LARGO_TEXTO]))
         texto = original.lower()
 
         # Fechas primero: sus números no son cantidades ni montos.
