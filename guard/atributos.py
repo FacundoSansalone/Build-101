@@ -8,7 +8,8 @@ Sin esquema por categoría: un atributo es un nombre (schema.org, como
   (MB/GB/TB decimales; MiB/GiB/TiB binarios), longitud (mm/cm/m/in), masa
   (g/kg/lb/oz) y tiempo (s/min/h), con los nombres comunes y los códigos
   UN/CEFACT de schema.org (`E34` = GB, `CMT` = cm, `KGM` = kg...). Una unidad
-  desconocida solo se compara con la misma unidad;
+  desconocida solo se compara con la misma unidad, y los bits (`Gb`, `kb`,
+  con la `b` en minúscula) no son bytes;
 - enumerado (`igual` con texto, sin mayúsculas ni tildes, en cualquier alfabeto);
 - conjunto (`incluye`: todos los pedidos están en lo ofrecido);
 - booleano (`igual` con `true`/`false`; acepta Y/N, sí/no, yes/no).
@@ -229,15 +230,26 @@ def _numero_en_texto(texto: str) -> float | None:
     return None
 
 
+def _clave_unidad(unidad: str) -> str:
+    """La unidad sin mayúsculas, salvo que importen: una unidad de datos con
+    la `b` final en minúscula es de bits ("Gb", "kb", "b"), no de bytes ("GB",
+    "kB", "KiB", "byte"), y queda como una unidad desconocida."""
+    limpia = unidad.strip().rstrip(".")
+    clave = limpia.casefold()
+    if limpia.endswith("b") and clave in _DIMENSIONES["datos"]:
+        return f"bits:{clave}"
+    return clave
+
+
 def unidad_conocida(unidad: str | None) -> bool:
-    return unidad is not None and unidad.strip().casefold().rstrip(".") in _UNIDADES
+    return unidad is not None and _clave_unidad(unidad) in _UNIDADES
 
 
 def _unidad(unidad: str | None) -> tuple[str, float] | None:
     """(dimensión, factor a la unidad base). Una desconocida es su propia dimensión."""
     if unidad is None:
         return None
-    clave = unidad.strip().casefold().rstrip(".")
+    clave = _clave_unidad(unidad)
     return _UNIDADES.get(clave, (f"unidad:{clave}", 1.0))
 
 

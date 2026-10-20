@@ -220,6 +220,37 @@ def test_numeros_con_separadores_de_miles(observado, operador, valor, unidad, es
 
 
 @pytest.mark.parametrize(
+    ("observado", "operador", "valor", "unidad", "esperado"),
+    [
+        # la `b` final en minúscula es de bits: otra dimensión, no se compara con bytes
+        (V(16, "Gb"), "minimo", 16, "GB", None),
+        (V(16, "gb"), "minimo", 16, "GB", None),
+        (V(8, "kb"), "minimo", 8, "KB", None),
+        (V(8000, "Mb"), "igual", 1, "MB", None),
+        (V(8, "b"), "igual", 1, "B", None),
+        (V("16Gb"), "minimo", 16, "GB", None),
+        (V(16, "GB"), "minimo", 16, "Gb", None),       # el pedido en bits
+        (V(16, "Gb"), "minimo", 16, "Gb", True),       # la misma unidad de bits
+        # formas inequívocas de bytes y códigos UN/CEFACT
+        (V(16, "kB"), "igual", 16000, "B", True),
+        (V(16, "KB"), "igual", 16, "kB", True),
+        (V(1, "KiB"), "igual", 1024, "B", True),
+        (V(1, "byte"), "igual", 1, "B", True),
+        (V(1, "AD"), "igual", 1, "B", True),
+        (V(1, "4L"), "igual", 1, "MB", True),
+        (V(16, "E34"), "igual", 16, "GB", True),
+        (V(1, "2P"), "igual", 1, "kB", True),
+    ],
+)
+def test_bits_no_son_bytes(observado, operador, valor, unidad, esperado):
+    assert comparar(observado, operador, valor, unidad) is esperado
+
+
+def test_bits_no_se_convierten_a_bytes_al_mostrar():
+    assert formatear_en_unidad(V(16, "Gb"), "GB") == "16 Gb"
+
+
+@pytest.mark.parametrize(
     ("observado", "valor", "esperado"),
     [
         # letras de cualquier alfabeto: no se borran
