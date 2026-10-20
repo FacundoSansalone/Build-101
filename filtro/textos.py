@@ -112,28 +112,55 @@ def es_libre(texto: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
-_SEGMENTO_SD = re.compile(r"[A-Za-z0-9_.-]*")
+_NO_ES_JSON = object()
+
+
+def _b64_json(segmento: str) -> Any:
+    """El JSON que codifica un segmento base64url, o `_NO_ES_JSON`."""
+    if not _B64URL.fullmatch(segmento) or len(segmento) % 4 == 1:
+        return _NO_ES_JSON
+    try:
+        return json.loads(base64.urlsafe_b64decode(segmento + "=" * (-len(segmento) % 4)))
+    except (ValueError, binascii.Error, RecursionError):
+        return _NO_ES_JSON
+
+
+def _jwt_compacto(texto: str) -> bool:
+    """`cabecera.payload.firma`: cabecera JSON con `alg`, payload objeto JSON
+    y firma base64url (vacía con `alg: none`)."""
+    partes = texto.split(".")
+    if len(partes) != 3:
+        return False
+    cabecera, payload = _b64_json(partes[0]), _b64_json(partes[1])
+    if not (isinstance(cabecera, dict) and "alg" in cabecera and isinstance(payload, dict)):
+        return False
+    return not partes[2] or _B64URL.fullmatch(partes[2]) is not None
 
 
 def es_jwt(texto: str) -> bool:
-    """JWT o SD-JWT de verdad: tres segmentos base64url y una cabecera JSON con
-    `alg`. Algo con forma de JWT pero sin cabecera ("Ignore.previous.x") no."""
+    """JWT o SD-JWT de verdad, que el agente no lee.
+
+    El primer segmento es un JWT compacto (`_jwt_compacto`). En un SD-JWT, lo
+    que va entre `~` es una disclosure (base64url de un array JSON), un JWT
+    compacto (el key binding o, en la cadena dSD-JWT de AP2, el emisor del
+    eslabón siguiente) o nada (el `~` final y el `~~` entre eslabones). Si
+    algún segmento no es eso ("Ignore.previous.x", texto con guiones después
+    de un `~`, un payload que no es un objeto), no es un JWT y se revisa como
+    texto."""
     if len(texto) < 16 or any(c.isspace() for c in texto):
         return False
     jwt, *resto = texto.split("~")
-    if not all(_SEGMENTO_SD.fullmatch(s) for s in resto):
+    if not _jwt_compacto(jwt):
         return False
-    partes = jwt.split(".")
-    if len(partes) != 3 or not all(_B64URL.fullmatch(p) for p in partes[:2]):
-        return False
-    if partes[2] and not _B64URL.fullmatch(partes[2]):
-        return False
-    try:
-        crudo = base64.urlsafe_b64decode(partes[0] + "=" * (-len(partes[0]) % 4))
-        cabecera = json.loads(crudo)
-    except (ValueError, binascii.Error):
-        return False
-    return isinstance(cabecera, dict) and "alg" in cabecera
+    for segmento in resto:
+        if not segmento:
+            continue
+        if "." in segmento:
+            if not _jwt_compacto(segmento):
+                return False
+        elif not isinstance(_b64_json(segmento), list):
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
