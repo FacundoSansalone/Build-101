@@ -10,7 +10,10 @@ comercio y el semáforo del filtro por integrador.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
+import time
 from typing import Any
 
 import httpx
@@ -283,3 +286,71 @@ async def test_una_excepcion_inesperada_es_un_bloqueo_con_veredicto(
     assert v["status"] == "bloqueado"
     assert "bloqueado" in [e["tipo"] for e in evs]
     assert "error" in [e["tipo"] for e in evs]
+
+
+# ---------------------------------------------------------------------------
+# 4. El lector de líneas es lineal y cede el event loop
+# ---------------------------------------------------------------------------
+
+
+async def _trozos(*trozos: bytes):
+    for trozo in trozos:
+        yield trozo
+
+
+async def _todas(trozos: Any, limite: int = 10**9) -> list[str]:
+    return [linea async for linea in a2a.lineas_acotadas(trozos, limite)]
+
+
+@pytest.mark.anyio
+async def test_lineas_acotadas_igual_que_partir_el_texto():
+    texto = b"data: a\r\n\r\nid: 1\rdata: b\n\n\r\r\n: c\nfinal"
+    esperado = re.split(r"\r\n|\r|\n", texto.decode())
+    for corte in range(1, len(texto) + 1):
+        trozos = [texto[i: i + corte] for i in range(0, len(texto), corte)]
+        assert await _todas(_trozos(*trozos)) == esperado, corte
+
+
+@pytest.mark.anyio
+async def test_lineas_acotadas_cede_el_event_loop():
+    vueltas = 0
+
+    async def contar():
+        nonlocal vueltas
+        while True:
+            vueltas += 1
+            await asyncio.sleep(0)
+
+    tarea = asyncio.create_task(contar())
+    await asyncio.sleep(0)
+    antes = vueltas
+    try:
+        lineas = await _todas(_trozos(b"\n" * 50_000))
+    finally:
+        tarea.cancel()
+    assert len(lineas) == 50_000
+    assert vueltas - antes >= 10  # el otro task corrió mientras se partía el trozo
+
+
+@pytest.mark.anyio
+async def test_lineas_acotadas_es_lineal_en_un_trozo_lleno_de_lineas():
+    # Contra una referencia lineal (partir el texto): cuadrático, un trozo de
+    # 512 KiB de saltos daba ~100 veces la referencia; lineal, unas 5. El
+    # mínimo de varias vueltas: la máquina puede frenar en el medio.
+    trozo = b"\n" * (512 << 10)
+
+    async def referencia():
+        for linea in trozo.decode().split("\n"):
+            yield linea
+
+    proporciones = []
+    for _ in range(3):
+        t = time.perf_counter()
+        async for _ in referencia():
+            pass
+        ref = time.perf_counter() - t
+        t = time.perf_counter()
+        async for _ in a2a.lineas_acotadas(_trozos(trozo), 10**9):
+            pass
+        proporciones.append((time.perf_counter() - t) / ref)
+    assert min(proporciones) < 25, proporciones

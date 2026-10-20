@@ -7,6 +7,7 @@ re-arma desde un modelo.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import codecs
 import copy
@@ -708,31 +709,48 @@ async def leer_acotado(trozos: AsyncIterator[bytes], limite: int) -> bytes:
 
 
 _FIN_DE_LINEA = re.compile(r"\r\n|\r|\n")
+# Cada tantas líneas el lector cede el event loop: un trozo enorme lleno de
+# líneas (un comercio hostil) no frena al resto del proxy.
+_LINEAS_POR_TURNO = 1000
 
 
 async def lineas_acotadas(trozos: AsyncIterator[bytes], limite: int) -> AsyncIterator[str]:
-    """Líneas de un stream (CRLF, CR o LF), con tope de bytes en total."""
+    """Líneas de un stream (CRLF, CR o LF), con tope de bytes en total.
+
+    Lineal en el tamaño: cada trozo se recorre con un índice y lo que queda
+    se recorta una vez por trozo (recortar por línea era cuadrático), y la
+    búsqueda sigue desde donde quedó la anterior. Cede cada
+    `_LINEAS_POR_TURNO` líneas."""
     decodificador = codecs.getincrementaldecoder("utf-8")(errors="replace")
     pendiente = ""
     total = 0
+    lineas = 0
     async for trozo in trozos:
         total += len(trozo)
         if total > limite:
             raise LimiteExcedido(limite)
+        # Lo pendiente no tiene fines de línea, salvo un \r al final.
+        desde = max(0, len(pendiente) - 1)
         pendiente += decodificador.decode(trozo)
+        inicio = 0
         while True:
-            m = _FIN_DE_LINEA.search(pendiente)
+            m = _FIN_DE_LINEA.search(pendiente, max(inicio, desde))
             # Un \r al final puede ser la mitad de un \r\n: esperar más.
             if m is None or (m.group() == "\r" and m.end() == len(pendiente)):
                 break
-            yield pendiente[: m.start()]
-            pendiente = pendiente[m.end():]
+            yield pendiente[inicio: m.start()]
+            inicio = m.end()
+            lineas += 1
+            if lineas % _LINEAS_POR_TURNO == 0:
+                await asyncio.sleep(0)
+        pendiente = pendiente[inicio:]
     pendiente += decodificador.decode(b"", final=True)
-    while (m := _FIN_DE_LINEA.search(pendiente)) is not None:
-        yield pendiente[: m.start()]
-        pendiente = pendiente[m.end():]
-    if pendiente:
-        yield pendiente
+    inicio = 0
+    while (m := _FIN_DE_LINEA.search(pendiente, inicio)) is not None:
+        yield pendiente[inicio: m.start()]
+        inicio = m.end()
+    if inicio < len(pendiente):
+        yield pendiente[inicio:]
 
 
 # Todo lo que `str.splitlines()` toma como fin de línea. El proxy corta el
