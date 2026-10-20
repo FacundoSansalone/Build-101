@@ -465,11 +465,19 @@ def _es_entero(v: Any) -> bool:
 
 
 _CART_ID_SEGURO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+# Contexto, cart, task, aprobación, merchant.id (`tipos_gateway.ID_SEGURO_RE`).
+ID_SEGURO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}")
 
 
 def cart_id_seguro(valor: Any) -> str | None:
     """El cart_id si es un identificador corto y sin texto libre; si no, None."""
     return valor if isinstance(valor, str) and _CART_ID_SEGURO.fullmatch(valor) else None
+
+
+def id_seguro(valor: Any) -> str | None:
+    """El id (de tarea o de contexto) si es un identificador sin texto libre;
+    si no, None. Un id que eligió el comercio puede traer una inyección."""
+    return valor if isinstance(valor, str) and ID_SEGURO_RE.fullmatch(valor) else None
 
 
 def veredicto_para_agente(veredicto_json: dict[str, Any]) -> dict[str, Any]:
@@ -573,9 +581,10 @@ def tarea_sintetica_bloqueada(
     task_id: str | None, contexto_id: str | None, texto: str, artefacto: dict[str, Any]
 ) -> dict[str, Any]:
     """Una tarea `failed` armada por el proxy cuando no hay una tarea legible
-    del comercio (respuesta ilegible, error de red, timeout, etc.)."""
-    task_id = task_id or f"guard-bloqueo-{uuid.uuid4().hex}"
-    contexto_id = contexto_id or f"guard-contexto-{uuid.uuid4().hex}"
+    del comercio (respuesta ilegible, error de red, timeout, etc.). Los ids
+    solo si son seguros (`id_seguro`); si no, unos del proxy."""
+    task_id = id_seguro(task_id) or f"guard-bloqueo-{uuid.uuid4().hex}"
+    contexto_id = id_seguro(contexto_id) or f"guard-contexto-{uuid.uuid4().hex}"
     return {
         "kind": "task",
         "id": task_id,

@@ -3236,11 +3236,13 @@ class ProxyGuard:
         senales: list[str] | None = None,
     ) -> bytes:
         """Una tarea `failed` sin nada del proveedor, solo con el veredicto
-        `bloqueado` del proxy. El motivo y el texto son fijos del proxy."""
-        task_id = result.get("id") if isinstance(result.get("id"), str) else None
-        contexto_id = (
-            result.get("contextId") if isinstance(result.get("contextId"), str) else None
-        ) or llamada.pedido.contexto_id
+        `bloqueado` del proxy. El motivo y el texto son fijos del proxy. Los
+        ids del comercio (o el contexto del pedido) solo si son seguros: uno
+        con texto libre puede ser la inyección que cortó el filtro."""
+        task_id = a2a.id_seguro(result.get("id"))
+        contexto_id = a2a.id_seguro(result.get("contextId")) or a2a.id_seguro(
+            llamada.pedido.contexto_id
+        )
         decision = self._emitir_corte(llamada, contexto_id, motivo, etapa, senales)
         tarea = a2a.tarea_sintetica_bloqueada(
             task_id, contexto_id, texto or decision.texto, decision.artefacto()
