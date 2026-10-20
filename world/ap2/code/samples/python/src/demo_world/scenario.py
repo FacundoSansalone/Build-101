@@ -28,6 +28,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -174,10 +175,20 @@ def _scenario_file() -> Path:
 
 
 def set_active_scenario(name: str) -> Path:
+  """Escribe el escenario activo. El comercio lo lee en cada búsqueda: se
+  escribe a un temporal y se reemplaza (como `dashboard.demo_api`), así nunca
+  lee un archivo vacío o a medias."""
   get_scenario(name)  # valida
   path = _scenario_file()
   path.parent.mkdir(parents=True, exist_ok=True)
-  path.write_text(name)
+  fd, temporal = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+  try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+      f.write(name)
+    os.replace(temporal, path)
+  except BaseException:
+    Path(temporal).unlink(missing_ok=True)
+    raise
   return path
 
 
@@ -187,16 +198,23 @@ def active_scenario(data_parts: list[dict[str, Any]] | None = None) -> str:
   Prioridad: data part `demo_scenario` del mensaje A2A (lo usa el benchmark)
   > archivo $TEMP_DB_DIR/demo_scenario (set_scenario / dashboard)
   > variable DEMO_SCENARIO > 'baseline'.
+
+  Si el archivo existe pero está vacío o no se puede leer, ValueError (la
+  búsqueda falla con el motivo): no se cae en silencio a otro escenario.
   """
   for part in data_parts or []:
     if isinstance(part, dict) and part.get(SCENARIO_DATA_KEY):
       return str(part[SCENARIO_DATA_KEY])
   path = _scenario_file()
-  if path.exists():
-    name = path.read_text().strip()
-    if name:
-      return name
-  return os.environ.get("DEMO_SCENARIO", DEFAULT_SCENARIO)
+  try:
+    name = path.read_text(encoding="utf-8").strip()
+  except FileNotFoundError:
+    return os.environ.get("DEMO_SCENARIO", DEFAULT_SCENARIO)
+  except (OSError, UnicodeDecodeError) as e:
+    raise ValueError(f"No se pudo leer el escenario activo ({path}): {e}") from e
+  if not name:
+    raise ValueError(f"El archivo del escenario activo está vacío ({path})")
+  return name
 
 
 def build_offers(
