@@ -17,8 +17,9 @@ hash en su `CheckoutMandate`, y el `PaymentMandate` del sample toma el monto
   de los `line_items` (y el total de cada línea, si lo trae) tiene que ser el
   total firmado, con `price` un número ≥ 0 y `quantity` un entero ≥ 1 (si no
   → `bloquea`); `exp` vencido respecto de `ahora` → mandato `escalar`; `iat`
-  más de 5 minutos en el futuro → `escalar`; `exp`/`iat` que no son enteros
-  → `bloquea`. Sin `line_items`, `exp` o `iat` no se agrega ese chequeo;
+  más de 5 minutos en el futuro → `escalar`; `exp`/`iat` que no son números
+  (NumericDate de RFC 7519: entero o con decimales, finito) → `bloquea`. Sin
+  `line_items`, `exp` o `iat` no se agrega ese chequeo;
 - un JWT ilegible (no tres segmentos, base64/JSON inválido, encabezado que no
   es ES256, sin `totals` o sin un único total válido) → `bloquea`.
 
@@ -151,6 +152,13 @@ def _centavos(valor: Any) -> float | None:
 
 def _entero(valor: Any) -> bool:
     return isinstance(valor, int) and not isinstance(valor, bool)
+
+
+def _fecha_numerica(valor: Any) -> bool:
+    """NumericDate (RFC 7519): segundos como entero o con decimales, finito."""
+    if isinstance(valor, float):
+        return math.isfinite(valor)
+    return _entero(valor)
 
 
 def _lineas(lineas: Any) -> LineasFirmadas:
@@ -565,20 +573,22 @@ def _segundos(ahora: datetime | None) -> int:
 
 
 def _chequeos_vigencia(firmado: CheckoutFirmado, ahora: int) -> list[Chequeo]:
-    """`exp` e `iat` del JWT (segundos enteros) contra el instante de la evaluación."""
+    """`exp` e `iat` del JWT (segundos, NumericDate) contra el instante de la
+    evaluación (segundos enteros). Un `exp` con decimales vence en el segundo
+    entero anterior: ante la duda, vencido."""
     chequeos: list[Chequeo] = []
     exp, iat = firmado.exp, firmado.iat
     if exp is not AUSENTE:
-        if not _entero(exp):
+        if not _fecha_numerica(exp):
             chequeos.append(
                 _chequeo(
                     "integridad", "bloquea", "exp",
-                    "El checkout firmado trae un exp que no es un entero (segundos): "
+                    "El checkout firmado trae un exp que no es un número (segundos): "
                     "no se puede saber hasta cuándo vale.",
                     esperado=ahora, observado=acotar(exp),
                 )
             )
-        elif exp <= ahora:
+        elif math.floor(exp) <= ahora:
             chequeos.append(
                 _chequeo(
                     "mandato", "escalar", "exp",
@@ -596,11 +606,11 @@ def _chequeos_vigencia(firmado: CheckoutFirmado, ahora: int) -> list[Chequeo]:
                 )
             )
     if iat is not AUSENTE:
-        if not _entero(iat):
+        if not _fecha_numerica(iat):
             chequeos.append(
                 _chequeo(
                     "integridad", "bloquea", "iat",
-                    "El checkout firmado trae un iat que no es un entero (segundos): "
+                    "El checkout firmado trae un iat que no es un número (segundos): "
                     "no se puede saber cuándo se emitió.",
                     esperado=ahora, observado=acotar(iat),
                 )

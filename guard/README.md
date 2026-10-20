@@ -114,9 +114,9 @@ ES256 del comercio: no hay clave pública; AP2 la verifica después) y compara:
 | `currency` firmada vs la del cart; la del data part vs la firmada | `escalar`; fuera de la moneda obligatoria `bloquea` |
 | `merchant.id` firmado vs `politica.comercios_aprobados` | fuera `bloquea`; faltante `escalar`; aprobado pero distinto de `comercio_id` `escalar` |
 | `line_items` firmados: Σ `item.price × quantity` vs total firmado; el `totals` type `total` de cada línea (si lo trae) vs su `price × quantity`; `price` número ≥ 0 y `quantity` entero ≥ 1 | `integridad` `bloquea` (el JWT se contradice a sí mismo o es ilegible) |
-| `exp` vs `ahora` (`exp <= ahora` venció) | `mandato` `escalar` |
+| `exp` vs `ahora` (`exp <= ahora` venció; con decimales, el segundo entero anterior) | `mandato` `escalar` |
 | `iat` vs `ahora` (más de 5 minutos en el futuro) | `integridad` `escalar` |
-| `exp` o `iat` que no son enteros (texto, decimal, `true`, `null`…) | `integridad` `bloquea` |
+| `exp` o `iat` que no son NumericDate (RFC 7519: entero o decimal finito; texto, `true`, `null`, NaN…) | `integridad` `bloquea` |
 | JWT ilegible: no 3 segmentos, base64/JSON inválido, encabezado que no es ES256, firma que no mide 64 bytes, sin `totals` o sin un único total numérico > 0 | `bloquea` |
 
 El `recibo.checkout_hash` es el hash recalculado. Sin `checkout` no se agrega
@@ -400,8 +400,8 @@ veredicto = veredicto.model_copy(update={"recibo": firmar_recibo(veredicto.recib
   suman el total firmado → `bloquea` (el objeto firmado se contradice: no hay
   dato que falte, hay uno que miente); `exp` vencido → `escalar` (el checkout
   puede haber sido legítimo; un humano decide o el comercio emite otro);
-  `exp`/`iat` que no son enteros → `bloquea`, igual que el resto de un JWT
-  ilegible. Un entero que no entra en un float (`10**400`) cuenta como
+  `exp`/`iat` que no son números (NumericDate: entero o decimal finito) →
+  `bloquea`, igual que el resto de un JWT ilegible. Un entero que no entra en un float (`10**400`) cuenta como
   monto inválido (`normalizar.numero`) en vez de lanzar.
 - **Recibo**: `id = "rcb-" + sha256(entradas)` (ficha, ofertas sin texto
   libre, descartes, elegido, comercio, política, `checkout_hash`, `emitido`).

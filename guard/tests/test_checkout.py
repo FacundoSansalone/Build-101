@@ -604,13 +604,35 @@ def test_iat_en_el_futuro_escala(payload_checkout, checkout, evaluar_con, iat, s
 
 
 @pytest.mark.parametrize("campo", ["exp", "iat"])
-@pytest.mark.parametrize("valor", ["1792242000", 1_792_242_000.5, True, None, [1], {"t": 1}])
-def test_exp_o_iat_que_no_son_enteros_bloquean(payload_checkout, checkout, evaluar_con, campo, valor):
+@pytest.mark.parametrize(
+    "valor", ["1792242000", True, None, [1], {"t": 1}, float("nan"), float("inf"), float("-inf")]
+)
+def test_exp_o_iat_que_no_son_numeros_bloquean(payload_checkout, checkout, evaluar_con, campo, valor):
     payload = _con_vigencia(payload_checkout, **{campo: valor})
     veredicto = _evaluar_payload(evaluar_con, checkout, payload)
     assert veredicto.status == "bloqueado"
     chequeo = _peor(veredicto, campo)
     assert chequeo.resultado == "bloquea" and chequeo.tipo == "integridad"
+
+
+@pytest.mark.parametrize(
+    ("iat", "exp", "status"),
+    [
+        # NumericDate (RFC 7519) admite decimales
+        (AHORA_TS - 60.25, AHORA_TS + 3600.5, "aprobado"),
+        (float(AHORA_TS - 60), float(AHORA_TS + 3600), "aprobado"),
+        (AHORA_TS - 60, AHORA_TS + 1.5, "aprobado"),
+        # con decimales vence en el segundo entero anterior (lado seguro)
+        (AHORA_TS - 60, AHORA_TS + 0.5, "escalar"),
+        (AHORA_TS - 60, AHORA_TS - 0.5, "escalar"),
+        (AHORA_TS + 300.5, AHORA_TS + 3600, "escalar"),
+    ],
+)
+def test_exp_o_iat_con_decimales_son_validos(payload_checkout, checkout, evaluar_con, iat, exp, status):
+    payload = _con_vigencia(payload_checkout, iat=iat, exp=exp)
+    veredicto = _evaluar_payload(evaluar_con, checkout, payload)
+    assert veredicto.status == status
+    assert all(c.resultado != "bloquea" for c in _del_checkout(veredicto))
 
 
 def test_exp_enorme_no_lanza(payload_checkout, checkout, evaluar_con):
