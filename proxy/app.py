@@ -2010,6 +2010,13 @@ class ProxyGuard:
                 llamada, {}, _MOTIVO_CONTEXTO_AJENO, etapa="seguridad"
             ), 200
 
+        if activo:
+            # Del sobre pasa solo lo que vio el filtro (lista blanca). Si ya era
+            # solo eso, los bytes del comercio tal cual.
+            sobre = a2a.sobre_jsonrpc(body, pedido.rpc_id)
+            if sobre != body:
+                body, salida = sobre, a2a.dumps(sobre)
+
         if "error" in body and "result" not in body:
             self._emitir_busqueda(llamada, None)
             self._emitir_error_comercio(body["error"], llamada)
@@ -2269,6 +2276,11 @@ class ProxyGuard:
                 return self._sse_cortar_etapa2(llamada, est, corte[0], corte[1])
         if not await self._contexto_respuesta_ok(llamada, result):
             return self._sse_cortar_etapa2(llamada, est, _MOTIVO_CONTEXTO_AJENO)
+        if activo:
+            # Como en JSON: del sobre pasa solo lo que vio el filtro.
+            sobre = a2a.sobre_jsonrpc(body, pedido.rpc_id)
+            if sobre != body:
+                body, crudo = sobre, a2a.bloque_sse(sobre)
         if not isinstance(result, dict):
             if "error" in body:
                 self._emitir_error_comercio(body["error"], llamada)

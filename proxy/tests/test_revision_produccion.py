@@ -412,3 +412,80 @@ async def test_checkout_retenido_o_bloqueado_sin_lo_del_comercio(
     assert [a["name"] for a in task["artifacts"]] == ["guard.veredicto"]
     assert veredictos(task)[0]["status"] == status
     assert checkouts(task) == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Del sobre JSON-RPC pasa solo lo que vio el filtro (lista blanca)
+# ---------------------------------------------------------------------------
+
+
+def test_sobre_jsonrpc_lista_blanca():
+    body = {"jsonrpc": INYECCION, "id": INYECCION, "result": {"kind": "task"}, "nota": INYECCION,
+            "error": {"message": INYECCION}}
+    assert a2a.sobre_jsonrpc(body, "rpc-1") == {
+        "jsonrpc": "2.0", "id": "rpc-1", "result": {"kind": "task"}
+    }
+    error = {"jsonrpc": "2.0", "id": "rpc-1", "error": {"code": 1, "message": "x"}, "extra": 1}
+    assert a2a.sobre_jsonrpc(error, "rpc-1") == {
+        "jsonrpc": "2.0", "id": "rpc-1", "error": {"code": 1, "message": "x"}
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("con_filtro", [True, False])
+async def test_respuesta_json_solo_con_el_sobre(armar_proxy, merchant: FakeMerchant, con_filtro):
+    vistos: list[Any] = []
+
+    def filtro(objetivo):
+        vistos.append(objetivo)
+        return ResultadoFiltro(pasa=True)
+
+    def manipular(respuesta, pedido):
+        respuesta["nota_para_el_agente"] = INYECCION
+        respuesta["jsonrpc"] = "2.0 " + INYECCION
+        return respuesta
+
+    merchant.manipular = manipular
+    app = armar_proxy(filtro=filtro) if con_filtro else armar_proxy()
+    async with cliente_de(app) as c:
+        pedido = pedido_find_products("B")
+        resp = await c.post(RPC, content=cuerpo(pedido), headers=HEADERS_A2A)
+        contexto = resp.json()["result"]["contextId"]
+        resp_co = await checkout(c, contexto, "cart_1")
+    assert INYECCION not in resp.text and INYECCION not in resp_co.text
+    body = resp.json()
+    assert set(body) == {"jsonrpc", "id", "result"}
+    assert body["jsonrpc"] == "2.0" and body["id"] == pedido["id"]
+    assert set(resp_co.json()) == {"jsonrpc", "id", "result"}
+    assert checkouts(resp_co.json()["result"])  # el checkout pasa igual
+    if con_filtro:
+        assert all(INYECCION not in json.dumps(v) for v in vistos)
+
+
+@pytest.mark.anyio
+async def test_respuesta_json_sin_extras_pasa_byte_a_byte(cliente, merchant: FakeMerchant):
+    contexto = await buscar(cliente, "B")
+    resp = await checkout(cliente, contexto, "cart_1")
+    # La respuesta del comercio ya era solo el sobre: el ap2.checkout pasa
+    # intacto y no se re-arma nada de más.
+    assert merchant.ultimo_checkout["checkout_jwt"] in resp.text
+
+
+@pytest.mark.anyio
+async def test_evento_sse_solo_con_el_sobre(armar_proxy, merchant: FakeMerchant):
+    def manipular(eventos, pedido):
+        bloques = [
+            "data: " + json.dumps(
+                {"id": pedido["id"], "jsonrpc": "2.0", "result": e, "nota": INYECCION}
+            ) + "\r\n\r\n"
+            for e in eventos
+        ]
+        return "".join(bloques).encode("utf-8")
+
+    merchant.manipular_sse = manipular
+    async with cliente_de(armar_proxy(filtro=lambda r: ResultadoFiltro(pasa=True))) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_find_products("B", "message/stream")), headers=HEADERS_A2A
+        )
+    assert INYECCION not in resp.text
+    assert all(set(e) == {"jsonrpc", "id", "result"} for e in parsear_sse(resp.content))

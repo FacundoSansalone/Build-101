@@ -613,6 +613,18 @@ def respuesta_jsonrpc(rpc_id: Any, result: dict[str, Any]) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
 
 
+def sobre_jsonrpc(body: dict[str, Any], rpc_id: Any) -> dict[str, Any]:
+    """El sobre JSON-RPC que se reenvía (lista blanca): `jsonrpc`, el `id` del
+    pedido (el comercio solo lo repite) y `result` o, si no hay, `error`. Otras
+    claves de primer nivel no las vio el filtro (revisa el `result`): no pasan."""
+    sobre: dict[str, Any] = {"jsonrpc": "2.0", "id": rpc_id}
+    if "result" in body:
+        sobre["result"] = body["result"]
+    elif "error" in body:
+        sobre["error"] = body["error"]
+    return sobre
+
+
 def error_jsonrpc(rpc_id: Any, mensaje: str, code: int = -32603) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": mensaje}}
 
