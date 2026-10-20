@@ -7,6 +7,9 @@ El Guard lo consulta para verificar lo que el agente del comercio declara.
 
   uv run --package ap2-samples python -m demo_world.public_catalog
 
+Escucha en 127.0.0.1 (PUBLIC_CATALOG_HOST para publicarlo en otro host, como
+ADK_HOST en run_world.sh). El túnel de la demo lo lee por 127.0.0.1.
+
 Endpoints:
   GET /health
   GET /products            -> {"merchant": {...}, "products": [...]}
@@ -46,7 +49,7 @@ def get_product(sku: str):
 
 
 def main() -> None:
-  app.run(host="0.0.0.0", port=PORT)
+  app.run(host=os.environ.get("PUBLIC_CATALOG_HOST", "127.0.0.1"), port=PORT)
 
 
 if __name__ == "__main__":

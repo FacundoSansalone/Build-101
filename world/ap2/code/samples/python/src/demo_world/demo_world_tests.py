@@ -353,3 +353,19 @@ def test_adk_web_listens_only_on_loopback_unless_asked():
   assert len(adk) == 1
   assert '--host "${ADK_HOST:-127.0.0.1}"' in adk[0]
   assert not any("0.0.0.0" in line for line in commands)
+
+
+def test_public_catalog_listens_only_on_loopback_unless_asked(monkeypatch):
+  """El catálogo público (:8011) era el único servicio de world en 0.0.0.0:
+  disparaba el firewall de Windows y lo exponía a la LAN. Escucha en
+  127.0.0.1 salvo que se pida otro host con PUBLIC_CATALOG_HOST (el túnel de
+  la demo lo lee por 127.0.0.1)."""
+  from demo_world import public_catalog
+
+  hosts = []
+  monkeypatch.setattr(public_catalog.app, "run", lambda host, port: hosts.append((host, port)))
+  monkeypatch.delenv("PUBLIC_CATALOG_HOST", raising=False)
+  public_catalog.main()
+  monkeypatch.setenv("PUBLIC_CATALOG_HOST", "0.0.0.0")
+  public_catalog.main()
+  assert hosts == [("127.0.0.1", public_catalog.PORT), ("0.0.0.0", public_catalog.PORT)]
