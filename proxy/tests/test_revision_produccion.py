@@ -651,3 +651,52 @@ def test_categoria_sin_relacion_de_rama_mandan_las_palabras(propuesta, textos, e
     from proxy.fuentes import categoria_de_la_ficha
 
     assert categoria_de_la_ficha(propuesta, textos) == esperado
+
+
+# ---------------------------------------------------------------------------
+# 10. /v1: enteros enormes y surrogates sueltos son 400, no 500
+# ---------------------------------------------------------------------------
+
+_ENORME = "1" + "0" * 400  # 10**400: no entra en un float
+
+
+def _compra_con(precio: str = "150", cantidad: str = "20", pedido: str = "20 computadoras",
+                moneda: str = "USD") -> bytes:
+    return (
+        '{"pedido": "%s", "comercio": "merchant_1", "ficha": {"requisitos": ['
+        '{"campo": "precio", "operador": "maximo", "valor": %s, "obligatorio": true},'
+        '{"campo": "moneda", "operador": "igual", "valor": "%s", "obligatorio": true},'
+        '{"campo": "cantidad", "operador": "minimo", "valor": %s, "obligatorio": true}]}}'
+        % (pedido, precio, moneda, cantidad)
+    ).encode("utf-8")
+
+
+def test_numero_positivo_con_un_entero_enorme():
+    from proxy.api_v1 import _numero_positivo
+
+    assert _numero_positivo(10**400) is False
+    assert _numero_positivo(150) is True
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("cuerpo_compra", "codigo"),
+    [
+        (_compra_con(precio=_ENORME), "validacion"),
+        (_compra_con(cantidad=_ENORME), "validacion"),
+        (_compra_con(pedido="a\\ud800b"), "json_invalido"),  # el escape JSON, no el carácter
+        (_compra_con(moneda="\\udfff"), "json_invalido"),
+    ],
+    ids=["precio-enorme", "cantidad-enorme", "surrogate-en-el-pedido", "surrogate-en-la-ficha"],
+)
+async def test_v1_compras_valores_raros_dan_400(cuerpo_compra, codigo):
+    from proxy.tests.test_api_v1 import NucleoFalso, _app, _error, _llamadas
+
+    nucleo = NucleoFalso()
+    transporte = httpx.ASGITransport(app=_app(nucleo))
+    async with httpx.AsyncClient(transport=transporte, base_url="http://gw.test:8030") as c:
+        r = await c.post(
+            "/v1/compras", content=cuerpo_compra, headers={"content-type": "application/json"}
+        )
+    _error(r, 400, codigo)
+    assert _llamadas(nucleo, "crear_compra") == []

@@ -631,8 +631,8 @@ reabrirías el canal que el gateway cierra.
 
 | HTTP | `codigo` | Qué significa |
 |---|---|---|
-| 400 | `json_invalido` | El cuerpo no es JSON estricto (sin `NaN`, `Infinity` ni números que desbordan) o tiene más de 32 niveles de objetos y listas |
-| 400 | `validacion` | Falta algo, sobra una clave o un valor no sirve (`detalle.campos`) |
+| 400 | `json_invalido` | El cuerpo no es JSON estricto (sin `NaN`, `Infinity` ni números que desbordan), tiene más de 32 niveles de objetos y listas o trae texto que no es UTF-8 (un surrogate suelto, como el escape de `U+D800`) |
+| 400 | `validacion` | Falta algo, sobra una clave o un valor no sirve (`detalle.campos`; un número que no entra en un float, como un entero de más de 308 dígitos, es "número fuera de rango") |
 | 400 | `ficha_sin_tope` | La ficha no tiene precio máximo y moneda obligatorios |
 | 400 | `requisito_no_soportado` | Un requisito que el Guard no sabe verificar |
 | 400 | `checkout_invalido` | `/v1/evaluar` con un checkout que no es un `ap2.checkout` |

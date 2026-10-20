@@ -198,8 +198,9 @@ def integrador_de(request: Request) -> Integrador:
 async def leer_json(request: Request, max_bytes: int) -> Any:
     """El cuerpo JSON de un POST: 415 sin `application/json`, 413 si supera
     el tope (se corta al leer, no se confía en `Content-Length`) y 400 si
-    no es JSON estricto (sin NaN, Infinity ni números que desbordan) o si
-    está anidado a más de `MAX_PROFUNDIDAD_JSON` niveles."""
+    no es JSON estricto (sin NaN, Infinity ni números que desbordan), si
+    está anidado a más de `MAX_PROFUNDIDAD_JSON` niveles o si trae texto que
+    no es UTF-8 (un surrogate suelto)."""
     tipo = request.headers.get("content-type", "")
     if tipo.split(";", 1)[0].strip().lower() != "application/json":
         raise ErrorApi(415, "se_espera_json", "El cuerpo tiene que ser application/json.")
@@ -224,6 +225,14 @@ async def leer_json(request: Request, max_bytes: int) -> Any:
             400, "json_invalido",
             f"El cuerpo tiene más de {MAX_PROFUNDIDAD_JSON} niveles de anidamiento.",
         )
+    try:
+        # Un escape de un surrogate suelto es JSON válido pero no texto UTF-8:
+        # la compra se creaba y fallaba al responder (500). Se rechaza acá.
+        a2a.dumps(datos)
+    except UnicodeEncodeError:
+        raise ErrorApi(
+            400, "json_invalido", "El cuerpo tiene texto que no es UTF-8 válido."
+        ) from None
     return datos
 
 
@@ -253,8 +262,28 @@ def _entregas_validas(valor: Any) -> Any:
 def _numero_positivo(valor: Any) -> bool:
     return (
         isinstance(valor, (int, float)) and not isinstance(valor, bool)
-        and math.isfinite(valor) and valor > 0
+        and _en_rango(valor) and math.isfinite(valor) and valor > 0
     )
+
+
+def _en_rango(valor: Any) -> bool:
+    """¿Todos los números de `valor` (también dentro de listas y objetos, como
+    un cronograma) entran en un float? Un entero de más de 308 dígitos no: el
+    Guard (y `math.isfinite`) lo convierte y lanza `OverflowError`. Iterativo:
+    la profundidad ya la acotó `leer_json`."""
+    pila = [valor]
+    while pila:
+        actual = pila.pop()
+        if isinstance(actual, int) and not isinstance(actual, bool):
+            try:
+                float(actual)
+            except OverflowError:
+                return False
+        elif isinstance(actual, dict):
+            pila.extend(actual.values())
+        elif isinstance(actual, list):
+            pila.extend(actual)
+    return True
 
 
 def _tiene_tope(requisitos: list[Requisito]) -> bool:
@@ -329,6 +358,9 @@ def _validar_ficha(
             for err in e.errors(include_url=False, include_input=False, include_context=False):
                 lugar = ".".join(str(p) for p in err.get("loc", ()))
                 problemas.agregar(f"{campo}.{lugar}" if lugar else campo, str(err.get("msg", ""))[:200])
+            continue
+        if not _en_rango(requisito.valor):
+            problemas.agregar(f"{campo}.valor", "número fuera de rango")
             continue
         if requisito.operador == "cubre" and _entregas_validas(requisito.valor) is None:
             # El Guard escalaría un cronograma ilegible; mejor avisarlo al crear.
