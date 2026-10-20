@@ -164,6 +164,29 @@ test("lo que entendió nuestro agente: una plantilla con el cronograma y lo que 
   assert.deepEqual(textos(relato([registrado(0, "x", gemini)])), ["Nuestro agente entendió: pueden variar las entregas"]);
 });
 
+test("las flexibilidades fijas con la etiqueta de su campo conservan su frase", () => {
+  // intencion.agente.descripcion_con_campo(): "Entregas: Acepta …".
+  const registrado = (flexibilidades) => evento("contexto_registrado", { compra_id: "cmp-etiqueta", turno: 0,
+    respuesta: "x", omitido: false, vencido: false,
+    contexto: { ...CONTEXTO_COMPUTADORAS, necesidad_entregas: [], flexibilidades } });
+  const dicha = (descripcion) => ({ descripcion, origen: "dicha" });
+  assert.deepEqual(textos(relato([registrado([
+    dicha("Entregas: Acepta recibir la compra en partes (entregas escalonadas)."),
+    dicha("Entregas: Acepta otra fecha de entrega."),
+    dicha("Marca: Acepta otra marca u otro modelo."),
+    dicha("Cantidad: Acepta otra cantidad."),
+  ])])), ["Nuestro agente entendió: aceptás recibir en partes; aceptás otra fecha de entrega; "
+    + "aceptás otra marca u otro modelo; aceptás otra cantidad"]);
+  // La misma flexibilidad con y sin etiqueta se dice una vez.
+  assert.deepEqual(textos(relato([registrado([
+    dicha("Acepta otra cantidad."), dicha("Cantidad: Acepta otra cantidad."),
+  ])])), ["Nuestro agente entendió: aceptás otra cantidad"]);
+  // Con la etiqueta de otro campo manda la etiqueta (es lo que habilita el
+  // cambio), no la frase fija.
+  assert.deepEqual(textos(relato([registrado([dicha("Marca: Acepta otra cantidad.")])])),
+    ["Nuestro agente entendió: puede variar la marca"]);
+});
+
 test("sin datos estructurados, lo que entendió es la última respuesta, no la primera", () => {
   const vacio = { ...CONTEXTO_COMPUTADORAS, necesidad_entregas: [], flexibilidades: [] };
   const lineas = textos(relato([

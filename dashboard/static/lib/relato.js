@@ -442,14 +442,16 @@ function lineaPedido(item, d) {
 
 // Lo que el usuario dijo flexible, en palabras de la plantilla. Las
 // descripciones del agente de decisiones son texto fijo
-// (intencion/agente_decisiones.py → FLEXIBILIDADES); las de Gemini llevan la
-// etiqueta del campo ("Entregas: …", intencion/agente.py) y su texto libre no
-// se muestra. Una "Otro: …" o una sin etiqueta conocida, tampoco.
+// (intencion/agente_decisiones.py → FLEXIBILIDADES), con o sin la etiqueta de
+// su campo adelante ("Entregas: Acepta …", intencion.agente →
+// descripcion_con_campo); las de Gemini llevan la etiqueta y su texto libre
+// no se muestra. Una "Otro: …" o una sin etiqueta conocida, tampoco.
+// Texto fijo → [etiqueta de su campo, frase].
 const FLEXIBLES_FIJAS = {
-  "Acepta recibir la compra en partes (entregas escalonadas).": "aceptás recibir en partes",
-  "Acepta otra fecha de entrega.": "aceptás otra fecha de entrega",
-  "Acepta otra marca u otro modelo.": "aceptás otra marca u otro modelo",
-  "Acepta otra cantidad.": "aceptás otra cantidad",
+  "Acepta recibir la compra en partes (entregas escalonadas).": ["Entregas", "aceptás recibir en partes"],
+  "Acepta otra fecha de entrega.": ["Entregas", "aceptás otra fecha de entrega"],
+  "Acepta otra marca u otro modelo.": ["Marca", "aceptás otra marca u otro modelo"],
+  "Acepta otra cantidad.": ["Cantidad", "aceptás otra cantidad"],
 };
 const FLEXIBLES_POR_CAMPO = {
   Cantidad: "puede variar la cantidad", Entregas: "pueden variar las entregas", Marca: "puede variar la marca",
@@ -459,7 +461,17 @@ const MAX_ENTREGAS_ENTENDIDO = 6;
 
 function fraseFlexibilidad(f) {
   const descripcion = String(f?.descripcion ?? "");
-  return FLEXIBLES_FIJAS[descripcion] ?? FLEXIBLES_POR_CAMPO[descripcion.split(": ")[0]] ?? null;
+  const sinEtiqueta = Object.hasOwn(FLEXIBLES_FIJAS, descripcion) ? FLEXIBLES_FIJAS[descripcion] : null;
+  if (sinEtiqueta) return sinEtiqueta[1];
+  const corte = descripcion.indexOf(": ");
+  if (corte < 0) return null;
+  const etiqueta = descripcion.slice(0, corte);
+  const texto = descripcion.slice(corte + 2);
+  const fija = Object.hasOwn(FLEXIBLES_FIJAS, texto) ? FLEXIBLES_FIJAS[texto] : null;
+  // La frase fija vale con la etiqueta de su campo; con otra, manda la
+  // etiqueta (es lo que habilita el cambio).
+  if (fija && fija[0] === etiqueta) return fija[1];
+  return Object.hasOwn(FLEXIBLES_POR_CAMPO, etiqueta) ? FLEXIBLES_POR_CAMPO[etiqueta] : null;
 }
 
 const entregaValida = (e) => Number.isInteger(e?.cantidad) && e.cantidad > 0
