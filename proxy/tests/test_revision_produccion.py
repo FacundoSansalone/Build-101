@@ -700,3 +700,40 @@ async def test_v1_compras_valores_raros_dan_400(cuerpo_compra, codigo):
         )
     _error(r, 400, codigo)
     assert _llamadas(nucleo, "crear_compra") == []
+
+
+# ---------------------------------------------------------------------------
+# 11. Un error de red no le pasa al agente bytes del comercio
+# ---------------------------------------------------------------------------
+
+
+class _FallaConBytes(httpx.AsyncBaseTransport):
+    """Como h11/httpcore cuando el comercio responde algo roto: el mensaje de
+    la excepción incluye parte de lo que mandó."""
+
+    def __init__(self, cuando: str) -> None:
+        self.cuando = cuando
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self.cuando == "conexion":
+            raise httpx.RemoteProtocolError(f"illegal header line: b'{INYECCION}'", request=request)
+
+        class _Cortado(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'{"jsonrpc": "2.0", '
+                raise httpx.ReadError(f"peer sent: {INYECCION}", request=request)
+
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=_Cortado())
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cuando", ["conexion", "cortado"])
+async def test_sin_respuesta_el_detalle_va_solo_al_evento(armar_proxy, cuando):
+    async with cliente_de(armar_proxy(transport=_FallaConBytes(cuando))) as c:
+        resp = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+        historial = (await c.get("/guard/events/history")).json()
+    assert resp.status_code == 502
+    assert INYECCION not in resp.text
+    assert resp.json()["error"]["message"].startswith("Proxy del Guard: ")
+    errores = [e["datos"]["mensaje"] for e in historial if e["tipo"] == "error"]
+    assert any(INYECCION in m for m in errores)  # el dashboard sí ve el detalle

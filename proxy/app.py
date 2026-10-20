@@ -1955,8 +1955,11 @@ class ProxyGuard:
         if llamada.guard_activo and self._es_de_checkout(llamada):
             cuerpo = self._bloqueo_sintetico(llamada, f"{motivo}: no hay checkout que evaluar", detalle)
             return Response(cuerpo, status_code=200, media_type="application/json")
-        mensaje = f"Proxy del Guard: {motivo} ({detalle})"
-        self._error(llamada, mensaje)
+        # El detalle (algunas excepciones de h11/httpcore traen bytes de la
+        # respuesta del comercio) va solo al evento `error`; al agente, el
+        # motivo fijo.
+        mensaje = f"Proxy del Guard: {motivo}"
+        self._error(llamada, f"{mensaje} ({detalle})")
         return JSONResponse(a2a.error_jsonrpc(llamada.pedido.rpc_id, mensaje), status_code=502)
 
     def _respuesta_excedida(self, llamada: Llamada, e: a2a.LimiteExcedido) -> Response:
