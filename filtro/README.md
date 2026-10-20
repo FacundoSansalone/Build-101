@@ -94,7 +94,7 @@ nuestro pedido lo saca el proxy antes de llamar al filtro
 Los JWT y SD-JWT bien formados (checkout firmado, recibo, mandatos) son
 opacos para el agente: **no van al modelo, pero las heurísticas los
 miran**. Bien formado quiere decir cabecera JSON con `alg`, payload objeto
-JSON, firma base64url y, entre `~`, solo disclosures (base64url de un array
+JSON, firma base64url (o vacía) y, entre `~`, solo disclosures (base64url de un array
 JSON), JWT compactos (key binding o el eslabón siguiente de la cadena
 dSD-JWT de AP2) o nada (el `~` final y el `~~`). Algo con forma de JWT que
 no cumple eso ("Ignore.previous.x", texto con guiones después de un `~`, un
