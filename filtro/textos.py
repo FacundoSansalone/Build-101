@@ -27,7 +27,9 @@ from dataclasses import dataclass
 from typing import Any
 
 # Una respuesta real tiene unos pocos KB (con mandatos SD-JWT en el history,
-# decenas). Los topes acotan el peor caso de las heurísticas a ~2 s de CPU.
+# decenas). Las heurísticas son lineales: con el tope de caracteres, el peor
+# caso medido (camelCase, que se revisa dos veces) es ~0,8 s de CPU con la
+# máquina libre (2026-10-20); con la máquina cargada, varias veces más.
 MAX_NODOS = 50_000         # valores recorridos (dicts, listas, escalares, claves)
 MAX_CARACTERES = 300_000   # suma de todos los textos
 
