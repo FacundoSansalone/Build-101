@@ -230,13 +230,15 @@ def tipo_de(result: Any) -> str:
 
 
 def es_final(result: dict[str, Any]) -> bool:
-    """¿Este evento cierra la tarea para el cliente?"""
+    """¿Este evento cierra la tarea para el cliente? Un `status` o un `state`
+    de otro tipo (lo elige el comercio) no cierra nada."""
     kind = result.get("kind")
     if kind == "status-update":
         return bool(result.get("final"))
     if kind == "task":
-        estado = (result.get("status") or {}).get("state")
-        return estado in ESTADOS_TERMINALES
+        status = result.get("status")
+        estado = status.get("state") if isinstance(status, dict) else None
+        return isinstance(estado, str) and estado in ESTADOS_TERMINALES
     return kind == "message"
 
 
@@ -368,6 +370,10 @@ def sin_eco_del_pedido(result: Any, mensaje: dict[str, Any] | None) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _texto(valor: Any) -> str | None:
+    return valor if isinstance(valor, str) else None
+
+
 @dataclass
 class Respuesta:
     task_id: str | None = None
@@ -377,22 +383,26 @@ class Respuesta:
     escenario: str | None = None
 
     def ingerir(self, result: dict[str, Any]) -> None:
-        """Acepta un Task, un TaskArtifactUpdateEvent o un TaskStatusUpdateEvent."""
+        """Acepta un Task, un TaskArtifactUpdateEvent o un TaskStatusUpdateEvent.
+
+        Los ids solo si son strings y los artefactos solo si son una lista:
+        lo de otro tipo (lo elige el comercio) se ignora, como lo ilegible."""
         kind = result.get("kind")
         if kind == "task":
-            self.task_id = result.get("id") or self.task_id
-            self.contexto_id = result.get("contextId") or self.contexto_id
+            self.task_id = _texto(result.get("id")) or self.task_id
+            self.contexto_id = _texto(result.get("contextId")) or self.contexto_id
             # Un Task es una foto completa: reemplaza lo acumulado.
             self.carts = []
-            for artifact in result.get("artifacts") or []:
+            artifacts = result.get("artifacts")
+            for artifact in artifacts if isinstance(artifacts, list) else []:
                 self._artefacto(artifact)
         elif kind in ("artifact-update", "status-update"):
-            self.task_id = result.get("taskId") or self.task_id
-            self.contexto_id = result.get("contextId") or self.contexto_id
+            self.task_id = _texto(result.get("taskId")) or self.task_id
+            self.contexto_id = _texto(result.get("contextId")) or self.contexto_id
             if kind == "artifact-update":
                 self._artefacto(result.get("artifact"))
         elif kind == "message":
-            self.contexto_id = result.get("contextId") or self.contexto_id
+            self.contexto_id = _texto(result.get("contextId")) or self.contexto_id
 
     def _artefacto(self, artifact: Any) -> None:
         if not isinstance(artifact, dict):

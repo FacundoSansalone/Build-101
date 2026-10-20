@@ -291,6 +291,8 @@ _MARGEN_S = 20.0  # para el LLM y la respuesta después de la última espera
 # Motivos fijos cuando el estado no quedó guardado antes de responder
 # (varias instancias, `ProxyGuard.barrera`).
 _MOTIVO_SIN_ESTADO = "el estado del gateway no quedó guardado"
+# Una excepción inesperada al procesar lo que mandó el comercio (fail-closed).
+_MOTIVO_NO_PROCESABLE = "la respuesta del comercio no se pudo procesar"
 _MOTIVO_SIN_ESPERA = (
     "No se pudo guardar la espera en el almacén: la alternativa no se autoriza."
 )
@@ -1958,6 +1960,21 @@ class ProxyGuard:
     async def _procesar_json(
         self, contenido: bytes, llamada: Llamada, status: int
     ) -> tuple[bytes, int]:
+        """La respuesta JSON del comercio, ya leída. Una excepción que nadie
+        esperaba (un tipo raro del comercio que se escapó de las validaciones)
+        no sale como un 500 sin veredicto: es un bloqueo del proxy, con
+        motivo fijo (fail-closed)."""
+        try:
+            return await self._procesar_cuerpo(contenido, llamada, status)
+        except Exception as e:  # noqa: BLE001 - fail-closed
+            logger.exception("No se pudo procesar la respuesta del comercio")
+            return self._bloqueo_sintetico(
+                llamada, _MOTIVO_NO_PROCESABLE, f"{type(e).__name__}: {e}"[:200]
+            ), 200
+
+    async def _procesar_cuerpo(
+        self, contenido: bytes, llamada: Llamada, status: int
+    ) -> tuple[bytes, int]:
         pedido, activo = llamada.pedido, llamada.guard_activo
         body, error = _leer_del_comercio(contenido)
         salida = contenido
@@ -2089,6 +2106,7 @@ class ProxyGuard:
     async def _sse(self, resp: httpx.Response, llamada: Llamada) -> AsyncIterator[bytes]:
         est = EstadoStream()
         falla: str | None = None
+        inesperada = False  # una excepción que nadie esperaba: se corta siempre
         # Varias instancias: una búsqueda de integrador por stream se retiene
         # hasta el evento final y la barrera. Las ofertas solo salen si su
         # registro quedó guardado (el checkout puede caer en otra instancia).
@@ -2123,6 +2141,11 @@ class ProxyGuard:
             falla = f"el stream del comercio se cortó ({type(e).__name__})"
         except (ValueError, RecursionError) as e:  # defensa (N6): no se puede reescribir
             falla = f"un evento del comercio no se pudo reenviar ({type(e).__name__})"
+        except Exception as e:  # noqa: BLE001 - fail-closed: nunca un stream cortado sin veredicto
+            logger.exception("No se pudo procesar un evento del comercio")
+            self._error(llamada, f"Evento del comercio no procesable: {type(e).__name__}: {e}"[:300])
+            falla, inesperada = _MOTIVO_NO_PROCESABLE, True
+            est.ofertas_registradas = True  # las de un stream a medias no se registran
         finally:
             await resp.aclose()
 
@@ -2142,7 +2165,7 @@ class ProxyGuard:
             retenidos = []
 
         if falla is not None and not est.cortado:
-            for bloque in self._sse_falla(llamada, est, falla):
+            for bloque in self._sse_falla(llamada, est, falla, siempre=inesperada):
                 yield bloque
         elif est.pendiente is not None and not est.cortado:
             for bloque in self._sse_cortar(
@@ -2381,11 +2404,16 @@ class ProxyGuard:
         decision = self._bloqueo(llamada, cart_id, contexto, motivo, detalle)
         return self._sse_aplicar_retencion(llamada, est, decision, None)
 
-    def _sse_falla(self, llamada: Llamada, est: EstadoStream, motivo: str) -> list[bytes]:
+    def _sse_falla(
+        self, llamada: Llamada, est: EstadoStream, motivo: str, *, siempre: bool = False
+    ) -> list[bytes]:
+        """Un stream que se cortó o no se pudo leer. Si podía traer un checkout
+        (o, con `siempre`, en cualquier caso: una excepción inesperada), el
+        cierre es un bloqueo con `guard.veredicto`."""
         if est.resuelto:  # el evento final ya salió: no hay nada que retener
             self._error(llamada, f"Proxy del Guard: {motivo}", est.contexto_id)
             return []
-        if llamada.guard_activo and (
+        if siempre or llamada.guard_activo and (
             self._es_de_checkout(llamada) or est.checkouts or est.pendiente is not None
         ):
             return self._sse_cortar(llamada, est, motivo)

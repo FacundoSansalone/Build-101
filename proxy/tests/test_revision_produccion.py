@@ -181,3 +181,105 @@ async def test_kind_del_comercio_no_llega_al_motivo_sse(cliente, merchant: FakeM
     assert v["status"] == "bloqueado"
     assert "un ap2.checkout dentro de un evento dict" in v["motivo"]
     assert all('"ap2.checkout"' not in json.dumps(r) for r in resultados)
+
+
+# ---------------------------------------------------------------------------
+# 3. Tipos inesperados del comercio: bloqueo limpio, nunca un 500 sin veredicto
+# ---------------------------------------------------------------------------
+
+_RAROS = ["x", 5, ["a"], {"a": 1}, None, True, [], {}]
+
+
+@pytest.mark.parametrize("raro", _RAROS)
+def test_es_final_con_tipos_raros_no_lanza(raro):
+    assert a2a.es_final({"kind": "task", "status": raro}) is False
+    assert a2a.es_final({"kind": "task", "status": {"state": raro}}) is False
+
+
+@pytest.mark.parametrize("raro", _RAROS)
+def test_respuesta_ingerir_con_tipos_raros_no_lanza(raro):
+    respuesta = a2a.Respuesta()
+    respuesta.ingerir({"kind": "task", "id": raro, "contextId": raro, "artifacts": raro})
+    respuesta.ingerir({"kind": "artifact-update", "taskId": raro, "contextId": raro, "artifact": raro})
+    respuesta.ingerir({"kind": "message", "contextId": raro})
+    assert respuesta.task_id is None or isinstance(respuesta.task_id, str)
+    assert respuesta.contexto_id is None or isinstance(respuesta.contexto_id, str)
+    assert respuesta.carts == []
+
+
+def _manipular_result(campo: str, valor: Any):
+    def manipular(respuesta, pedido):
+        respuesta["result"][campo] = valor
+        return respuesta
+
+    return manipular
+
+
+def _manipular_eventos(campo: str, valor: Any):
+    def manipular(eventos, pedido):
+        for evento in eventos:
+            evento[campo] = valor
+        return eventos
+
+    return manipular
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("campo", "valor"), [("artifacts", 5), ("contextId", 5), ("contextId", ["a"]), ("id", {"a": 1})]
+)
+async def test_find_products_json_con_tipos_raros_no_rompe(armar_proxy, merchant, campo, valor):
+    merchant.manipular = _manipular_result(campo, valor)
+    async with cliente_de(armar_proxy()) as c:
+        resp = await c.post(RPC, content=cuerpo(pedido_find_products("B")), headers=HEADERS_A2A)
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), dict)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("campo", "valor"),
+    [("status", "x"), ("contextId", ["a"]), ("artifacts", 5), ("taskId", 5), ("contextId", 5)],
+)
+async def test_find_products_sse_con_tipos_raros_no_corta_el_stream(
+    armar_proxy, merchant, campo, valor
+):
+    merchant.manipular_sse = _manipular_eventos(campo, valor)
+    async with cliente_de(armar_proxy()) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_find_products("B", "message/stream")), headers=HEADERS_A2A
+        )
+    assert resp.status_code == 200
+    assert parsear_sse(resp.content)  # el stream terminó entero (se lee cada evento)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("metodo", ["message/send", "message/stream"])
+async def test_una_excepcion_inesperada_es_un_bloqueo_con_veredicto(
+    armar_proxy, merchant, monkeypatch, metodo
+):
+    def explota(self, result):
+        raise RuntimeError(INYECCION)
+
+    monkeypatch.setattr(a2a.Respuesta, "ingerir", explota)
+    async with cliente_de(armar_proxy()) as c:
+        resp = await c.post(
+            RPC, content=cuerpo(pedido_find_products("B", metodo)), headers=HEADERS_A2A
+        )
+        evs = (await c.get("/guard/events/history")).json()
+    assert resp.status_code == 200
+    assert INYECCION not in resp.text
+    if metodo == "message/send":
+        resultados = [resp.json()["result"]]
+    else:
+        resultados = [e["result"] for e in parsear_sse(resp.content)]
+    final = resultados[-1]
+    assert final["status"]["state"] == "failed"
+    assert texto_estado(final).startswith("KaiAI: bloqueado.")
+    artefactos = [
+        a for r in resultados for a in (r.get("artifacts") or [r.get("artifact")]) if a
+    ]
+    (v,) = veredictos({"artifacts": artefactos})
+    assert v["status"] == "bloqueado"
+    assert "bloqueado" in [e["tipo"] for e in evs]
+    assert "error" in [e["tipo"] for e in evs]
