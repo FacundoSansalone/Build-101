@@ -22,11 +22,18 @@ suma el dominio público a esos orígenes y hosts (`deploy/`). Los POST que reen
 token de su API de control (`X-Guard-Token`), que el proxy escribe en
 `.temp-db/guard_api_token` en cada arranque: lo lee el servidor, nunca el
 navegador.
+
+Host, Origin y Sec-Fetch-Site solo frenan navegadores: `curl` manda los que
+quiera. Por eso, publicado (dominio público, Host extra o escuchando en la
+red), todo pide además HTTP Basic con `DASHBOARD_ACCESS_TOKEN` (ver
+`ClaveDeAcceso`), y sin ella el panel no arranca.
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
+import hmac
 import ipaddress
 import json
 import mimetypes
@@ -95,6 +102,10 @@ ORIGENES_RESULTADOS = {"results": "results", "world": "world/ap2/results"}
 
 REPLAY_LOG = "guard_events.jsonl"
 
+# Panel publicado: contraseña de HTTP Basic (DASHBOARD_ACCESS_TOKEN).
+MIN_CLAVE_ACCESO = 16
+REALM = "KaiAI"
+
 
 @dataclass(frozen=True)
 class Config:
@@ -121,6 +132,19 @@ class Config:
     # (si un túnel lo reescribe). Vacíos en local.
     origenes_publicos: tuple[str, ...] = ()
     hosts_extra: tuple[str, ...] = ()
+    # Escucha fuera de loopback (DASHBOARD_ALLOW_REMOTE): lo fija `python -m
+    # dashboard` según DASHBOARD_HOST.
+    escucha_remota: bool = False
+    # Publicado: la contraseña de HTTP Basic (DASHBOARD_ACCESS_TOKEN) y, solo
+    # si se pide explícito, arrancar sin ella (DASHBOARD_PERMITIR_SIN_CLAVE=1).
+    clave_acceso: str | None = field(default=None, repr=False)
+    permitir_sin_clave: bool = False
+
+    @property
+    def publicado(self) -> bool:
+        """¿Llega gente de afuera? Dominio público, Host extra (un túnel) o
+        escuchando en la red. En local, nada de esto."""
+        return bool(self.origenes_publicos or self.hosts_extra or self.escucha_remota)
 
     @property
     def origenes(self) -> tuple[str, ...]:
@@ -202,6 +226,7 @@ def config_desde_entorno() -> Config:
     except ValueError:
         pausa = 0.0
     fijos = os.environ.get("DEMO_ESCENARIOS_FIJOS", "0").strip().lower() in {"1", "true", "si", "sí", "yes"}
+    sin_clave = os.environ.get("DASHBOARD_PERMITIR_SIN_CLAVE", "0").strip().lower() in {"1", "true", "si", "sí", "yes"}
     return Config(
         proxy_url=os.environ.get("PROXY_URL", DEFAULT_PROXY_URL).rstrip("/"),
         port=int(os.environ.get("DASHBOARD_PORT", DEFAULT_PORT)),
@@ -215,24 +240,92 @@ def config_desde_entorno() -> Config:
         hosts_extra=tuple(
             h.strip().lower() for h in os.environ.get("DASHBOARD_EXTRA_HOSTS", "").split(",") if h.strip()
         ),
+        clave_acceso=os.environ.get("DASHBOARD_ACCESS_TOKEN", "").strip() or None,
+        permitir_sin_clave=sin_clave,
     )
+
+
+def es_host_local(host: str) -> bool:
+    if host.strip().lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip().strip("[]")).is_loopback
+    except ValueError:
+        return False
 
 
 def verificar_host_local(host: str, permitir_remoto: bool) -> None:
     """El panel muestra mandatos y checkouts completos y reenvía el
     interruptor y las aprobaciones al proxy: solo escucha en loopback salvo
     DASHBOARD_ALLOW_REMOTE=1."""
-    if permitir_remoto or host.strip().lower() == "localhost":
+    if permitir_remoto or es_host_local(host):
         return
-    try:
-        if ipaddress.ip_address(host.strip().strip("[]")).is_loopback:
-            return
-    except ValueError:
-        pass
     raise SystemExit(
         f"DASHBOARD_HOST={host!r} no es una interfaz local. Si de verdad hace "
         "falta escuchar en la red, definí DASHBOARD_ALLOW_REMOTE=1."
     )
+
+
+def verificar_acceso(cfg: Config) -> None:
+    """Publicado, el panel no arranca sin contraseña (o con una corta), salvo
+    DASHBOARD_PERMITIR_SIN_CLAVE=1. En local no se mira."""
+    if not cfg.publicado:
+        return
+    if cfg.clave_acceso is None:
+        if cfg.permitir_sin_clave:
+            return
+        raise SystemExit(
+            "El panel está publicado (DASHBOARD_PUBLIC_ORIGINS, DASHBOARD_EXTRA_HOSTS o "
+            "DASHBOARD_ALLOW_REMOTE) y no tiene contraseña: cualquiera con la URL podría "
+            "apagar el Guard o aprobar compras. Definí DASHBOARD_ACCESS_TOKEN (al menos "
+            f"{MIN_CLAVE_ACCESO} caracteres; se entra con usuario cualquiera y esa "
+            "contraseña). Para publicarlo sin contraseña igual: DASHBOARD_PERMITIR_SIN_CLAVE=1."
+        )
+    if len(cfg.clave_acceso) < MIN_CLAVE_ACCESO:
+        raise SystemExit(
+            f"DASHBOARD_ACCESS_TOKEN es demasiado corta: al menos {MIN_CLAVE_ACCESO} caracteres."
+        )
+
+
+def clave_basic_valida(autorizacion: str | None, clave: str) -> bool:
+    """`Authorization: Basic base64(usuario:contraseña)` con esta contraseña
+    (el usuario no importa). Comparación en tiempo constante."""
+    if not autorizacion:
+        return False
+    esquema, _, valor = autorizacion.strip().partition(" ")
+    if esquema.lower() != "basic" or not valor.strip():
+        return False
+    try:
+        par = base64.b64decode(valor.strip(), validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    _, separador, contrasena = par.partition(b":")
+    return bool(separador) and hmac.compare_digest(contrasena, clave.encode("utf-8"))
+
+
+class ClaveDeAcceso:
+    """Panel publicado: todo (páginas, `/api/*`, estáticos y el SSE) pide HTTP
+    Basic con `DASHBOARD_ACCESS_TOKEN` (401 si no). Host, Origin y
+    Sec-Fetch-Site solo frenan navegadores; esto frena también a `curl`. El
+    navegador reenvía solo la contraseña en los fetch y el EventSource del
+    mismo origen: el JS no cambia. En local no hace nada.
+
+    ASGI puro, antes que `SoloLocal`.
+    """
+
+    def __init__(self, app: ASGIApp, cfg: Config) -> None:
+        self.app = app
+        self.clave = cfg.clave_acceso if cfg.publicado else None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if self.clave is not None and scope["type"] == "http":
+            if not clave_basic_valida(Headers(scope=scope).get("authorization"), self.clave):
+                rechazo = _error(401, "clave_requerida")
+                rechazo.headers["WWW-Authenticate"] = f'Basic realm="{REALM}", charset="UTF-8"'
+                rechazo.headers["Cache-Control"] = "no-store"
+                await rechazo(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 # Rutas que cambian estado en el proxy (solo con JSON y desde el propio panel).
@@ -954,6 +1047,7 @@ def create_app(cfg: Config | None = None) -> Starlette:
     from dashboard import demo_api  # importa de este módulo: acá, sin ciclo
 
     cfg = cfg or config_desde_entorno()
+    verificar_acceso(cfg)
     rutas = [
         Route("/demo", demo_api.pagina_demo),
         Route("/demo/clasico", demo_api.pagina_demo_clasico),
@@ -989,7 +1083,10 @@ def create_app(cfg: Config | None = None) -> Starlette:
         Route("/api/proxy/guard/events/history", api_proxy_historial),
         Mount("/", app=_Estaticos(directory=STATIC_DIR, html=True), name="static"),
     ]
-    app = Starlette(routes=rutas, middleware=[Middleware(SoloLocal, cfg=cfg)])
+    app = Starlette(
+        routes=rutas,
+        middleware=[Middleware(ClaveDeAcceso, cfg=cfg), Middleware(SoloLocal, cfg=cfg)],
+    )
     app.state.cfg = cfg
     app.state.demo = demo_api.Conversacion(cfg)
     return app
