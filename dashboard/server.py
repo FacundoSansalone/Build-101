@@ -307,8 +307,9 @@ class ClaveDeAcceso:
     """Panel publicado: todo (páginas, `/api/*`, estáticos y el SSE) pide HTTP
     Basic con `DASHBOARD_ACCESS_TOKEN` (401 si no). Host, Origin y
     Sec-Fetch-Site solo frenan navegadores; esto frena también a `curl`. El
-    navegador reenvía solo la contraseña en los fetch y el EventSource del
-    mismo origen: el JS no cambia. En local no hace nada.
+    navegador pide la contraseña una vez y la vuelve a mandar por su cuenta
+    en los fetch y el EventSource del mismo origen: el JS no cambia. En local
+    no hace nada.
 
     ASGI puro, antes que `SoloLocal`.
     """

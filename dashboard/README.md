@@ -441,8 +441,8 @@ aprobaciones), así que se protege igual que `/guard/*`:
   `WWW-Authenticate` si no; comparación con `hmac.compare_digest`), antes
   que los demás controles, y sin contraseña el panel no arranca (salvo
   `DASHBOARD_PERMITIR_SIN_CLAVE=1`). El navegador pide la contraseña una vez y
-  la reenvía solo en los `fetch` y el `EventSource` del mismo origen: el JS
-  no cambia. En local no se pide nada.
+  la vuelve a mandar por su cuenta en los `fetch` y el `EventSource` del mismo
+  origen: el JS no cambia. En local no se pide nada.
 
 ## Tests
 
