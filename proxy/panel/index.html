@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>KaiAI · Panel</title>
+  <meta name="description" content="El historial de compras de tu empresa con KaiAI: qué pidió cada agente, qué pasó y si intentaron estafarlo.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l7.5 3v6.2c0 4.7-3.2 8.1-7.5 9.8-4.3-1.7-7.5-5.1-7.5-9.8V5.5z' fill='%231f5fae'/%3E%3Cpath d='M8.2 12.3l2.6 2.6 5-5.2' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/panel/estilo.css">
+  <script type="module" src="/panel/app.js"></script>
+</head>
+<body>
+  <a class="saltar" href="#principal">Saltar al contenido</a>
+
+  <header class="cabecera">
+    <div class="marca">
+      <svg class="marca-icono" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3l7 2.8v5.9c0 4.4-3 7.6-7 9.3-4-1.7-7-4.9-7-9.3V5.8z"/>
+        <path class="marca-tilde" d="M8.8 12.2l2.3 2.3 4.2-4.4"/>
+      </svg>
+      <span class="marca-nombre">KaiAI</span>
+      <span class="marca-sub">Panel de compras</span>
+    </div>
+    <div class="cabecera-acciones">
+      <nav class="cabecera-nav" aria-label="Otras páginas del motor">
+        <a href="/consola">Consola</a>
+        <a href="/v1/docs">API</a>
+      </nav>
+      <span id="clave-tipo" class="clave-tipo" hidden></span>
+      <button type="button" id="tema" class="boton-icono" aria-label="Tema: automático" title="Tema: automático">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 000-17z" class="relleno"/></svg>
+      </button>
+      <button type="button" id="salir" class="boton boton-sec boton-chico" hidden>Salir</button>
+    </div>
+  </header>
+
+  <noscript><p class="sin-js">El panel necesita JavaScript.</p></noscript>
+
+  <main id="principal" class="principal" tabindex="-1">
+    <section id="entrada" class="entrada" aria-labelledby="t-entrada">
+      <div class="tarjeta">
+        <h1 id="t-entrada">Entrá al panel de tu empresa</h1>
+        <p class="intro">
+          Mirá las compras que hicieron tus agentes con KaiAI: qué pidieron, qué pasó con cada una,
+          por qué la aprobamos o la frenamos y si el comercio intentó estafarlos.
+        </p>
+        <form id="form-entrada" class="formulario" novalidate>
+          <label for="clave">Clave de solo lectura</label>
+          <div class="campo-con-boton">
+            <input id="clave" type="password" autocomplete="off" spellcheck="false" autocapitalize="off"
+                   placeholder="psg_…" aria-describedby="clave-ayuda entrada-estado">
+            <button type="button" id="mostrar-clave" class="boton boton-sec" aria-pressed="false" aria-controls="clave">Mostrar</button>
+          </div>
+          <p id="clave-ayuda" class="ayuda">
+            Conviene una clave de <strong>solo lectura</strong>: sirve para mirar las compras, no para comprar
+            ni aprobar, así que si alguien la copia no puede gastar. Te la da el operador de KaiAI. Queda en la
+            memoria de esta pestaña y solo viaja a este mismo sitio.
+          </p>
+          <label class="check"><input type="checkbox" id="recordar"> Recordar en esta pestaña</label>
+          <div class="acciones">
+            <button type="submit" id="entrar" class="boton">Entrar</button>
+          </div>
+          <p id="entrada-estado" class="estado" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
+
+    <div id="app" class="app" hidden>
+      <p id="aviso-clave" class="aviso-clave" role="note" hidden>
+        Entraste con una clave completa: con ella también se puede comprar, contestar y aprobar. El panel
+        funciona igual, pero conviene una clave de solo lectura (si alguien la copia, solo puede mirar).
+        Pedísela al operador de KaiAI.
+      </p>
+
+      <section id="vista-lista" class="vista" aria-labelledby="t-panel">
+        <div class="titulo-fila">
+          <div>
+            <h1 id="t-panel" tabindex="-1">Tus compras</h1>
+            <p id="periodo-texto" class="ayuda"></p>
+          </div>
+          <fieldset class="periodo">
+            <legend class="sr-only">Período</legend>
+            <label><input type="radio" name="periodo" id="periodo-7" value="7"><span>7 días</span></label>
+            <label><input type="radio" name="periodo" id="periodo-30" value="30" checked><span>30 días</span></label>
+            <label><input type="radio" name="periodo" id="periodo-90" value="90"><span>90 días</span></label>
+          </fieldset>
+        </div>
+
+        <section class="resumen" aria-labelledby="t-resumen">
+          <h2 id="t-resumen" class="sr-only">Resumen del período</h2>
+          <p id="resumen-estado" class="estado" role="status" aria-live="polite"></p>
+          <ul id="tarjetas" class="tarjetas"></ul>
+          <p id="resumen-nota" class="nota" hidden></p>
+        </section>
+
+        <section class="compras" aria-labelledby="t-compras">
+          <h2 id="t-compras" tabindex="-1">Compras</h2>
+          <form id="filtros" class="filtros" novalidate aria-label="Filtrar las compras">
+            <div class="campo">
+              <label for="f-resultado">Resultado</label>
+              <select id="f-resultado"></select>
+            </div>
+            <div class="campo">
+              <label for="f-alerta">Alerta</label>
+              <select id="f-alerta"></select>
+            </div>
+            <div class="campo">
+              <label for="f-referencia">Referencia</label>
+              <input id="f-referencia" maxlength="200" autocomplete="off" spellcheck="false" placeholder="ord-123" aria-describedby="f-referencia-ayuda">
+              <span id="f-referencia-ayuda" class="sr-only">La referencia exacta que mandó tu sistema al crear la compra.</span>
+            </div>
+            <div class="acciones">
+              <button type="submit" class="boton">Filtrar</button>
+              <button type="button" id="limpiar-filtros" class="boton boton-sec">Limpiar</button>
+            </div>
+          </form>
+          <p id="filtro-nota" class="ayuda" hidden>
+            KaiAI no filtra por este resultado: lo buscamos en tu navegador entre las compras que vamos trayendo.
+            Si falta alguna, tocá «Cargar más».
+          </p>
+
+          <p id="lista-estado" class="estado" role="status" aria-live="polite"></p>
+          <div id="lista-error" class="error" role="alert" hidden>
+            <p id="lista-error-texto"></p>
+            <button type="button" id="reintentar-lista" class="boton boton-sec boton-chico">Reintentar</button>
+          </div>
+
+          <div class="tabla-envoltura">
+            <table id="tabla" class="tabla" role="table" hidden>
+              <caption class="sr-only">Compras del período, la más nueva primero. Cada pedido abre su detalle.</caption>
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th scope="col" role="columnheader">Fecha</th>
+                  <th scope="col" role="columnheader">Pedido</th>
+                  <th scope="col" role="columnheader">Referencia</th>
+                  <th scope="col" role="columnheader">Comercio</th>
+                  <th scope="col" role="columnheader" class="col-monto">Monto</th>
+                  <th scope="col" role="columnheader">Resultado</th>
+                  <th scope="col" role="columnheader">Alertas</th>
+                </tr>
+              </thead>
+              <tbody id="filas" role="rowgroup"></tbody>
+            </table>
+          </div>
+          <p id="lista-vacia" class="vacio" hidden></p>
+          <div class="acciones acciones-centro">
+            <button type="button" id="cargar-mas" class="boton boton-sec" hidden>Cargar más</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="vista-compra" class="vista" aria-labelledby="d-titulo" hidden>
+        <button type="button" id="volver" class="boton boton-sec boton-chico volver">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"/></svg>
+          Volver a las compras
+        </button>
+        <p id="detalle-estado" class="estado" role="status" aria-live="polite"></p>
+        <div id="detalle-error" class="error" role="alert" hidden>
+          <p id="detalle-error-texto"></p>
+          <button type="button" id="reintentar-detalle" class="boton boton-sec boton-chico">Reintentar</button>
+        </div>
+
+        <article id="detalle" class="detalle" hidden>
+          <header class="detalle-cab">
+            <h1 id="d-titulo" tabindex="-1">La compra</h1>
+            <div id="d-resultado" class="d-resultado"></div>
+          </header>
+          <p id="d-resumen" class="resumen-grande"></p>
+          <div id="d-estafa"></div>
+          <ul id="d-avisos" class="avisos" hidden></ul>
+          <dl id="d-datos" class="datos"></dl>
+
+          <div class="detalle-columnas">
+            <div class="detalle-lado">
+              <section class="bloque" aria-labelledby="t-linea">
+                <h2 id="t-linea">Qué pasó</h2>
+                <ol id="d-linea" class="linea-tiempo"></ol>
+                <p id="d-linea-vacia" class="ayuda" hidden>No hay pasos guardados de esta compra.</p>
+              </section>
+
+              <section class="bloque" aria-labelledby="t-recibo">
+                <h2 id="t-recibo">El recibo</h2>
+                <p class="ayuda">
+                  KaiAI firma cada veredicto. Podés comprobar en tu navegador que la firma es nuestra y que
+                  nadie cambió el recibo.
+                </p>
+                <dl id="d-recibo" class="datos datos-recibo"></dl>
+                <p id="d-sin-recibo" class="ayuda" hidden>Esta compra no tiene recibo: no llegó a un veredicto de KaiAI.</p>
+                <div class="acciones">
+                  <button type="button" id="verificar" class="boton boton-sec">Verificar firma</button>
+                </div>
+                <p id="verificacion" class="estado" role="status" aria-live="polite"></p>
+              </section>
+            </div>
+
+            <section class="bloque" aria-labelledby="t-chequeos">
+              <h2 id="t-chequeos">Qué revisamos</h2>
+              <ul id="d-chequeos" class="chequeos"></ul>
+              <p id="d-chequeos-vacio" class="ayuda" hidden>No hubo un checkout que revisar: no hay chequeos.</p>
+            </section>
+          </div>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <footer class="pie">
+    KaiAI: los modelos entienden y proponen, vos autorizás y el código verifica antes de la firma.
+    Lo que escribe el comercio nunca llega a este panel.
+  </footer>
+</body>
+</html>
