@@ -23,11 +23,6 @@ const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 export const LARGO_REFERENCIA = 200;
 export const LIMITE_PAGINA = 50;
 export const LIMITE_MAXIMO = 200;
-// Con un filtro de resultado que la API no tiene, el panel filtra en el
-// navegador: por cada "Cargar" lee hasta MAX_PAGINAS_POR_CARGA páginas o
-// hasta juntar BUSCADAS_POR_CARGA compras.
-export const MAX_PAGINAS_POR_CARGA = 5;
-export const BUSCADAS_POR_CARGA = 20;
 export const PERIODOS = Object.freeze([7, 30, 90]);
 export const PERIODO_POR_DEFECTO = 30;
 export const ESTADOS_COMPRA = Object.freeze([
@@ -171,18 +166,6 @@ function esMonto(monto, moneda) {
     && MONEDA_RE.test(moneda);
 }
 
-/** El monto del último veredicto que lo trae (`{monto, moneda}`), o null. */
-export function montoDeCompra(compra) {
-  const veredictos = Array.isArray(compra?.veredictos) ? compra.veredictos : [];
-  for (let i = veredictos.length - 1; i >= 0; i--) {
-    const v = veredictos[i];
-    if (v && typeof v === "object" && "monto" in v) {
-      return esMonto(v.monto, v.moneda) ? { monto: v.monto, moneda: v.moneda } : null;
-    }
-  }
-  return null;
-}
-
 /** El tope que autorizaron (`precio` `maximo` y `moneda` `igual`), o null. */
 export function topeDeCompra(compra) {
   const requisitos = Array.isArray(compra?.ficha?.requisitos) ? compra.ficha.requisitos : [];
@@ -191,10 +174,14 @@ export function topeDeCompra(compra) {
   return esMonto(precio?.valor, moneda?.valor) ? { tope: precio.valor, moneda: moneda.valor } : null;
 }
 
-/** Lo que va en la columna Monto: el del checkout o, si no hubo, el tope. */
+/**
+ * Lo que va en la columna Monto: el de la compra (`monto` y `moneda` del
+ * listado, con la misma regla que la explicación) o, si no hubo, el tope.
+ */
 export function montoMostrado(compra) {
-  const monto = montoDeCompra(compra);
-  if (monto) return { texto: formatearMonto(monto.monto, monto.moneda), tope: false };
+  if (esMonto(compra?.monto, compra?.moneda)) {
+    return { texto: formatearMonto(compra.monto, compra.moneda), tope: false };
+  }
   const tope = topeDeCompra(compra);
   if (tope) return { texto: `Tope ${formatearMonto(tope.tope, tope.moneda)}`, tope: true };
   return { texto: "—", tope: false };
@@ -318,9 +305,12 @@ function isoValido(valor) {
 
 /**
  * `GET /v1/compras`: `limite`, `desde`, `hasta`, `estado`, `referencia`,
- * `alerta` y `cursor`. Lo que no tiene la forma que acepta la API no viaja.
+ * `alerta`, `resultado`, `intento_de_estafa` y `cursor`. Lo que no tiene la
+ * forma que acepta la API no viaja.
  */
-export function queryListado({ desde, hasta, referencia, alerta, estado, cursor, limite } = {}) {
+export function queryListado({
+  desde, hasta, referencia, alerta, estado, cursor, limite, resultado, intento_de_estafa,
+} = {}) {
   const ref = referenciaValida(referencia ?? "");
   const tope = Number.isInteger(limite) && limite >= 1 && limite <= LIMITE_MAXIMO ? limite : LIMITE_PAGINA;
   return query([
@@ -330,6 +320,8 @@ export function queryListado({ desde, hasta, referencia, alerta, estado, cursor,
     ["estado", ESTADOS_COMPRA.includes(estado) ? estado : null],
     ["referencia", ref || null],
     ["alerta", Object.hasOwn(ALERTAS, alerta) ? alerta : null],
+    ["resultado", Object.hasOwn(RESULTADOS, resultado) ? resultado : null],
+    ["intento_de_estafa", typeof intento_de_estafa === "boolean" ? String(intento_de_estafa) : null],
     ["cursor", siguienteValido(cursor)],
   ]);
 }
@@ -339,19 +331,23 @@ export function queryResumen({ desde, hasta } = {}) {
   return query([["desde", isoValido(desde)], ["hasta", isoValido(hasta)]]);
 }
 
-// La API no filtra por `resultado`: dos equivalen a un `estado` de la compra
-// (proxy/explicacion.py, resultado_de); el resto se filtra en el navegador.
-const ESTADO_DEL_RESULTADO = Object.freeze({ cortada_por_seguridad: "bloqueada", vencida: "vencida" });
+// El filtro "Alerta" tiene además "Cualquier intento de estafa", que en la API
+// no es una alerta sino `intento_de_estafa=true`.
+export const FILTRO_ESTAFA = "estafa";
 
-/** `{estado, local}`: el `estado` que va a la API y el resultado a filtrar acá. */
-export function planResultado(resultado) {
-  if (!Object.hasOwn(RESULTADOS, resultado)) return { estado: null, local: null };
-  return { estado: ESTADO_DEL_RESULTADO[resultado] ?? null, local: resultado };
-}
-
-export function filtrarPorResultado(compras, local) {
-  const lista = Array.isArray(compras) ? compras : [];
-  return local ? lista.filter((c) => c?.resultado === local) : lista;
+/**
+ * Lo que eligió el usuario en los filtros (`{resultado, alerta, referencia}`,
+ * los valores de los select y del campo), en parámetros de `queryListado`.
+ */
+export function filtrosDeLaApi(filtros) {
+  const f = filtros && typeof filtros === "object" ? filtros : {};
+  const estafa = f.alerta === FILTRO_ESTAFA;
+  return {
+    resultado: Object.hasOwn(RESULTADOS, f.resultado) ? f.resultado : null,
+    alerta: !estafa && Object.hasOwn(ALERTAS, f.alerta) ? f.alerta : null,
+    intento_de_estafa: estafa ? true : null,
+    referencia: referenciaValida(f.referencia ?? "") ?? "",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -370,16 +366,6 @@ export function combinarCompras(actuales, nuevas) {
     }
   }
   return salida;
-}
-
-/**
- * ¿Pedir otra página en esta misma carga? Solo con el filtro del navegador
- * (si no, una página por clic), mientras haya `siguiente`, falten compras y
- * no se haya llegado al tope de páginas.
- */
-export function seguirCargando({ encontradas, paginas, siguiente, local }) {
-  return Boolean(siguiente && local) && encontradas < BUSCADAS_POR_CARGA
-    && paginas < MAX_PAGINAS_POR_CARGA;
 }
 
 // ---------------------------------------------------------------------------
@@ -441,16 +427,15 @@ export function notaResumen(resumen) {
 // ---------------------------------------------------------------------------
 
 /**
- * Qué clave es, por `HEAD /v1/comercios` (un método seguro, sin efectos): la
- * de lectura da 403 `insufficient_scope` (docs/INTEGRACION.md §4, "también
- * HEAD") y la completa, 2xx. Cualquier otra cosa: no se sabe.
+ * Qué clave es, por `GET /v1/clave` (`{integrador, kid, permisos}`): con el
+ * permiso `lectura`, de solo lectura; sin permisos, completa. Cualquier otra
+ * cosa: no se sabe (el panel no dice nada).
  */
-export function tipoDeClave(status, wwwAuthenticate) {
-  if (status === 403 && typeof wwwAuthenticate === "string" && /insufficient_scope/.test(wwwAuthenticate)) {
-    return "lectura";
-  }
-  if (Number.isInteger(status) && status >= 200 && status < 300) return "completa";
-  return "desconocida";
+export function tipoDeClave(clave) {
+  const permisos = clave && typeof clave === "object" ? clave.permisos : null;
+  if (!Array.isArray(permisos) || !permisos.every((x) => typeof x === "string")) return "desconocida";
+  if (permisos.length === 0) return "completa";
+  return permisos.length === 1 && permisos[0] === "lectura" ? "lectura" : "desconocida";
 }
 
 /** Un error de /v1 (`{"error": {codigo, mensaje, detalle}}`) en una línea. */
@@ -507,29 +492,24 @@ export function textoVerificacion(resultado) {
 // ---------------------------------------------------------------------------
 
 /**
- * Los datos de la compra para el detalle: `[{nombre, valor, mono?}]`. Son de la
- * empresa (pedido, referencia, comercio) o de KaiAI (fecha, monto, id); nada
- * del comercio. Con la explicación manda su monto (la API ya miró el último
- * checkout); sin monto, el tope autorizado.
+ * Los datos de la compra para el detalle, todos de la explicación (`GET
+ * /v1/compras/{id}/explicacion`): `[{nombre, valor, mono?}]`. Son de la
+ * empresa (pedido, referencia, comercio) o de KaiAI (fecha, monto, tope, id);
+ * nada del comercio. Sin monto (no hubo checkout), solo el tope.
  */
-export function datosDeCompra(compra, explicacion) {
+export function datosDeCompra(explicacion) {
+  const e = explicacion && typeof explicacion === "object" ? explicacion : {};
   const datos = [];
   const texto = (v) => (typeof v === "string" && v.trim() ? v : null);
-  if (compra && typeof compra === "object") {
-    if (texto(compra.pedido)) datos.push({ nombre: "Pedido", valor: compra.pedido });
-    if (texto(compra.referencia)) datos.push({ nombre: "Referencia", valor: compra.referencia });
-    if (texto(compra.comercio)) datos.push({ nombre: "Comercio", valor: compra.comercio });
-    if (fechaDe(compra.creada)) datos.push({ nombre: "Fecha", valor: fechaHoraLocal(compra.creada) });
+  if (texto(e.pedido)) datos.push({ nombre: "Pedido", valor: e.pedido });
+  if (texto(e.referencia)) datos.push({ nombre: "Referencia", valor: e.referencia });
+  if (texto(e.comercio)) datos.push({ nombre: "Comercio", valor: e.comercio });
+  if (fechaDe(e.creada)) datos.push({ nombre: "Fecha", valor: fechaHoraLocal(e.creada) });
+  if (esMonto(e.monto, e.moneda)) datos.push({ nombre: "Monto", valor: formatearMonto(e.monto, e.moneda) });
+  if (esMonto(e.tope?.precio, e.tope?.moneda)) {
+    datos.push({ nombre: "Tope autorizado", valor: formatearMonto(e.tope.precio, e.tope.moneda) });
   }
-  const monto = explicacion && typeof explicacion === "object"
-    ? (esMonto(explicacion.monto, explicacion.moneda) ? { monto: explicacion.monto, moneda: explicacion.moneda } : null)
-    : montoDeCompra(compra);
-  const tope = topeDeCompra(compra);
-  if (monto) datos.push({ nombre: "Monto", valor: formatearMonto(monto.monto, monto.moneda) });
-  else if (tope) datos.push({ nombre: "Tope autorizado", valor: formatearMonto(tope.tope, tope.moneda) });
-  const id = esIdCompra(compra?.compra_id) ? compra.compra_id
-    : esIdCompra(explicacion?.compra_id) ? explicacion.compra_id : null;
-  if (id) datos.push({ nombre: "Compra", valor: id, mono: true });
+  if (esIdCompra(e.compra_id)) datos.push({ nombre: "Compra", valor: e.compra_id, mono: true });
   return datos;
 }
 

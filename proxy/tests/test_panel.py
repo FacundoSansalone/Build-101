@@ -323,6 +323,22 @@ def test_la_clave_solo_viaja_en_authorization():
     assert app.count("sessionStorage.setItem(") == 2
 
 
+def test_el_panel_usa_lo_que_da_la_api():
+    """La API filtra por resultado y por intento de estafa, dice de quién es
+    la clave (`GET /v1/clave`) y trae los datos de la compra en la
+    explicación: el panel no filtra en el navegador ni manda el HEAD, y el
+    detalle es un solo pedido (la compra entera, solo para verificar la firma)."""
+    app = _texto("app.js")
+    logica = _texto("logica.mjs")
+    assert '"/v1/clave"' in app and "HEAD" not in app
+    assert "filtrosDeLaApi(estado.filtros)" in app
+    for viejo in ("planResultado", "filtrarPorResultado", "seguirCargando", "MAX_PAGINAS_POR_CARGA"):
+        assert viejo not in app and viejo not in logica, viejo
+    (abrir,) = re.findall(r"async function abrirCompra\(id\) \{.*?\n\}", app, re.S)
+    assert abrir.count("pedirApi(") == 1 and "/explicacion`" in abrir
+    assert 'id="filtro-nota"' not in _texto("index.html")
+
+
 def test_los_ids_de_compra_se_validan_antes_de_la_url():
     app = _texto("app.js")
     rutas = re.findall(r"`/v1/compras/\$\{([^}]+)\}", app)

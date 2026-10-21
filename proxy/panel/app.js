@@ -12,12 +12,11 @@
 // - El panel no decide ni cambia nada: solo lee el historial.
 
 import {
-  ALERTAS, NOMBRE_TEMA, PERIODOS, PERIODO_POR_DEFECTO, RESULTADOS, TEMAS, chequeosDe, claveValida,
-  combinarCompras, datosDeCompra, esIdCompra, filtrarPorResultado, hashDeCompra, infoResultado,
-  lineaDeTiempo, mensajeEntrada, mensajeErrorApi, notaResumen, planResultado, queryListado,
-  queryResumen, reciboParaVerificar, referenciaValida, rutaDe, seguirCargando, separarAlertas,
-  siguienteTema, siguienteValido, tarjetasResumen, textoPeriodo, textoVerificacion, tipoDeClave,
-  ventanaPeriodo,
+  ALERTAS, FILTRO_ESTAFA, NOMBRE_TEMA, PERIODOS, PERIODO_POR_DEFECTO, RESULTADOS, TEMAS, chequeosDe,
+  claveValida, combinarCompras, datosDeCompra, esIdCompra, filtrosDeLaApi, hashDeCompra,
+  infoResultado, lineaDeTiempo, mensajeEntrada, mensajeErrorApi, notaResumen, queryListado,
+  queryResumen, reciboParaVerificar, referenciaValida, rutaDe, separarAlertas, siguienteTema,
+  siguienteValido, tarjetasResumen, textoPeriodo, textoVerificacion, tipoDeClave, ventanaPeriodo,
 } from "./logica.mjs";
 import { crearVista } from "./vista.mjs";
 import { verificarRecibo } from "./recibo.mjs";
@@ -82,7 +81,7 @@ function leerJson(texto) {
   }
 }
 
-/** Un pedido a /v1. `{status, datos, autenticar}`; nunca lanza (status 0 si no hubo respuesta). */
+/** Un GET a /v1. `{status, datos}`; nunca lanza (status 0 si no hubo respuesta). */
 async function pedirApi(metodo, ruta, { conClave = true } = {}) {
   if (!ruta.startsWith("/v1/")) throw new Error("ruta fuera de /v1");
   const headers = { Accept: "application/json" };
@@ -94,14 +93,10 @@ async function pedirApi(metodo, ruta, { conClave = true } = {}) {
       method: metodo, headers, credentials: "omit", cache: "no-store", redirect: "error",
       referrerPolicy: "no-referrer", signal: control.signal,
     });
-    const texto = metodo === "HEAD" ? "" : await respuesta.text().catch(() => "");
-    return {
-      status: respuesta.status,
-      datos: leerJson(texto),
-      autenticar: respuesta.headers.get("WWW-Authenticate"),
-    };
+    const texto = await respuesta.text().catch(() => "");
+    return { status: respuesta.status, datos: leerJson(texto) };
   } catch {
-    return { status: 0, datos: null, autenticar: null };
+    return { status: 0, datos: null };
   } finally {
     clearTimeout(reloj);
   }
@@ -176,13 +171,17 @@ async function entrar(evento) {
 }
 
 /**
- * ¿Es de solo lectura? `HEAD /v1/comercios` no cambia nada: la de lectura da
- * 403 `insufficient_scope` y la completa, 200. Si no se sabe, no se dice nada.
+ * ¿De quién es la clave y es de solo lectura? `GET /v1/clave` (el integrador
+ * y los permisos). Si no se sabe, no se dice nada.
  */
 async function detectarClave(sesion) {
-  const r = await pedirApi("HEAD", "/v1/comercios");
+  const r = await pedirApi("GET", "/v1/clave");
   if (sesion !== estado.sesion) return;
-  estado.tipoClave = tipoDeClave(r.status, r.autenticar);
+  const clave = r.status === 200 ? r.datos : null;
+  const nombre = clave?.integrador?.nombre;
+  $("#empresa").textContent = typeof nombre === "string" ? nombre : "";
+  $("#empresa").hidden = !(typeof nombre === "string" && nombre);
+  estado.tipoClave = tipoDeClave(clave);
   const insignia = $("#clave-tipo");
   if (estado.tipoClave === "desconocida") {
     insignia.hidden = true;
@@ -300,6 +299,7 @@ function llenarFiltros() {
   );
   $("#f-alerta").replaceChildren(
     v.el("option", { texto: "Todas", atributos: { value: "" } }),
+    v.el("option", { texto: "Cualquier intento de estafa", atributos: { value: FILTRO_ESTAFA } }),
     ...Object.entries(ALERTAS).map(([id, info]) => v.el("option", { texto: info.texto, atributos: { value: id } })),
   );
 }
@@ -326,63 +326,48 @@ async function cargarLista({ reiniciar = false } = {}) {
   $("#tabla").setAttribute("aria-busy", "true");
   estadoEn("#lista-estado", reiniciar ? "Cargando las compras…" : "Cargando más compras…", "espera");
 
-  const plan = planResultado(estado.filtros.resultado);
-  let cursor = reiniciar ? null : estado.siguiente;
-  let siguiente = null;
-  let nuevas = [];
-  let paginas = 0;
-  let falla = null;
-  do {
-    const r = await pedirApi("GET", `/v1/compras${queryListado({
-      ...estado.ventana, referencia: estado.filtros.referencia, alerta: estado.filtros.alerta,
-      estado: plan.estado, cursor,
-    })}`);
-    if (sesion !== estado.sesion || carga !== estado.cargaLista) return;
-    if (r.status === 401) {
-      salir(CLAVE_CAIDA);
-      return;
-    }
-    if (r.status !== 200 || !Array.isArray(r.datos?.compras)) {
-      falla = textoDeFalla(r);
-      break;
-    }
-    paginas += 1;
-    nuevas = combinarCompras(nuevas, filtrarPorResultado(r.datos.compras, plan.local));
-    siguiente = siguienteValido(r.datos.siguiente);
-    cursor = siguiente;
-  } while (seguirCargando({ encontradas: nuevas.length, paginas, siguiente, local: plan.local }));
-
+  // Todos los filtros los aplica la API (también resultado e intento de estafa).
+  const r = await pedirApi("GET", `/v1/compras${queryListado({
+    ...estado.ventana, ...filtrosDeLaApi(estado.filtros), cursor: reiniciar ? null : estado.siguiente,
+  })}`);
+  if (sesion !== estado.sesion || carga !== estado.cargaLista) return;
   $("#tabla").removeAttribute("aria-busy");
   $("#cargar-mas").disabled = false;
-  if (falla) {
+  if (r.status === 401) {
+    salir(CLAVE_CAIDA);
+    return;
+  }
+  if (r.status !== 200 || !Array.isArray(r.datos?.compras)) {
     estadoEn("#lista-estado", "");
-    mostrarError("#lista-error", `No se pudieron cargar las compras: ${falla}`);
+    mostrarError("#lista-error", `No se pudieron cargar las compras: ${textoDeFalla(r)}`);
     $("#cargar-mas").hidden = !estado.siguiente;
     return;
   }
   const antes = estado.compras.length;
-  estado.compras = combinarCompras(estado.compras, nuevas);
-  estado.siguiente = siguiente;
+  estado.compras = combinarCompras(estado.compras, r.datos.compras);
+  estado.siguiente = siguienteValido(r.datos.siguiente);
   const filas = estado.compras.slice(antes).map((c) => v.filaCompra(c)).filter(Boolean);
   $("#filas").append(...filas);
-  pintarPieLista(filas.length, paginas, plan.local);
+  pintarPieLista(filas.length);
 }
 
-function pintarPieLista(agregadas, paginas, local) {
+function pintarPieLista(agregadas) {
   const total = estado.compras.length;
   const hayMas = Boolean(estado.siguiente);
   $("#tabla").hidden = total === 0;
   $("#cargar-mas").hidden = !hayMas;
   const vacia = $("#lista-vacia");
   if (total === 0) {
+    // Con filtros, una página puede venir vacía y con `siguiente`: KaiAI
+    // revisa hasta 1000 compras por pedido.
     vacia.textContent = hayMas
-      ? `Revisamos ${paginas} ${paginas === 1 ? "página" : "páginas"} y no hay compras con ese resultado. Tocá «Cargar más» para seguir buscando.`
+      ? "En las compras que revisamos todavía no hay ninguna con esos filtros. Tocá «Cargar más» para seguir buscando."
       : hayFiltros() ? "No hay compras con esos filtros en este período." : "Todavía no hay compras en este período.";
     vacia.hidden = false;
   }
   const cuantas = `${total} ${total === 1 ? "compra" : "compras"}`;
   const texto = total === 0 ? vacia.textContent
-    : agregadas === 0 && local && hayMas ? `Mostramos ${cuantas}: en estas páginas no había más con ese resultado.`
+    : agregadas === 0 && hayMas ? `Mostramos ${cuantas}: en las que revisamos no había más con esos filtros (hay más).`
     : `Mostramos ${cuantas}${hayMas ? " (hay más)" : ""}.`;
   estadoEn("#lista-estado", texto);
 }
@@ -398,8 +383,6 @@ function aplicarFiltros(evento) {
   }
   $("#f-referencia").removeAttribute("aria-invalid");
   estado.filtros = { resultado: $("#f-resultado").value, alerta: $("#f-alerta").value, referencia };
-  const plan = planResultado(estado.filtros.resultado);
-  $("#filtro-nota").hidden = !(plan.local && !plan.estado);
   cargarLista({ reiniciar: true });
 }
 
@@ -409,7 +392,6 @@ function reiniciarFiltros() {
   $("#f-alerta").value = "";
   $("#f-referencia").value = "";
   $("#f-referencia").removeAttribute("aria-invalid");
-  $("#filtro-nota").hidden = true;
   estado.filtros = { resultado: "", alerta: "", referencia: "" };
   estado.periodo = PERIODO_POR_DEFECTO;
   $(`#periodo-${PERIODO_POR_DEFECTO}`).checked = true;
@@ -506,13 +488,12 @@ async function abrirCompra(id) {
   $("#vista-compra").setAttribute("aria-busy", "true");
   estadoEn("#detalle-estado", "Cargando la compra…", "espera");
   $("#volver").focus();
-  const [explicacion, compra] = await Promise.all([
-    pedirApi("GET", `/v1/compras/${id}/explicacion`),
-    pedirApi("GET", `/v1/compras/${id}`),
-  ]);
+  // Un solo pedido: la explicación trae también los datos de la compra. La
+  // compra entera (con el JWS) se pide solo para verificar la firma.
+  const explicacion = await pedirApi("GET", `/v1/compras/${id}/explicacion`);
   if (sesion !== estado.sesion || carga !== estado.cargaDetalle) return;
   $("#vista-compra").removeAttribute("aria-busy");
-  if (explicacion.status === 401 || compra.status === 401) {
+  if (explicacion.status === 401) {
     salir(CLAVE_CAIDA);
     return;
   }
@@ -528,17 +509,13 @@ async function abrirCompra(id) {
         : `No se pudo cargar la compra: ${textoDeFalla(explicacion)}`);
     return;
   }
-  estado.detalle = {
-    id,
-    explicacion: explicacion.datos,
-    compra: compra.status === 200 && compra.datos?.compra_id === id ? compra.datos : null,
-  };
+  estado.detalle = { id, explicacion: explicacion.datos, compra: null };
   pintarDetalle(estado.detalle);
   estadoEn("#detalle-estado", "");
   $("#d-titulo").focus();
 }
 
-function pintarDetalle({ explicacion: e, compra }) {
+function pintarDetalle({ explicacion: e }) {
   const info = infoResultado(e.resultado);
   document.title = `KaiAI · ${info.texto}`;
   $("#d-resultado").replaceChildren(v.chipResultado(e.resultado, { clase: "chip chip-grande", prefijo: "Resultado: " }));
@@ -552,7 +529,7 @@ function pintarDetalle({ explicacion: e, compra }) {
   $("#d-estafa").replaceChildren(v.bloqueEstafa(tipos));
   $("#d-avisos").replaceChildren(...v.avisos(avisos));
   $("#d-avisos").hidden = avisos.length === 0;
-  $("#d-datos").replaceChildren(...v.datos(datosDeCompra(compra, e)));
+  $("#d-datos").replaceChildren(...v.datos(datosDeCompra(e)));
 
   const linea = lineaDeTiempo(e.linea_de_tiempo);
   $("#d-linea").replaceChildren(...linea.map((paso) => v.itemLinea(paso)));

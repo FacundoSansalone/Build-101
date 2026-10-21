@@ -7,13 +7,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  ALERTAS, BUSCADAS_POR_CARGA, CHEQUEOS, LIMITE_PAGINA, MAX_PAGINAS_POR_CARGA, PERIODOS,
-  PERIODO_POR_DEFECTO, RESULTADOS, TEMAS, alertasDe, chequeosDe, claveValida, combinarCompras,
-  datosDeCompra, esIdCompra, fechaCorta, fechaHoraLocal, filtrarPorResultado, formatearMonto,
-  formatearNumero, hashDeCompra, infoAlerta, infoChequeo, infoResultado, isoUtc, lineaDeTiempo,
-  mensajeEntrada, mensajeErrorApi, montoDeCompra, montoMostrado, nombreEtapa, notaResumen,
-  planResultado, queryListado, queryResumen, referenciaValida, reciboParaVerificar, rutaDe,
-  seguirCargando, separarAlertas, siguienteTema, siguienteValido, tarjetasResumen, textoPeriodo,
+  ALERTAS, CHEQUEOS, FILTRO_ESTAFA, LIMITE_PAGINA, PERIODOS, PERIODO_POR_DEFECTO, RESULTADOS, TEMAS,
+  alertasDe, chequeosDe, claveValida, combinarCompras, datosDeCompra, esIdCompra, fechaCorta,
+  fechaHoraLocal, filtrosDeLaApi, formatearMonto, formatearNumero, hashDeCompra, infoAlerta,
+  infoChequeo, infoResultado, isoUtc, lineaDeTiempo, mensajeEntrada, mensajeErrorApi, montoMostrado,
+  nombreEtapa, notaResumen, queryListado, queryResumen, referenciaValida, reciboParaVerificar,
+  rutaDe, separarAlertas, siguienteTema, siguienteValido, tarjetasResumen, textoPeriodo,
   textoVerificacion, tipoDeClave, topeDeCompra, ventanaPeriodo,
 } from "../../panel/logica.mjs";
 
@@ -157,30 +156,22 @@ const compraBase = {
     { campo: "moneda", operador: "igual", valor: "USD", obligatorio: true },
   ] },
   veredictos: [], resultado: "en_curso", alertas: [], intento_de_estafa: false,
+  monto: null, moneda: null,
 };
 
-test("montoDeCompra, topeDeCompra y montoMostrado", () => {
-  assert.equal(montoDeCompra(compraBase), null);
-  const conVeredictos = {
-    ...compraBase,
-    veredictos: [
-      { status: "bloqueado", monto: 401.35, moneda: "USD" },
-      { status: "aprobado", monto: 349, moneda: "USD" },
-    ],
-  };
-  assert.deepEqual(montoDeCompra(conVeredictos), { monto: 349, moneda: "USD" });
-  // El último que tiene monto.
-  assert.deepEqual(
-    montoDeCompra({ ...compraBase, veredictos: [{ monto: 10, moneda: "USD" }, { status: "x" }] }),
-    { monto: 10, moneda: "USD" },
-  );
-  assert.equal(montoDeCompra({ ...compraBase, veredictos: [{ monto: "10", moneda: "USD" }] }), null);
-  assert.equal(montoDeCompra({ ...compraBase, veredictos: [{ monto: 10, moneda: "dólares" }] }), null);
+test("topeDeCompra y montoMostrado: el monto que da la API o, si no hay, el tope", () => {
   assert.deepEqual(topeDeCompra(compraBase), { tope: 20000, moneda: "USD" });
   assert.equal(topeDeCompra({ ficha: null }), null);
-  assert.deepEqual(montoMostrado(conVeredictos), { texto: "USD 349,00", tope: false });
+  // El monto es el de la compra en el listado (el mismo de la explicación).
+  assert.deepEqual(montoMostrado({ ...compraBase, monto: 349, moneda: "USD" }), { texto: "USD 349,00", tope: false });
   assert.deepEqual(montoMostrado(compraBase), { texto: "Tope USD 20.000,00", tope: true });
   assert.deepEqual(montoMostrado({ ...compraBase, ficha: null }), { texto: "—", tope: false });
+  // Un monto que no es número o una moneda que no es un código: el tope.
+  assert.equal(montoMostrado({ ...compraBase, monto: "349", moneda: "USD" }).tope, true);
+  assert.equal(montoMostrado({ ...compraBase, monto: 349, moneda: "dólares" }).tope, true);
+  // Ya no se mira el monto de los veredictos: lo decide la API.
+  const soloVeredictos = { ...compraBase, veredictos: [{ status: "aprobado", monto: 1, moneda: "USD" }] };
+  assert.equal(montoMostrado(soloVeredictos).tope, true);
 });
 
 // ---------------------------------------------------------------------------
@@ -291,16 +282,19 @@ test("queryListado: los filtros que acepta la API, validados y codificados", () 
   assert.deepEqual(parametros(queryListado(ventana)), { limite: String(LIMITE_PAGINA), ...ventana });
   const todo = queryListado({
     ...ventana, referencia: " ord 1&x=2 ", alerta: "dato_falso", estado: "bloqueada", cursor: "abc_-1",
+    resultado: "frenada", intento_de_estafa: true,
   });
   assert.deepEqual(parametros(todo), {
     limite: "50", ...ventana, estado: "bloqueada", referencia: "ord 1&x=2", alerta: "dato_falso",
-    cursor: "abc_-1",
+    resultado: "frenada", intento_de_estafa: "true", cursor: "abc_-1",
   });
   assert.ok(!todo.includes("&x=2"), todo);
+  assert.equal(parametros(queryListado({ intento_de_estafa: false })).intento_de_estafa, "false");
   // Lo que no sirve no viaja (la API daría 400).
   const sucio = parametros(queryListado({
     desde: "ayer", hasta: "2026-10-22T03:00:00+03:00", alerta: "otra", estado: "cualquiera",
-    cursor: "a b", referencia: "x".repeat(201), limite: 500,
+    cursor: "a b", referencia: "x".repeat(201), limite: 500, resultado: "inventado",
+    intento_de_estafa: "true",
   }));
   assert.deepEqual(sucio, { limite: "50" });
   assert.equal(parametros(queryListado({ limite: 200 })).limite, "200");
@@ -313,23 +307,23 @@ test("queryResumen: solo desde y hasta", () => {
   assert.equal(queryResumen({}), "");
 });
 
-test("planResultado: estado de la API cuando equivale; si no, se filtra en el navegador", () => {
-  assert.deepEqual(planResultado(""), { estado: null, local: null });
-  assert.deepEqual(planResultado("cortada_por_seguridad"), { estado: "bloqueada", local: "cortada_por_seguridad" });
-  assert.deepEqual(planResultado("vencida"), { estado: "vencida", local: "vencida" });
-  for (const r of ["aprobada", "frenada", "retenida", "en_curso", "sin_compra"]) {
-    assert.deepEqual(planResultado(r), { estado: null, local: r }, r);
-  }
-  assert.deepEqual(planResultado("inventado"), { estado: null, local: null });
-});
-
-test("filtrarPorResultado", () => {
-  const compras = [
-    { compra_id: "cmp-0000000000000001", resultado: "aprobada" },
-    { compra_id: "cmp-0000000000000002", resultado: "frenada" },
-  ];
-  assert.deepEqual(filtrarPorResultado(compras, "frenada").map((c) => c.resultado), ["frenada"]);
-  assert.equal(filtrarPorResultado(compras, null).length, 2);
+test("filtrosDeLaApi: lo que eligió el usuario en los filtros, en parámetros de la API", () => {
+  assert.deepEqual(filtrosDeLaApi({ resultado: "", alerta: "", referencia: "" }), {
+    resultado: null, alerta: null, intento_de_estafa: null, referencia: "",
+  });
+  // El resultado va tal cual: la API filtra por resultado.
+  assert.deepEqual(filtrosDeLaApi({ resultado: "retenida", alerta: "dato_falso", referencia: "ord-1" }), {
+    resultado: "retenida", alerta: "dato_falso", intento_de_estafa: null, referencia: "ord-1",
+  });
+  // "Cualquier intento de estafa" no es una alerta: es intento_de_estafa=true.
+  assert.deepEqual(filtrosDeLaApi({ resultado: "", alerta: FILTRO_ESTAFA, referencia: "" }), {
+    resultado: null, alerta: null, intento_de_estafa: true, referencia: "",
+  });
+  assert.ok(!Object.hasOwn(ALERTAS, FILTRO_ESTAFA));
+  assert.deepEqual(filtrosDeLaApi({ resultado: "rara", alerta: "otra" }), {
+    resultado: null, alerta: null, intento_de_estafa: null, referencia: "",
+  });
+  assert.deepEqual(filtrosDeLaApi(null).resultado, null);
 });
 
 // ---------------------------------------------------------------------------
@@ -344,16 +338,6 @@ test("combinarCompras: sin repetir, en orden y solo con ids válidos", () => {
   assert.deepEqual(resultado.map((x) => x.compra_id), [a.compra_id, b.compra_id, c.compra_id]);
   assert.deepEqual(combinarCompras(undefined, [a]), [a]);
   assert.deepEqual(combinarCompras([a], "x"), [a]);
-});
-
-test("seguirCargando: con el filtro del navegador, hasta juntar o hasta el tope de páginas", () => {
-  const base = { encontradas: 0, paginas: 1, siguiente: "abc", local: "aprobada" };
-  assert.equal(seguirCargando(base), true);
-  assert.equal(seguirCargando({ ...base, siguiente: null }), false);
-  assert.equal(seguirCargando({ ...base, local: null }), false);
-  assert.equal(seguirCargando({ ...base, encontradas: BUSCADAS_POR_CARGA }), false);
-  assert.equal(seguirCargando({ ...base, paginas: MAX_PAGINAS_POR_CARGA }), false);
-  assert.equal(seguirCargando({ ...base, paginas: MAX_PAGINAS_POR_CARGA - 1 }), true);
 });
 
 // ---------------------------------------------------------------------------
@@ -404,14 +388,15 @@ test("notaResumen: solo si el período no entró entero", () => {
 // clave, errores y recibo
 // ---------------------------------------------------------------------------
 
-test("tipoDeClave: 403 insufficient_scope es de lectura, 2xx es completa, el resto no se sabe", () => {
-  assert.equal(tipoDeClave(403, 'Bearer error="insufficient_scope"'), "lectura");
-  assert.equal(tipoDeClave(200, null), "completa");
-  assert.equal(tipoDeClave(204, ""), "completa");
-  assert.equal(tipoDeClave(403, null), "desconocida");
-  assert.equal(tipoDeClave(401, 'Bearer error="invalid_token"'), "desconocida");
-  assert.equal(tipoDeClave(405, null), "desconocida");
-  assert.equal(tipoDeClave(0, null), "desconocida");
+test("tipoDeClave: por los permisos de GET /v1/clave", () => {
+  const clave = (permisos) => ({ integrador: { id: "acme", nombre: "ACME" }, kid: "0123456789ab", permisos });
+  assert.equal(tipoDeClave(clave(["lectura"])), "lectura");
+  assert.equal(tipoDeClave(clave([])), "completa");
+  // Un permiso que el panel no conoce: no se sabe (no se dice nada).
+  assert.equal(tipoDeClave(clave(["otro"])), "desconocida");
+  for (const malo of [null, {}, { permisos: "lectura" }, { permisos: [3] }, "x"]) {
+    assert.equal(tipoDeClave(malo), "desconocida", JSON.stringify(malo));
+  }
 });
 
 test("mensajeEntrada y mensajeErrorApi", () => {
@@ -459,30 +444,31 @@ test("textoVerificacion", () => {
 // el detalle y el tema
 // ---------------------------------------------------------------------------
 
-test("datosDeCompra: lo que mostramos de la compra, sin nada del comercio", () => {
-  const datos = datosDeCompra({ ...compraBase, veredictos: [{ monto: 349, moneda: "USD" }] }, null);
+test("datosDeCompra: lo que mostramos de la compra, todo de la explicación", () => {
+  const explicacion = {
+    compra_id: ID, pedido: "20 computadoras para el lunes", referencia: "ord-1", comercio: "merchant_1",
+    creada: "2026-10-21T12:00:00+00:00", tope: { precio: 20000, moneda: "USD" }, monto: 349, moneda: "USD",
+  };
+  const datos = datosDeCompra(explicacion);
   assert.deepEqual(datos.map((d) => [d.nombre, d.valor]), [
     ["Pedido", "20 computadoras para el lunes"],
     ["Referencia", "ord-1"],
     ["Comercio", "merchant_1"],
-    ["Fecha", fechaHoraLocal(compraBase.creada)],
+    ["Fecha", fechaHoraLocal(explicacion.creada)],
     ["Monto", "USD 349,00"],
+    ["Tope autorizado", "USD 20.000,00"],
     ["Compra", ID],
   ]);
   assert.equal(datos.find((d) => d.nombre === "Compra").mono, true);
-  // Sin la compra, el monto de la explicación y el id.
-  const soloExplicacion = datosDeCompra(null, { compra_id: ID, monto: 401.35, moneda: "USD" });
-  assert.deepEqual(soloExplicacion.map((d) => [d.nombre, d.valor]), [["Monto", "USD 401,35"], ["Compra", ID]]);
-  // Con la explicación manda su monto (la API ya miró el último checkout); sin
-  // monto, el tope que autorizaron.
-  const conLasDos = datosDeCompra(
-    { ...compraBase, veredictos: [{ monto: 349, moneda: "USD" }] }, { compra_id: ID, monto: null, moneda: null },
-  );
-  assert.deepEqual(conLasDos.find((d) => d.nombre === "Tope autorizado").valor, "USD 20.000,00");
-  assert.ok(!conLasDos.some((d) => d.nombre === "Monto"));
-  assert.deepEqual(datosDeCompra({ ...compraBase, referencia: null, pedido: "" }, null).map((d) => d.nombre),
-    ["Comercio", "Fecha", "Tope autorizado", "Compra"]);
-  assert.deepEqual(datosDeCompra(null, null), []);
+  // Sin monto (no hubo checkout), solo el tope.
+  const sinMonto = datosDeCompra({ ...explicacion, monto: null, moneda: null });
+  assert.ok(!sinMonto.some((d) => d.nombre === "Monto"));
+  assert.equal(sinMonto.find((d) => d.nombre === "Tope autorizado").valor, "USD 20.000,00");
+  // Lo que falta o no tiene forma no se muestra.
+  const rara = datosDeCompra({ compra_id: "../x", pedido: " ", referencia: null, comercio: 3, creada: "ayer",
+    tope: { precio: "1", moneda: "USD" }, monto: 1, moneda: "pesos" });
+  assert.deepEqual(rara, []);
+  assert.deepEqual(datosDeCompra(null), []);
 });
 
 test("siguienteTema: automático → claro → oscuro → automático", () => {

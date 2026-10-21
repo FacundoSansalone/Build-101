@@ -91,6 +91,7 @@ const compra = {
   compra_id: ID, referencia: "<script>alert(2)</script>", comercio: "merchant_1",
   creada: new Date(2026, 9, 21, 14, 5).toISOString(), pedido: INYECCION, estado: "sin_oportunidad",
   ficha: { requisitos: [] }, veredictos: [{ status: "bloqueado", monto: 401.35, moneda: "USD" }],
+  monto: 401.35, moneda: "USD",
   resultado: "frenada", alertas: ["precio_distinto", "sin_verificar"], intento_de_estafa: true,
 };
 
@@ -140,6 +141,7 @@ test("filaCompra: sin id válido no hay fila; sin pedido ni alertas, textos fijo
   assert.equal(v.filaCompra({ ...compra, compra_id: "javascript:alert(1)" }), null);
   assert.equal(v.filaCompra(null), null);
   const fila = v.filaCompra({ ...compra, pedido: "  ", referencia: null, alertas: [], veredictos: [],
+    monto: null, moneda: null,
     resultado: "otra_cosa", ficha: { requisitos: [
       { campo: "precio", operador: "maximo", valor: 400 }, { campo: "moneda", operador: "igual", valor: "USD" },
     ] } });
@@ -201,7 +203,10 @@ test("el detalle: línea de tiempo con omitido, chequeos, datos y el bloque de e
   assert.equal(chequeo.textContent, "FrenaNo es tu talle.");
   assert.equal(chequeo.hijos[0].hijos[0].tagName, "SVG");
 
-  const filas = v.datos(datosDeCompra(compra, null));
+  const filas = v.datos(datosDeCompra({
+    compra_id: ID, pedido: INYECCION, referencia: compra.referencia, comercio: compra.comercio,
+    creada: compra.creada, monto: 401.35, moneda: "USD", tope: null,
+  }));
   assert.deepEqual(filas.map((d) => d.hijos[0].textContent), ["Pedido", "Referencia", "Comercio", "Fecha", "Monto", "Compra"]);
   assert.equal(filas[0].hijos[1].textContent, INYECCION);
   assert.equal(filas[5].hijos[1].className, "mono");

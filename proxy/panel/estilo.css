@@ -204,6 +204,7 @@ input[aria-invalid="true"] { border-color: var(--crit); }
 
 .titulo-fila { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 20px; }
 .titulo-fila .ayuda { margin-top: 2px; }
+.empresa { color: var(--ink-2); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .periodo { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface-2); border-radius: 11px; }
 .periodo label { position: relative; }
 .periodo input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }

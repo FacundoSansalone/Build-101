@@ -77,6 +77,7 @@
       <section id="vista-lista" class="vista" aria-labelledby="t-panel">
         <div class="titulo-fila">
           <div>
+            <p id="empresa" class="empresa" hidden></p>
             <h1 id="t-panel" tabindex="-1">Tus compras</h1>
             <p id="periodo-texto" class="ayuda"></p>
           </div>
@@ -116,11 +117,6 @@
               <button type="button" id="limpiar-filtros" class="boton boton-sec">Limpiar</button>
             </div>
           </form>
-          <p id="filtro-nota" class="ayuda" hidden>
-            KaiAI no filtra por este resultado: lo buscamos en tu navegador entre las compras que vamos trayendo.
-            Si falta alguna, tocá «Cargar más».
-          </p>
-
           <p id="lista-estado" class="estado" role="status" aria-live="polite"></p>
           <div id="lista-error" class="error" role="alert" hidden>
             <p id="lista-error-texto"></p>
