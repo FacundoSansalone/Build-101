@@ -603,6 +603,13 @@ no es tuya):
   fabricante o de tu ficha). **Nunca** sale texto del comercio (títulos,
   descripciones, `item_label`, mensajes), ni un id que escribió él, ni el
   `motivo` del Guard. Mostralos tal cual en tu panel (como texto, no HTML).
+- **El catálogo público cuenta como fuente independiente**, como para el
+  Guard: sus textos cortos (una categoría, un uso, una marca; hasta 40
+  caracteres, sin signos) pueden aparecer en la explicación ("según el
+  catálogo público es …"). Si el `catalogo_url` de un comercio (el
+  `CATALOGO_URL` del operador) apunta a algo que controla el mismo comercio,
+  esos textos son suyos: el operador tiene que registrar un catálogo en el
+  que confíe.
 - `etapa` es una de `pedido`, `contexto`, `busqueda`, `ofertas`,
   `seguridad`, `intencion`, `checkout`, `verificacion`, `aprobacion`,
   `resultado` y `omitido` (una marca: "Omitimos N pasos del medio"). Como
