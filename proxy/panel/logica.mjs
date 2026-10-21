@@ -50,11 +50,13 @@ export function claveValida(clave) {
 
 /**
  * La vista del hash: `#/compra/<id>` con un id válido es el detalle; con
- * cualquier otro id, `compra_invalida` (no se le pide nada a la API); el resto,
- * la lista.
+ * cualquier otro id, `compra_invalida` (no se le pide nada a la API); sin hash
+ * o con otro `#/…`, la lista. Un ancla de la página (`#principal`) es `ancla`:
+ * no cambia la vista.
  */
 export function rutaDe(hash) {
   const texto = typeof hash === "string" ? hash : "";
+  if (texto && texto !== "#" && !texto.startsWith("#/")) return { vista: "ancla" };
   const m = /^#\/compra\/(.*)$/.exec(texto);
   if (!m) return { vista: "lista" };
   return esIdCompra(m[1]) ? { vista: "compra", id: m[1] } : { vista: "compra_invalida" };

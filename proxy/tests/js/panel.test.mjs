@@ -57,6 +57,10 @@ test("rutaDe: la lista, una compra válida o un id que no sirve", () => {
     assert.deepEqual(rutaDe(hash), { vista: "compra_invalida" }, hash);
   }
   assert.deepEqual(rutaDe(null), { vista: "lista" });
+  // Un ancla de la página ("Saltar al contenido") no es una ruta: no cambia la vista.
+  for (const hash of ["#principal", "#t-compras", "#compra/x"]) {
+    assert.deepEqual(rutaDe(hash), { vista: "ancla" }, hash);
+  }
 });
 
 test("hashDeCompra: solo con un id válido", () => {

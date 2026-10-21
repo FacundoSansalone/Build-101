@@ -155,13 +155,17 @@ async function entrar(evento) {
   $("#entrar").disabled = false;
   if (r.status !== 200 || !r.datos) {
     estado.clave = null;
-    if (r.status === 401) $("#clave").setAttribute("aria-invalid", "true");
+    if (r.status === 401) {
+      guardarSesion(null);
+      $("#clave").setAttribute("aria-invalid", "true");
+    }
     estadoEn("#entrada-estado", mensajeEntrada(r.status, r.datos), "crit");
     $("#clave").focus();
     return;
   }
   guardarSesion($("#recordar").checked ? valor : null);
   $("#clave").value = "";
+  ocultarClave();
   estadoEn("#entrada-estado", "");
   mostrarPanel();
   pintarResumen(r.datos);
@@ -218,13 +222,21 @@ function salir(mensaje = "Saliste: borramos la clave y los datos de esta pestañ
     abierta: null, vista: null, desdeLaLista: false,
   });
   vaciarPanel();
+  reiniciarFiltros();
   $("#clave").value = "";
+  ocultarClave();
   $("#recordar").checked = false;
   $("#entrada").hidden = false;
   if (location.hash) history.replaceState(null, "", `${location.pathname}${location.search}`);
   document.title = "KaiAI · Panel";
   estadoEn("#entrada-estado", mensaje);
   $("#clave").focus();
+}
+
+function ocultarClave() {
+  $("#clave").type = "password";
+  $("#mostrar-clave").setAttribute("aria-pressed", "false");
+  $("#mostrar-clave").textContent = "Mostrar";
 }
 
 function alternarClave() {
@@ -391,13 +403,24 @@ function aplicarFiltros(evento) {
   cargarLista({ reiniciar: true });
 }
 
-function limpiarFiltros() {
+/** Los filtros y el período como al entrar (sin cargar nada). */
+function reiniciarFiltros() {
   $("#f-resultado").value = "";
   $("#f-alerta").value = "";
   $("#f-referencia").value = "";
   $("#f-referencia").removeAttribute("aria-invalid");
   $("#filtro-nota").hidden = true;
   estado.filtros = { resultado: "", alerta: "", referencia: "" };
+  estado.periodo = PERIODO_POR_DEFECTO;
+  $(`#periodo-${PERIODO_POR_DEFECTO}`).checked = true;
+}
+
+function limpiarFiltros() {
+  const periodo = estado.periodo;
+  reiniciarFiltros();
+  // "Limpiar" saca los filtros, no cambia el período elegido.
+  estado.periodo = periodo;
+  $(`#periodo-${periodo}`).checked = true;
   cargarLista({ reiniciar: true });
 }
 
@@ -416,6 +439,7 @@ function rutear() {
   if (!estado.clave) return;
   const anterior = estado.vista;
   const ruta = rutaDe(location.hash);
+  if (ruta.vista === "ancla") return;
   if (ruta.vista === "compra") {
     estado.desdeLaLista = anterior === "lista";
     estado.vista = "compra";
@@ -434,6 +458,7 @@ function rutear() {
 
 function mostrarLista(volviendo) {
   estado.cargaDetalle += 1;
+  $("#vista-compra").removeAttribute("aria-busy");
   $("#vista-compra").hidden = true;
   $("#vista-lista").hidden = false;
   document.title = "KaiAI · Panel";
@@ -448,6 +473,7 @@ function volver() {
 }
 
 function prepararDetalle() {
+  $("#vista-compra").removeAttribute("aria-busy");
   $("#vista-lista").hidden = true;
   $("#vista-compra").hidden = false;
   $("#detalle").hidden = true;
@@ -490,13 +516,16 @@ async function abrirCompra(id) {
     salir(CLAVE_CAIDA);
     return;
   }
-  if (explicacion.status !== 200 || !explicacion.datos || typeof explicacion.datos !== "object") {
+  if (explicacion.status !== 200 || !explicacion.datos || typeof explicacion.datos !== "object"
+      || explicacion.datos.compra_id !== id) {
     estadoEn("#detalle-estado", "");
     const noEsta = explicacion.status === 404;
     $("#reintentar-detalle").hidden = noEsta;
     mostrarError("#detalle-error", noEsta
       ? "No encontramos esa compra: puede ser de otra empresa o ya no estar guardada (guardamos 90 días)."
-      : `No se pudo cargar la compra: ${textoDeFalla(explicacion)}`);
+      : explicacion.status === 200
+        ? "La respuesta no es de esta compra: no la mostramos."
+        : `No se pudo cargar la compra: ${textoDeFalla(explicacion)}`);
     return;
   }
   estado.detalle = {
@@ -584,14 +613,21 @@ async function verificarFirma() {
     $("#verificar").disabled = false;
     return;
   }
-  const publica = await clavePublica();
+  const guardada = Boolean(estado.publica);
+  let publica = await clavePublica();
   if (!listo()) return;
   if (!publica) {
     estadoEn("#verificacion", "No se pudo bajar la clave pública de KaiAI: la firma no se verificó. Probá de nuevo.", "crit");
     $("#verificar").disabled = false;
     return;
   }
-  const resultado = await verificarRecibo(recibo, publica);
+  let resultado = await verificarRecibo(recibo, publica);
+  if (!resultado.ok && guardada) {
+    estado.publica = null;
+    publica = await clavePublica();
+    if (!listo()) return;
+    if (publica) resultado = await verificarRecibo(recibo, publica);
+  }
   if (!listo()) return;
   const { texto, tono } = textoVerificacion(resultado);
   estadoEn("#verificacion", texto, tono);
@@ -634,8 +670,15 @@ function temaGuardado() {
 // Arranque
 // ---------------------------------------------------------------------------
 
+/** "Saltar al contenido" lleva el foco sin tocar el hash (que es la ruta). */
+function saltarAlContenido(evento) {
+  evento.preventDefault();
+  $("#principal").focus();
+}
+
 function arrancar() {
   aplicarTema(temaGuardado());
+  $(".saltar").addEventListener("click", saltarAlContenido);
   llenarFiltros();
   $("#form-entrada").addEventListener("submit", entrar);
   $("#mostrar-clave").addEventListener("click", alternarClave);
