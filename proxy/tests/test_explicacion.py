@@ -740,3 +740,23 @@ def test_un_atributo_que_no_se_pudo_comparar_no_acusa():
     assert salida["alertas"] == ["sin_verificar"] and salida["intento_de_estafa"] is False
     assert ("No pudimos comparar la RAM con el fabricante: lo que declaró el comercio no se puede "
             "comparar (otra unidad o un valor ambiguo).") in [c["texto"] for c in salida["chequeos"]]
+
+
+def test_la_linea_de_tiempo_conserva_el_principio_y_el_final():
+    eventos = [_fila("reenviado", {"metodo": "find_products"}, minutos=1 + i / 100, orden=i)
+               for i in range(400)]
+    eventos.append(_fila("veredicto", {"veredicto": {"status": "aprobado"}}, minutos=9, orden=401))
+    linea = _explicar(vista(), eventos)["linea_de_tiempo"]
+    assert len(linea) <= explicacion.MAX_LINEA
+    assert linea[0]["texto"].startswith("Creaste la compra")
+    assert linea[-1]["texto"] == "Verificamos el checkout: está aprobado."
+    (marca,) = [e for e in linea if e["etapa"] == "omitido"]
+    assert marca["texto"].startswith("Omitimos") and "pasos" in marca["texto"]
+
+
+def test_con_el_maximo_de_eventos_avisa_que_hay_anteriores():
+    eventos = [_fila("reenviado", {"metodo": "find_products"}, minutos=1 + i / 1000, orden=i)
+               for i in range(explicacion.MAX_EVENTOS)]
+    linea = _explicar(vista(), eventos)["linea_de_tiempo"]
+    assert linea[0]["etapa"] == "pedido" and linea[1]["etapa"] == "omitido"
+    assert "anteriores" in linea[1]["texto"]

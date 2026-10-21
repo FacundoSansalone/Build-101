@@ -304,7 +304,13 @@ CAUSAS_CORTE: dict[str, str] = {
     _MOTIVO_SIN_DECISION: "sin_decision",
 }
 # Eventos del historial por página (`listar_eventos`; el almacén acota a 200).
-LIMITE_EVENTOS = 200
+# El historial de una compra: los eventos que se repiten con cada búsqueda se
+# guardan hasta `MAX_EVENTOS_REPETIDOS` (un agente que busca sin parar no lo
+# hace crecer sin límite); el resto (veredictos, bloqueos, reenvíos, la
+# intención), siempre.
+TIPOS_ACOTADOS = frozenset({"busqueda_enviada", "ofertas_recibidas"})
+MAX_EVENTOS_REPETIDOS = 20
+_MAX_LLENOS = 2000
 # Señales del filtro que son una detección (las `filtro:*` dicen que no pudo revisar).
 _PREFIJOS_DETECCION = ("heuristica:", "modelo:")
 # El agente del cliente espera hasta 600 s por llamada (DEFAULT_TIMEOUT del
@@ -746,6 +752,9 @@ class ProxyGuard:
         # contextos que se ataron a una (aunque la compra salga de memoria).
         self._eventos_privados: OrderedDict[str, bool] = OrderedDict()
         self._contextos_api: OrderedDict[str, bool] = OrderedDict()
+        # (compra, tipo) de los eventos acotados que ya llegaron a su tope en el
+        # historial: no se vuelven a contar (`_guardar_evento_acotado`).
+        self._historial_lleno: OrderedDict[tuple[str, str], bool] = OrderedDict()
         self.en_fondo = TareasEnFondo(
             al_fallar=lambda mensaje: self._emitir(
                 "error", {"mensaje": mensaje}, guard_activo=self.guard_activo
@@ -847,8 +856,24 @@ class ProxyGuard:
         except Exception:  # noqa: BLE001 - el historial nunca rompe el flujo
             logger.exception("No se pudo armar el historial del evento %s", evento.tipo)
             return
-        if fila is not None:
-            self.en_fondo.programar(self.almacen.guardar_evento(fila), "evento del historial")
+        if fila is None:
+            return
+        if fila["tipo"] in TIPOS_ACOTADOS:
+            if (compra.id, fila["tipo"]) in self._historial_lleno:
+                return
+            self.en_fondo.programar(self._guardar_evento_acotado(fila), "evento del historial")
+            return
+        self.en_fondo.programar(self.almacen.guardar_evento(fila), "evento del historial")
+
+    async def _guardar_evento_acotado(self, fila: dict[str, Any]) -> None:
+        """Un evento de los que se repiten con cada búsqueda, solo si la compra
+        todavía no tiene `MAX_EVENTOS_REPETIDOS` de ese tipo (contados en el
+        almacén: vale entre instancias; dos a la vez pueden pasarse por uno)."""
+        clave = (fila["compra_id"], fila["tipo"])
+        if await self.almacen.contar_eventos(*clave) >= MAX_EVENTOS_REPETIDOS:
+            _recordar(self._historial_lleno, clave, True, _MAX_LLENOS)
+            return
+        await self.almacen.guardar_evento(fila)
 
     def _compra_del_evento(
         self, evento: Evento, contexto_id: str | None, llamada: Llamada | None
@@ -994,23 +1019,13 @@ class ProxyGuard:
         ]
 
     async def eventos_de_compra(self, compra_id: str, maximo: int) -> list[dict[str, Any]]:
-        """Los eventos del historial de una compra (`gw_eventos`), en orden, de
-        a páginas, hasta `maximo`. Sin historial en el almacén
-        (`historial_activo`), ninguno. `ErrorAlmacen` si falla."""
+        """Los `maximo` eventos más nuevos del historial de una compra
+        (`gw_eventos`), en orden: el final de la compra nunca se pierde. Sin
+        historial en el almacén (`historial_activo`), ninguno. `ErrorAlmacen`
+        si falla."""
         if not self.historial_activo:
             return []
-        eventos: list[dict[str, Any]] = []
-        desde = 0
-        while len(eventos) < maximo:
-            pagina = await self.almacen.listar_eventos(compra_id, desde, limite=LIMITE_EVENTOS)
-            eventos.extend(pagina)
-            if len(pagina) < LIMITE_EVENTOS:
-                break
-            orden = pagina[-1].get("orden")
-            if not isinstance(orden, int) or isinstance(orden, bool) or orden <= desde:
-                break
-            desde = orden
-        return eventos[:maximo]
+        return await self.almacen.listar_eventos_recientes(compra_id, maximo)
 
     def _esperas_de(self, compra: Compra) -> Esperas:
         """Las compras de integrador, con varias instancias, esperan en el

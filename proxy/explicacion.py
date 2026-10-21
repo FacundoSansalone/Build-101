@@ -55,13 +55,18 @@ RESULTADOS: tuple[str, ...] = (
 )
 ETAPAS = frozenset({
     "pedido", "contexto", "busqueda", "ofertas", "seguridad", "intencion", "checkout",
-    "verificacion", "aprobacion", "resultado",
+    "verificacion", "aprobacion", "resultado", "omitido",
 })
 ESTADOS_ACTIVOS = frozenset({"creada", "esperando_contexto", "negociando", "esperando_decision"})
 _GRAVEDAD = {"bloquea": 0, "escalar": 1, "aviso": 2, "ok": 3}
 _CHECKOUT = "checkout_firmado"
 LARGO_PORQUE = 200
+# La línea de tiempo: como mucho `MAX_LINEA` entradas, con el principio
+# (`LINEA_PRINCIPIO`) y el final de la compra y una marca de lo omitido. Se
+# leen los últimos `MAX_EVENTOS` eventos: si llegan todos, hay más viejos.
 MAX_LINEA = 200
+LINEA_PRINCIPIO = 50
+MAX_EVENTOS = 1000
 _RECIBO_RE = re.compile(r"rcb-[0-9a-f]{8,64}")
 _KID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 
@@ -1035,7 +1040,11 @@ def linea_de_tiempo(vista: dict[str, Any], eventos: list[dict[str, Any]]) -> lis
     if creada is not None:
         tope = _tope(vista.get("ficha"))
         texto = f"Creaste la compra con un tope de {tope}." if tope else "Creaste la compra."
-        linea.append((creada, -1, "pedido", texto))
+        linea.append((creada, -2, "pedido", texto))
+        if len(eventos) >= MAX_EVENTOS:
+            linea.append((creada, -1, "omitido",
+                          "Hay pasos anteriores que no mostramos: mostramos los últimos "
+                          f"{_cantidad(MAX_EVENTOS)}."))
     for evento in eventos:
         contado = _texto_evento(evento)
         if contado is not None:
@@ -1047,8 +1056,14 @@ def linea_de_tiempo(vista: dict[str, Any], eventos: list[dict[str, Any]]) -> lis
                 linea.append((momento, 0, "aprobacion",
                               "Una persona de tu equipo aprobó el checkout retenido."))
     linea.sort(key=lambda e: (e[0], e[1]))
+    if len(linea) > MAX_LINEA:
+        final = MAX_LINEA - LINEA_PRINCIPIO - 1
+        omitidas = len(linea) - LINEA_PRINCIPIO - final
+        marca = (linea[LINEA_PRINCIPIO][0], 0, "omitido",
+                 f"Omitimos {_cantidad(omitidas)} pasos del medio de la compra.")
+        linea = [*linea[:LINEA_PRINCIPIO], marca, *linea[-final:]]
     return [{"ts": ts.isoformat(), "etapa": etapa, "texto": texto}
-            for ts, _, etapa, texto in linea[:MAX_LINEA]]
+            for ts, _, etapa, texto in linea]
 
 
 # -- la explicación ---------------------------------------------------------------------

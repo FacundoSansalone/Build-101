@@ -323,7 +323,7 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
                         "ts": _FECHA,
                         "etapa": {"type": "string", "enum": [
                             "pedido", "contexto", "busqueda", "ofertas", "seguridad", "intencion",
-                            "checkout", "verificacion", "aprobacion", "resultado",
+                            "checkout", "verificacion", "aprobacion", "resultado", "omitido",
                         ]},
                         "texto": {"type": "string"},
                     },

@@ -129,6 +129,7 @@ PG_UNICA = "23505"                       # unique_violation (PostgREST responde 
 LARGO_REFERENCIA = 200                   # el de `api_v1.LARGO_REFERENCIA`
 IDS_POR_CONSULTA = 100                   # `compra_id=in.(…)`: la URL queda corta
 MAX_FILAS_LECTURA = 20_000               # varias compras: contextos o aprobaciones
+MAX_EVENTOS_RECIENTES = 1000             # los más nuevos de una compra (la explicación)
 # Lo que borra la purga (retención), en este orden: lo que apunta a una compra
 # antes que la compra (los contextos y las esperas además se van en cascada).
 TABLAS_PURGA = (
@@ -214,6 +215,12 @@ def _ids_compras(compra_ids: Any) -> list[str]:
     if isinstance(compra_ids, (str, bytes)) or not hasattr(compra_ids, "__iter__"):
         raise ErrorAlmacen("compra_ids inválidos")
     return list(dict.fromkeys(_id_compra(c) for c in compra_ids))
+
+
+def _tipo_evento(tipo: Any) -> str:
+    if not es_id(TIPO_EVENTO_RE, tipo):
+        raise ErrorAlmacen("tipo de evento inválido")
+    return tipo
 
 
 def _antes_que(fila: dict[str, Any], cursor: tuple[datetime, str]) -> bool:
@@ -1226,6 +1233,25 @@ class EstadoMemoria:
         filas.sort(key=lambda f: f["orden"])
         return copy.deepcopy(filas[:limite])
 
+    async def contar_eventos(self, compra_id: str, tipo: str) -> int:
+        """Cuántos eventos de ese tipo tiene la compra (el tope del historial)."""
+        _id_compra(compra_id)
+        _tipo_evento(tipo)
+        return sum(1 for f in self._eventos.values() if f["compra_id"] == compra_id and f["tipo"] == tipo)
+
+    async def listar_eventos_recientes(
+        self, compra_id: str, limite: int = MAX_EVENTOS_RECIENTES
+    ) -> list[dict[str, Any]]:
+        """Los `limite` eventos más nuevos de la compra, en orden (la
+        explicación: el final de la compra no se pierde)."""
+        _id_compra(compra_id)
+        limite = _entero(limite, "limite", minimo=1)
+        filas = sorted(
+            (f for f in self._eventos.values() if f["compra_id"] == compra_id),
+            key=lambda f: f["orden"],
+        )
+        return copy.deepcopy(filas[-limite:])
+
     # -- entregas de webhooks y su cola (004) ---------------------------------
 
     async def guardar_entrega(self, entrega: EntregaWebhook) -> None:
@@ -1914,6 +1940,40 @@ class EstadoSupabase:
         for fila in filas:
             _entero(fila.get("orden"), "orden", minimo=1)
         return filas
+
+    async def contar_eventos(self, compra_id: str, tipo: str) -> int:
+        """Con `count=exact` y `limit=1` (no baja las filas)."""
+        respuesta = await self._pedir(
+            "GET", TABLA_EVENTOS,
+            params={"compra_id": f"eq.{_id_compra(compra_id)}", "tipo": f"eq.{_tipo_evento(tipo)}",
+                    "select": "id", "limit": "1"},
+            prefer="count=exact",
+        )
+        return self._total(respuesta, "GET gw_eventos")
+
+    async def listar_eventos_recientes(
+        self, compra_id: str, limite: int = MAX_EVENTOS_RECIENTES
+    ) -> list[dict[str, Any]]:
+        """De a páginas, del más nuevo al más viejo (`orden.desc`, `orden=lt.`),
+        hasta `limite`; se devuelven en orden."""
+        compra_id = _id_compra(compra_id)
+        limite = _entero(limite, "limite", minimo=1)
+        filas: list[dict[str, Any]] = []
+        antes: int | None = None
+        while len(filas) < limite:
+            pagina_limite = min(LIMITE_LISTADO_MAXIMO, limite - len(filas))
+            params = {"compra_id": f"eq.{compra_id}", "order": "orden.desc",
+                      "limit": str(pagina_limite), "select": "*"}
+            if antes is not None:
+                params["orden"] = f"lt.{antes}"
+            pagina = await self._filas(TABLA_EVENTOS, params)
+            for fila in pagina:
+                _entero(fila.get("orden"), "orden", minimo=1)
+            filas.extend(pagina)
+            if len(pagina) < pagina_limite:
+                break
+            antes = pagina[-1]["orden"]
+        return list(reversed(filas))
 
     # -- entregas de webhooks y su cola (004) -----------------------------------
 

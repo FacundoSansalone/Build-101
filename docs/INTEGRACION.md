@@ -604,8 +604,11 @@ no es tuya):
   descripciones, `item_label`, mensajes), ni un id que escribió él, ni el
   `motivo` del Guard. Mostralos tal cual en tu panel (como texto, no HTML).
 - `etapa` es una de `pedido`, `contexto`, `busqueda`, `ofertas`,
-  `seguridad`, `intencion`, `checkout`, `verificacion`, `aprobacion` y
-  `resultado`. La línea de tiempo sale del historial de eventos de la compra;
+  `seguridad`, `intencion`, `checkout`, `verificacion`, `aprobacion`,
+  `resultado` y `omitido` (una marca: "Omitimos N pasos del medio"). Como
+  mucho 200 entradas, con el principio y el final de la compra; las
+  búsquedas y ofertas se guardan hasta 20 por compra y se leen los últimos
+  1000 eventos. La línea de tiempo sale del historial de eventos de la compra;
   si el operador corre una sola instancia con Supabase, puede traer solo la
   creación (el resultado y los chequeos salen igual).
 - `chequeos` son los del último veredicto, del más grave al menos. `recibo`

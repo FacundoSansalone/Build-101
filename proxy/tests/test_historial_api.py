@@ -389,7 +389,7 @@ async def test_explicacion_con_varias_instancias_lee_el_historial_de_la_base(con
 
 async def test_si_el_historial_no_se_puede_leer_es_503(config_gw):
     class SinEventos(EstadoMemoria):
-        async def listar_eventos(self, *args, **kwargs):
+        async def listar_eventos_recientes(self, *args, **kwargs):
             from proxy.tipos_gateway import ErrorAlmacen
 
             raise ErrorAlmacen("no responde")

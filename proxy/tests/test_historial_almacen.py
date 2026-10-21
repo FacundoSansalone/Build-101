@@ -293,3 +293,32 @@ def test_aplicar_migraciones_aplica_005_despues_de_004():
 
     migraciones = _script("aplicar_migraciones").MIGRACIONES
     assert migraciones == ("003_gateway.sql", "004_serverless.sql", "005_historial.sql")
+
+
+# -- eventos: cuántos de un tipo y los más nuevos ---------------------------------------
+
+
+async def test_contar_eventos_y_los_mas_nuevos(almacen_y_base):
+    almacen, _ = almacen_y_base
+    for compra in (cmp(1), cmp(2)):
+        await almacen.guardar_compra(fila_compra(compra))
+    for n in range(450):
+        tipo = "busqueda_enviada" if n % 3 == 0 else "reenviado"
+        evento = Evento(id=f"evt-{n:04d}", ts=AHORA + timedelta(seconds=n), contexto_id=None,
+                        escenario=None, guard_activo=True, tipo=tipo, datos={})
+        await almacen.guardar_evento(fila_evento(evento, integrador_id="acme", compra_id=cmp(1)))
+    await almacen.guardar_evento(fila_evento(
+        Evento(id="evt-otra", ts=AHORA, guard_activo=True, tipo="busqueda_enviada", datos={}),
+        integrador_id="acme", compra_id=cmp(2)))
+    assert await almacen.contar_eventos(cmp(1), "busqueda_enviada") == 150
+    assert await almacen.contar_eventos(cmp(1), "veredicto") == 0
+    assert await almacen.contar_eventos(cmp(2), "busqueda_enviada") == 1
+    recientes = await almacen.listar_eventos_recientes(cmp(1), limite=250)
+    # Los 250 más nuevos, en orden (no los más viejos).
+    assert [f["id"] for f in recientes] == [f"evt-{n:04d}" for n in range(200, 450)]
+    assert len(await almacen.listar_eventos_recientes(cmp(1), limite=1000)) == 450
+    assert await almacen.listar_eventos_recientes(cmp(3)) == []
+    with pytest.raises(ErrorAlmacen):
+        await almacen.contar_eventos(cmp(1), "tipo raro;")
+    with pytest.raises(ErrorAlmacen):
+        await almacen.listar_eventos_recientes("cmp-1&x")

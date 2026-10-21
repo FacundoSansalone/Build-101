@@ -210,3 +210,26 @@ async def test_un_checkout_que_el_proxy_no_pudo_evaluar_queda_en_la_compra(confi
     (bloqueado,) = [f for f in await almacen.listar_eventos(compra_id) if f["tipo"] == "bloqueado"]
     assert bloqueado["datos"]["sin_veredicto"] is True
     assert bloqueado["datos"]["motivo"].startswith("No se pudo evaluar el checkout:")
+
+
+async def test_las_busquedas_de_una_compra_tienen_tope_en_el_historial(config_gw, monkeypatch):
+    """Un agente que busca sin parar no hace crecer el historial sin límite:
+    `busqueda_enviada` y `ofertas_recibidas` se guardan hasta
+    `MAX_EVENTOS_REPETIDOS` por compra; el resto (como `reenviado`), siempre."""
+    from proxy import app as modulo_app
+
+    monkeypatch.setattr(modulo_app, "MAX_EVENTOS_REPETIDOS", 3)
+    almacen = EstadoMemoria()
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], almacen=almacen)
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(c))["compra_id"]
+        contexto = None
+        for _ in range(6):
+            resp = await buscar(c, compra_id, contexto=contexto)
+            contexto = resp.json()["result"]["contextId"]
+            await mundo.esperar_fondo()
+        await checkout(c, compra_id, contexto, "cart_1")
+    await mundo.esperar_fondo()
+    tipos = [f["tipo"] for f in await almacen.listar_eventos(compra_id)]
+    assert tipos.count("busqueda_enviada") == 3 and tipos.count("ofertas_recibidas") == 3
+    assert tipos.count("reenviado") >= 6 and "veredicto" in tipos

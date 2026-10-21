@@ -92,9 +92,9 @@ ESPERA_RESOLUCION_COMPARTIDA_S = 3.0
 LOTE_ESCANEO = 200
 MAX_ESCANEO_LISTADO = 1000
 # `/v1/resumen` cuenta como mucho estas compras del período (si hay más, lo
-# dice con `completo: false`) y la explicación lee como mucho estos eventos.
+# dice con `completo: false`). La explicación lee los últimos
+# `explicacion.MAX_EVENTOS` eventos de la compra.
 MAX_COMPRAS_RESUMEN = 5000
-MAX_EVENTOS_EXPLICACION = 1000
 # `/v1/filtrar` y `/v1/evaluar` corren en los hilos del proxy (el pool del
 # filtro y el del LLM/fabricante), los mismos que usa todo el tráfico: un
 # integrador con muchas a la vez dejaba sin hilos al filtro de los demás (que
@@ -358,7 +358,7 @@ class NucleoProxy:
         compra = await self._compra_de(integrador, compra_id)
         foto = await self._foto(compra)
         try:
-            eventos = await self.proxy.eventos_de_compra(compra.id, MAX_EVENTOS_EXPLICACION)
+            eventos = await self.proxy.eventos_de_compra(compra.id, explicacion.MAX_EVENTOS)
         except ErrorAlmacen as e:
             logger.error("No se pudo leer el historial de la compra %s: %s", compra.id, e)
             raise _no_disponible() from None
