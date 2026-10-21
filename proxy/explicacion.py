@@ -1008,7 +1008,9 @@ def _cambios(datos: dict[str, Any]) -> str:
     return _y(partes[:5])
 
 
-def _texto_evento(evento: dict[str, Any]) -> tuple[str, str] | None:
+def _texto_evento(evento: dict[str, Any], *, hubo_ofertas: bool = False) -> tuple[str, str] | None:
+    """`hubo_ofertas`: la búsqueda de este reenvío trajo ofertas (lo sabe
+    `linea_de_tiempo`)."""
     tipo, datos = evento["tipo"], evento["datos"]
     if tipo == "pedido_detectado":
         return "contexto", "Te preguntamos para qué es la compra."
@@ -1064,7 +1066,9 @@ def _texto_evento(evento: dict[str, Any]) -> tuple[str, str] | None:
                 return "resultado", "Con la aprobación, le pasamos el checkout a tu agente para que lo firme."
             return "resultado", "Le pasamos el checkout a tu agente para que lo firme."
         if metodo == "find_products":
-            return "ofertas", "Le pasamos las ofertas a tu agente."
+            if hubo_ofertas:
+                return "ofertas", "Le pasamos las ofertas a tu agente."
+            return "ofertas", "Le pasamos la respuesta a tu agente."
         return None
     if tipo == "bloqueado":
         return _texto_bloqueado(datos)
@@ -1092,8 +1096,19 @@ def linea_de_tiempo(vista: dict[str, Any], eventos: list[dict[str, Any]]) -> lis
         for momento in [_fecha_hora(aprobacion.get("creada"))] if momento is not None
     )
     texto_aprobacion = "Una persona de tu equipo aprobó el checkout retenido."
+    # ¿La búsqueda en curso trajo ofertas? Lo dice su `ofertas_recibidas`; sin
+    # él (una búsqueda sin ofertas que cuenten, o el historial ya no guarda más
+    # búsquedas) el reenvío dice "la respuesta".
+    hubo_ofertas = False
     for evento in eventos:
-        contado = _texto_evento(evento)
+        tipo = evento["tipo"]
+        if tipo == "busqueda_enviada":
+            hubo_ofertas = False
+        elif tipo == "ofertas_recibidas":
+            hubo_ofertas = evento["datos"].get("ofertas") != 0
+        contado = _texto_evento(evento, hubo_ofertas=hubo_ofertas)
+        if tipo == "reenviado" and evento["datos"].get("metodo") == "find_products":
+            hubo_ofertas = False
         if contado is None:
             continue
         while aprobaciones and aprobaciones[0] <= evento["ts"]:

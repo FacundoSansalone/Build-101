@@ -822,6 +822,31 @@ def test_la_linea_de_tiempo_va_en_el_orden_del_historial():
     assert linea[-1]["ts"] == (CREADA + timedelta(minutes=1)).isoformat()
 
 
+def test_el_reenvio_de_una_busqueda_dice_ofertas_solo_si_las_hubo():
+    """"Le pasamos las ofertas" solo si esa búsqueda trajo ofertas; sin
+    ofertas (o sin saberlo: el historial ya no guarda más búsquedas), "la
+    respuesta"."""
+    def ofertas(n: int, orden: int) -> dict[str, Any]:
+        carts = [{"cart_id": f"cart_{i}", "item_label": "x", "amount": 1.0, "currency": "USD"}
+                 for i in range(n)]
+        return _fila("ofertas_recibidas", {"carts": carts, "offer_details": []}, minutos=1,
+                     orden=orden)
+
+    def reenviado(orden: int) -> dict[str, Any]:
+        return _fila("reenviado", {"metodo": "find_products"}, minutos=1, orden=orden)
+
+    def busqueda(orden: int) -> dict[str, Any]:
+        return _fila("busqueda_enviada", {"catalog_search": "x"}, minutos=1, orden=orden)
+
+    eventos = [busqueda(1), ofertas(0, 2), reenviado(3),
+               busqueda(4), ofertas(4, 5), reenviado(6),
+               reenviado(7)]
+    textos = [e["texto"] for e in _explicar(vista(), eventos)["linea_de_tiempo"]
+              if e["texto"].startswith("Le pasamos")]
+    assert textos == ["Le pasamos la respuesta a tu agente.", "Le pasamos las ofertas a tu agente.",
+                      "Le pasamos la respuesta a tu agente."]
+
+
 def test_la_aprobacion_de_una_persona_va_en_su_momento_entre_los_eventos():
     eventos = [
         _fila("bloqueado", {"status": "escalar", "requiere_aprobacion": True}, minutos=4, orden=1),
