@@ -18,6 +18,9 @@
 #   DASHBOARD_PUBLIC_ORIGINS  deploy: https://<dominio público> del panel. Si
 #                             está, el panel escucha en 0.0.0.0.
 #   DASHBOARD_EXTRA_HOSTS     deploy: Host extra si el túnel lo reescribe.
+#   DASHBOARD_SOLO_LOOPBACK   1: el panel publicado escucha igual en
+#                             127.0.0.1, detrás de un enrutador en la misma
+#                             máquina (deploy/railway/arrancar.sh).
 #   GUARD_FILTRO              filtro del proxy (filtro:filtrar)
 #   FILTRO_SOLO_HEURISTICAS   1 por defecto: con el modelo, el filtro corta el
 #                             desafío OTP del comercio honesto (DEMO.md)
@@ -206,7 +209,13 @@ fi
 
 echo "-> dashboard :8020"
 if [ -n "${DASHBOARD_PUBLIC_ORIGINS:-}" ]; then
-  export DASHBOARD_HOST=0.0.0.0 DASHBOARD_ALLOW_REMOTE=1
+  if [ "${DASHBOARD_SOLO_LOOPBACK:-0}" = 1 ]; then
+    # Railway: un enrutador en la misma máquina es la única puerta. Sigue
+    # publicado (dominio público), así que igual pide la contraseña.
+    export DASHBOARD_HOST=127.0.0.1
+  else
+    export DASHBOARD_HOST=0.0.0.0 DASHBOARD_ALLOW_REMOTE=1
+  fi
 fi
 lanzar "dashboard" "$LOG_DIR/dashboard.log" \
   env PYTHONUTF8=1 PYTHONPATH=".$SEP$PYTHONPATH" "$PY" -m dashboard

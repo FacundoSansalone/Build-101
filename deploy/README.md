@@ -13,7 +13,8 @@ para integradores externos. Solo con un archivo de claves: ver
 |---|---|
 | `start_all.sh [escenario]` | Levanta todo en esta máquina con el agente pasando por el proxy, espera a que responda y, si un proceso muere, apaga todo. Logs en `.logs/`. Escenario por defecto `general` (el comercio general: cualquier pedido, cualquier día). Funciona en Linux, macOS y Windows con Git Bash. |
 | `tenki.sh [escenario]` | Crea una VM en Tenki Sandbox, sube el código y el `.env`, instala dependencias, publica el :8020 (y el :8030 si hay archivo de claves) y corre `start_all.sh` adentro. |
-| `vercel/` | El **motor solo** (gateway, filtro, intención y Guard) en Vercel, con el estado en Supabase; la simulación queda en tu máquina detrás de un túnel. Ver [Vercel](#vercel-solo-el-motor). |
+| `railway/` | La demo entera **siempre prendida** en un servicio de Railway: un contenedor con `start_all.sh` adentro y el enrutador del túnel como única puerta (el comercio con prefijo secreto para el motor de Vercel, el resto al panel con contraseña). Ver [Railway](#railway-siempre-prendida). |
+| `vercel/` | El **motor solo** (gateway, filtro, intención y Guard) en Vercel, con el estado en Supabase; la simulación queda detrás de un túnel desde tu máquina o en Railway. Ver [Vercel](#vercel-solo-el-motor). |
 
 ## Local
 
@@ -93,6 +94,44 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
   `host_no_permitido`, agregá el host que aparece en
   `.logs/dashboard.log` con `DASHBOARD_EXTRA_HOSTS`.
 
+## Railway (siempre prendida)
+
+La demo entera en **un servicio de Railway**, prendida siempre, sin depender
+de ninguna máquina: lo que usa el motor de Vercel (el comercio, el procesador
+de pagos, el proveedor de credenciales y el catálogo) y la demo `/demo` (el
+agente de compras, el proxy y el panel). Es un solo contenedor
+([`railway/Dockerfile`](railway/Dockerfile)) que corre `start_all.sh general`
+con todo en `127.0.0.1`, como acá; Railway publica un solo puerto (`PORT`)
+y ahí escucha solo el enrutador de `vercel/tunel_router.py`
+([`railway/arrancar.sh`](railway/arrancar.sh)):
+
+| Ruta | Va a |
+|---|---|
+| `/<TUNEL_PREFIJO>/a2a/*` | el Merchant Agent (:8001): lo que usa el motor de Vercel |
+| `/<TUNEL_PREFIJO>/…` | el catálogo público (:8011) |
+| `/salud` | 200 si el comercio, el catálogo y el panel contestan (el healthcheck de Railway); no dice qué falta |
+| todo lo demás | el panel (:8020, `/demo`), con contraseña (`DASHBOARD_ACCESS_TOKEN`, HTTP Basic) |
+
+La dev-ui de ADK, el proxy local, los otros agentes y el panel escuchan solo
+en `127.0.0.1` (el panel con `DASHBOARD_SOLO_LOOPBACK=1`). Las variables
+obligatorias son `GOOGLE_API_KEY`, `DASHBOARD_ACCESS_TOKEN` (16 o más),
+`TUNEL_PREFIJO` (el de `.temp-db/vercel/TUNEL_PREFIJO.txt`, el mismo que usa
+el motor) y `DASHBOARD_PUBLIC_ORIGINS` (`https://<dominio de Railway>`);
+`arrancar.sh` las valida sin mostrarlas. Lo que nunca entra a la imagen lo
+fija [`.dockerignore`](../.dockerignore) y lo verifica
+`proxy/tests/test_despliegue_railway.py`.
+
+```sh
+npx @railway/cli login && npx @railway/cli init --name kaiai-demo   # una vez (ver railway/README.md)
+npx @railway/cli up --detach                                          # cada deploy
+bash deploy/railway/apuntar_vercel.sh <servicio>.up.railway.app       # una vez: el motor de Vercel → Railway
+```
+
+Todo el paso a paso (el archivo de configuración en el panel de Railway, el
+dominio, las variables y de dónde sale cada una, el deploy, las pruebas, los
+logs y el costo, ~1 GB de RAM, unos US$10-15 al mes) está en
+[`railway/README.md`](railway/README.md).
+
 ## Variables
 
 | Variable | Default | Para qué |
@@ -101,6 +140,7 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
 | `DASHBOARD_EXTRA_HOSTS` | — | `Host` extra (si el túnel lo reescribe). |
 | `DASHBOARD_ACCESS_TOKEN` | — | Contraseña del panel publicado (HTTP Basic, usuario cualquiera, al menos 16 caracteres). Con `DASHBOARD_PUBLIC_ORIGINS`, `DASHBOARD_EXTRA_HOSTS` o el panel escuchando en la red es **obligatoria**: sin ella no arranca. `tenki.sh` genera una si no hay. En local no se usa. |
 | `DASHBOARD_PERMITIR_SIN_CLAVE` | `0` | `1` para publicar el panel sin contraseña igual (no recomendado). |
+| `DASHBOARD_SOLO_LOOPBACK` | `0` | `1`: el panel publicado escucha igual en `127.0.0.1`, detrás de un enrutador en la misma máquina. Lo fija `railway/arrancar.sh`. |
 | `GUARD_FILTRO` | `filtro:filtrar` | Filtro del proxy. |
 | `FILTRO_SOLO_HEURISTICAS` | `1` | Con el modelo, el filtro corta el desafío OTP del comercio honesto ([DEMO.md](../docs/DEMO.md)). |
 | `DEMO_PAUSA_AUTO_S` | `8` | Espacia las respuestas automáticas de `/demo` (plan gratuito de Gemini). `0` con una clave paga. |
@@ -205,7 +245,7 @@ Otra forma de publicar el gateway: **solo el motor** en Vercel (plan Hobby:
 300 s por pedido, varias instancias sin memoria compartida), con el estado en
 Supabase (migraciones 003 y 004). La simulación (`world/`, `dashboard/`)
 sigue en tu máquina y el motor le habla por un túnel (`vercel/tunel_router.py`
-y ngrok); los agentes de compras son externos y entran como integradores por
+y ngrok), o queda fija en [Railway](#railway-siempre-prendida); los agentes de compras son externos y entran como integradores por
 `/v1` y `/a2a/m/{comercio}`. No reemplaza a `start_all.sh` ni a `tenki.sh`:
 la demo de `/demo` sigue igual.
 

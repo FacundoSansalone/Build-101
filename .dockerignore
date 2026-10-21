@@ -1,0 +1,64 @@
+# Qué NO entra al contexto de deploy/railway/Dockerfile (la raíz del repo).
+#
+# CRÍTICO: el contexto es la carpeta tal cual está en disco (`railway up`
+# sube lo que no ignora .gitignore; `docker build .`, todo). El .env, la
+# clave del Guard (.temp-db/) y los secretos de Vercel (.temp-db/vercel/)
+# están ahí. Lo verifica proxy/tests/test_despliegue_railway.py.
+#
+# Semántica de Docker, no la de .gitignore: cada patrón es relativo a la
+# raíz (sin `**/` no baja a las subcarpetas) y gana el último que coincide.
+#
+# Tres capas:
+#  1. Lista blanca en la raíz: se deja afuera todo y se vuelve a sumar solo
+#     lo que corre en el contenedor. Un archivo nuevo en la raíz (un secreto,
+#     un volcado) no entra.
+#  2. Claves y certificados en cualquier nivel, salvo los certificados
+#     públicos del sample de AP2 (versionados en git).
+#  3. Al final, lo que nunca entra: ninguna excepción lo vuelve a sumar.
+
+# -- 1. lista blanca en la raíz -----------------------------------------------
+*
+!contracts
+!guard
+!filtro
+!intencion
+!decisiones
+!taxonomia
+!fabricante
+!proxy
+!dashboard
+!world
+!deploy
+!fixtures
+
+# -- 2. claves y certificados ---------------------------------------------------
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+# La raíz de confianza de las SD-JWT del sample (pública).
+!world/ap2/code/samples/certs/*_cert_sdjwt.pem
+
+# -- 3. lo que nunca entra ------------------------------------------------------
+# Secretos y estado local.
+**/.env
+**/.env.*
+**/.temp-db
+**/.logs
+**/guard_api_token
+**/*_key*
+# Resultados del benchmark (results/ y world/ap2/results/).
+**/results
+# Venvs (el del contenedor lo arma el Dockerfile) y cachés.
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+# Git y las herramientas.
+**/.git
+**/.vercel
+**/.claude
+**/.DS_Store
