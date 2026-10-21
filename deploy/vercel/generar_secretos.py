@@ -18,6 +18,12 @@
   saca).
 - `vercel.env`: todo lo de arriba que va al servidor, en formato `.env`, para
   `local_multi.py --env`. La clave del integrador **no** va (es del cliente).
+- `--clave-lectura <id>` (va solo): una clave **de solo lectura** para un
+  integrador que ya está en `GATEWAY_CLAVES_JSON.json` (la del panel web: GET
+  en `/v1`, no sirve para comprar). Escribe la clave en
+  `clave_lectura_<id>.txt` y agrega su entrada (`"permisos": ["lectura"]`)
+  al registro y a `vercel.env`; lo demás del registro queda igual. Después
+  hay que actualizar `GATEWAY_CLAVES_JSON` en Vercel y redesplegar.
 
 Por defecto escribe en `.temp-db/vercel/` (ignorado por git y por
 `.vercelignore`), con permisos 600, y no pisa nada salvo `--forzar`: perder la
@@ -25,6 +31,7 @@ clave del recibo invalida la clave pública que ya tienen los integradores.
 
     world/ap2/.venv/Scripts/python deploy/vercel/generar_secretos.py \\
         --integrador acme --dominio <tu-dominio>.ngrok-free.app
+    world/ap2/.venv/Scripts/python deploy/vercel/generar_secretos.py --clave-lectura acme
 
 Para cargar cada una en Vercel (lee el valor del archivo, sin pasar por la
 historia del shell): `npx vercel env add GATEWAY_CLAVES_JSON production <
@@ -89,6 +96,28 @@ class Escritor:
     def existentes(self, nombres: list[str]) -> list[Path]:
         return [self.carpeta / n for n in nombres if (self.carpeta / n).exists()]
 
+    def reemplazar(self, nombre: str, contenido: str) -> Path:
+        """Pisa un archivo que ya existe a propósito (el registro, al sumarle
+        una clave): escribe uno temporal con permisos 600 y lo cambia de un
+        golpe, así nunca queda a medio escribir."""
+        ruta = self.carpeta / nombre
+        temporal = self.carpeta / f".{nombre}.{secrets.token_hex(4)}.tmp"
+        banderas = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        descriptor = os.open(temporal, banderas, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb") as archivo:
+                archivo.write(contenido.encode("utf-8"))
+            os.replace(temporal, ruta)
+        except BaseException:
+            temporal.unlink(missing_ok=True)
+            raise
+        try:
+            os.chmod(ruta, 0o600)
+        except OSError:
+            pass
+        self.escritos.append(ruta)
+        return ruta
+
 
 def clave_del_recibo(kid: str) -> tuple[bytes, dict[str, Any]]:
     """(PEM PKCS8 de la clave privada, JWK público)."""
@@ -126,6 +155,64 @@ def registro_integradores(
         secreto = PREFIJO_SECRETO_WEBHOOK + secrets.token_urlsafe(32)
         item["webhook"] = {"url": webhook_url, "secreto_env": secreto_env}
     return {"integradores": [item]}, clave, secreto_env, secreto
+
+
+class RegistroInvalido(ValueError):
+    """El GATEWAY_CLAVES_JSON.json que hay no sirve (el mensaje no trae hashes)."""
+
+
+def agregar_clave_lectura(registro: Any, integrador: str) -> tuple[dict[str, Any], str]:
+    """(registro con una clave de solo lectura más para `integrador`, clave
+    psg_). No toca nada más del registro. `RegistroInvalido` si el registro
+    no sirve o el integrador no está."""
+    import copy
+
+    from proxy.claves import PERMISO_LECTURA, generar_clave
+
+    validar_registro(registro)
+    nuevo = copy.deepcopy(registro)
+    item = next((i for i in nuevo["integradores"] if i.get("id") == integrador), None)
+    if item is None:
+        raise RegistroInvalido(f"el integrador {integrador} no está en el registro")
+    clave, kid, sha = generar_clave()
+    item.setdefault("claves", []).append({
+        "kid": kid, "sha256": sha, "creada": date.today().isoformat(), "activa": True,
+        "permisos": [PERMISO_LECTURA],
+    })
+    validar_registro(nuevo)
+    return nuevo, clave
+
+
+def validar_registro(registro: Any) -> None:
+    """Lo que validaría el motor al arrancar (`RegistroIntegradores`), sin los
+    secretos de los webhooks: esos están en Vercel, no acá; cada `secreto_env`
+    se cubre con un valor de relleno."""
+    from proxy.claves import MIN_SECRETO_WEBHOOK, RegistroIntegradores
+    from proxy.tipos_gateway import ConfigInvalida
+
+    relleno: dict[str, str] = {}
+    if isinstance(registro, dict) and isinstance(registro.get("integradores"), list):
+        for item in registro["integradores"]:
+            webhook = item.get("webhook") if isinstance(item, dict) else None
+            if isinstance(webhook, dict) and isinstance(webhook.get("secreto_env"), str):
+                relleno[webhook["secreto_env"]] = "x" * MIN_SECRETO_WEBHOOK
+    try:
+        RegistroIntegradores.desde_dict(registro, relleno)
+    except ConfigInvalida as e:
+        raise RegistroInvalido(str(e)) from None
+
+
+def _con_linea_env(texto: str, nombre: str, valor: str) -> str:
+    """`texto` (.env) con la línea `nombre=` cambiada por la nueva (o agregada)."""
+    nueva = _linea_env(nombre, valor)
+    lineas = texto.splitlines()
+    indices = [n for n, linea in enumerate(lineas) if linea.startswith(f"{nombre}=")]
+    if indices:
+        lineas[indices[0]] = nueva
+        lineas = [linea for n, linea in enumerate(lineas) if n not in indices[1:]]
+    else:
+        lineas.append(nueva)
+    return "\n".join(lineas) + "\n"
 
 
 def nombre_secreto_webhook(integrador: str) -> str:
@@ -195,13 +282,84 @@ def parser() -> argparse.ArgumentParser:
                    help="con --dominio: sin prefijo secreto en las rutas del túnel")
     p.add_argument("--sin-recibo", action="store_true", help="no generar la clave del recibo")
     p.add_argument("--sin-integrador", action="store_true", help="no generar la clave de integrador")
+    p.add_argument("--clave-lectura", metavar="INTEGRADOR", default=None,
+                   help="solo esto: una clave de solo lectura (panel web) para un integrador que ya "
+                   "está en GATEWAY_CLAVES_JSON.json; la agrega al registro y a vercel.env")
     p.add_argument("--forzar", action="store_true",
-                   help="pisar archivos existentes (¡la clave del recibo cambia!)")
+                   help="pisar archivos existentes (¡la clave del recibo cambia!; con "
+                   "--clave-lectura, otra clave de lectura más)")
     return p
+
+
+# Opciones que no tienen sentido con --clave-lectura (no genera nada de eso).
+_SIN_CLAVE_LECTURA = (("dominio", "--dominio"), ("webhook_url", "--webhook-url"),
+                      ("comercio", "--comercio"), ("nombre", "--nombre"))
+
+
+def _clave_lectura(args: argparse.Namespace) -> int:
+    """`--clave-lectura <id>`: suma una clave de solo lectura al registro que
+    ya está en la carpeta. Valida todo antes de escribir; la clave va primero
+    a su archivo y después el registro (si algo se corta en el medio, queda a
+    lo sumo una clave sin entrada, que no sirve para nada)."""
+    integrador = args.clave_lectura
+    usadas = [opcion for atributo, opcion in _SIN_CLAVE_LECTURA if getattr(args, atributo)]
+    if usadas:
+        print(f"--clave-lectura va solo (con --carpeta y --forzar): sacá {', '.join(usadas)}",
+              file=sys.stderr)
+        return 2
+    if not _ID_RE.fullmatch(integrador):
+        print("--clave-lectura: minúsculas, dígitos, '_' o '-', hasta 40", file=sys.stderr)
+        return 2
+    carpeta = args.carpeta if args.carpeta.is_absolute() else Path.cwd() / args.carpeta
+    registro_path = carpeta / "GATEWAY_CLAVES_JSON.json"
+    try:
+        registro = json.loads(registro_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print(f"No está {registro_path}: generá primero el integrador "
+              "(sin --clave-lectura).", file=sys.stderr)
+        return 2
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        print(f"{registro_path.name} no se puede leer como JSON ({type(e).__name__})",
+              file=sys.stderr)
+        return 2
+    try:
+        nuevo, clave = agregar_clave_lectura(registro, integrador)
+    except RegistroInvalido as e:
+        print(f"{registro_path.name}: {e}", file=sys.stderr)
+        return 2
+
+    _avisar_si_no_ignorada(carpeta)
+    escritor = Escritor(carpeta, forzar=args.forzar)
+    nombre_clave = f"clave_lectura_{integrador}.txt"
+    if not args.forzar and escritor.existentes([nombre_clave]):
+        print(f"Ya existe {carpeta / nombre_clave} (no piso nada). Con --forzar se suma otra "
+              "clave de lectura; la anterior sigue activa en el registro hasta que la des de "
+              "baja (\"activa\": false).", file=sys.stderr)
+        return 1
+    compacto = _compacto(nuevo)
+    escritor.escribir(nombre_clave, clave)
+    escritor.reemplazar(registro_path.name, compacto)
+    entorno_path = carpeta / "vercel.env"
+    if entorno_path.exists():
+        texto = entorno_path.read_text(encoding="utf-8")
+        escritor.reemplazar("vercel.env", _con_linea_env(texto, "GATEWAY_CLAVES_JSON", compacto))
+
+    print(f"Listo. Clave de solo lectura {_enmascarar(clave)} para el integrador {integrador} "
+          "(GET en /v1 para el panel; no sirve para comprar ni para A2A).")
+    print(f"Archivos (permisos 600) en {carpeta}:")
+    for ruta in escritor.escritos:
+        print(f"  {ruta.name}")
+    print("Ningún secreto se imprimió. Para que valga en Vercel, actualizá la variable y "
+          "redesplegá (las claves se leen al arrancar; cambia producción, confirmalo antes):")
+    print(f"  npx vercel env add GATEWAY_CLAVES_JSON production --force < {registro_path}")
+    print("  npx vercel deploy --prod")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    if args.clave_lectura is not None:
+        return _clave_lectura(args)
     comercios = args.comercio or ["merchant_1"]
     if not _KID_RE.fullmatch(args.kid):
         print("--kid: hasta 64 caracteres de [A-Za-z0-9._-]", file=sys.stderr)
