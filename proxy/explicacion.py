@@ -460,6 +460,9 @@ def _texto_evidencia(c: dict[str, Any]) -> str:
         return f"{_mayus(nombre)}: lo que declaró el comercio no coincide con {fuente}{detalle}."
     if caso == "no_declarado":
         return f"{_mayus(nombre)}: el comercio no {pronombre} informó."
+    if caso == "sin_dato":
+        return (f"No pudimos comparar {nombre} con {fuente}: lo que declaró el comercio no se "
+                "puede comparar (otra unidad o un valor ambiguo).")
     return (f"{_mayus(nombre)}: solo {pronombre} declaró el comercio; no hay una fuente "
             f"independiente para verificar{pronombre}.")
 

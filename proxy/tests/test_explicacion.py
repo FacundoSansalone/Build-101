@@ -730,3 +730,13 @@ def test_el_plural_concuerda():
     assert "Los talles coinciden con el catálogo público." in textos
     assert ("Las entregas no cumplen lo que pediste: pediste 10 el 26/10/2026 y lo que declaró "
             "el comercio indica 10 el 30/10/2026.") in textos
+
+
+def test_un_atributo_que_no_se_pudo_comparar_no_acusa():
+    salida = _texto([
+        ch("evidencia", "escalar", "atributo:memoria_ram", esperado={"valor": 16, "unidad": "GB"},
+           observado={"valor": 16, "unidad": "Gb"}, origen="fabricante"),
+    ], status="escalar")
+    assert salida["alertas"] == ["sin_verificar"] and salida["intento_de_estafa"] is False
+    assert ("No pudimos comparar la RAM con el fabricante: lo que declaró el comercio no se puede "
+            "comparar (otra unidad o un valor ambiguo).") in [c["texto"] for c in salida["chequeos"]]

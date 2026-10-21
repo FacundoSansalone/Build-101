@@ -36,6 +36,7 @@ nunca alertan):
 | Qué pasó (`caso`) | alerta |
 |---|---|
 | un dato declarado contradice una fuente independiente (`contradicho`) | `dato_falso` |
+| un atributo que el Guard marcó contradicho pero no pudo comparar (sin unidad, bits contra bytes, miles ambiguos, otra dimensión: `iguales_atributo` da None) | `sin_verificar` (`sin_dato`) |
 | el precio o la moneda que se cobra no coinciden con los publicados (`precio_distinto`) | `precio_distinto` |
 | el checkout firmado no coincide con lo evaluado o no se puede leer (`checkout_distinto`, `checkout_ilegible`, `checkout_comercio_ajeno`) | `checkout_alterado` |
 | no cumple un obligatorio sin contradicción (`no_cumple`, `cantidad_sin_autorizar`, `comercio_no_aprobado`) | `no_cumple` |
@@ -59,7 +60,7 @@ from datetime import date, datetime
 from functools import lru_cache
 from typing import Any, get_args
 
-from contracts import Chequeo, Entrega, Origen
+from contracts import Chequeo, Entrega, Origen, ValorAtributo
 
 # -- alertas -----------------------------------------------------------------
 
@@ -297,14 +298,43 @@ def _es_cobro(c: Chequeo) -> bool:
     return c.campo in ("precio", "moneda") and c.origen == "cart_ap2"
 
 
+@lru_cache(maxsize=1)
+def _iguales_atributo():  # pragma: no cover - trivial
+    from guard.atributos import iguales_atributo
+
+    return iguales_atributo
+
+
+def _atributo_incomparable(c: Chequeo) -> bool:
+    """La evidencia de un atributo que el Guard marcó `contradicho` porque no
+    la pudo comparar: `guard.verificador` contradice cuando
+    `iguales_atributo(declarado, publico)` no da True, también cuando da None
+    ("16" sin unidad contra 16 GB, 16 Gb contra 16 GB, "1,500 g"). Se vuelve a
+    comparar con los `{valor, unidad}` del chequeo: None no es un dato falso."""
+    if c.tipo != "evidencia" or c.resultado != "escalar":
+        return False
+    if not (isinstance(c.campo, str) and c.campo.startswith(PREFIJO_ATRIBUTO)):
+        return False
+    publico, declarado = c.esperado, c.observado
+    forma = {"valor", "unidad"}
+    if not (isinstance(publico, dict) and isinstance(declarado, dict)
+            and set(publico) == forma == set(declarado)):
+        return False
+    try:
+        return _iguales_atributo()(ValorAtributo(**declarado), ValorAtributo(**publico)) is None
+    except Exception:  # noqa: BLE001 - lo que no se puede volver a comparar no acusa a nadie
+        return True
+
+
 def _contradichos(chequeos: list[Chequeo]) -> frozenset[str]:
     """Claves de evidencia contradichas (la evidencia escala solo así), sin
-    las del cobro: un precio sobre el tope sigue siendo "no cumple" aunque
-    además no coincida con el publicado (eso ya es `precio_distinto`)."""
+    las del cobro (un precio sobre el tope sigue siendo "no cumple" aunque
+    además no coincida con el publicado: eso ya es `precio_distinto`) y sin
+    los atributos que no se pudieron comparar."""
     return frozenset(
         c.campo for c in chequeos
         if c.tipo == "evidencia" and c.resultado == "escalar" and isinstance(c.campo, str)
-        and not _es_cobro(c)
+        and not _es_cobro(c) and not _atributo_incomparable(c)
     )
 
 
@@ -387,7 +417,9 @@ def caso_de(c: Chequeo, contradichos: frozenset[str] = frozenset()) -> str:
             return "verificado"
         if resultado == "aviso":
             return "no_declarado" if c.observado is None else "solo_declarado"
-        return "precio_distinto" if _es_cobro(c) else "contradicho"
+        if _es_cobro(c):
+            return "precio_distinto"
+        return "sin_dato" if _atributo_incomparable(c) else "contradicho"
     if tipo in ("cumplimiento", "mandato"):
         if tipo == "mandato" and origen == "ficha":
             return "autorizacion_incompleta" if resultado != "ok" else "cumple"

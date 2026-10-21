@@ -494,3 +494,38 @@ def test_todo_caso_que_devuelve_caso_de_esta_en_casos():
     cuerpo = fuente[fuente.index("def _caso_checkout"):fuente.index("def _chequeos(")]
     devueltos = set(re.findall(r'"([a-z_]+)"', " ".join(re.findall(r"return [^\n]+", cuerpo))))
     assert devueltos - {"ok", "bloquea"} <= alertas.CASOS
+
+
+# -- un atributo que el Guard no pudo comparar no es un dato falso ---------------
+
+
+@pytest.mark.parametrize("declarado, publico", [
+    ({"valor": 16, "unidad": None}, {"valor": 16, "unidad": "GB"}),      # "16" sin unidad
+    ({"valor": 16, "unidad": "Gb"}, {"valor": 16, "unidad": "GB"}),      # bits contra bytes
+    ({"valor": "1,500", "unidad": "g"}, {"valor": 1.5, "unidad": "kg"}),  # miles ambiguos
+])
+def test_un_atributo_que_no_se_pudo_comparar_es_sin_verificar(declarado, publico):
+    """El Guard marca `contradicho` cuando `iguales_atributo` no da True, también
+    cuando da None (no se pueden comparar). Eso no es un dato falso."""
+    chequeos = [
+        ch("cumplimiento", "bloquea", "atributo:memoria_ram", esperado={"valor": 32, "unidad": "GB"},
+           observado=publico, origen="fabricante"),
+        ch("evidencia", "escalar", "atributo:memoria_ram", esperado=publico, observado=declarado,
+           origen="fabricante"),
+    ]
+    casos = [c["caso"] for c in chequeos_detalle(chequeos)]
+    assert casos == ["no_cumple", "sin_dato"]
+    assert alertas_de(chequeos) == ["no_cumple", "sin_verificar"]
+    assert not es_intento_de_estafa(alertas_de(chequeos))
+
+
+def test_un_atributo_que_si_se_compara_y_no_coincide_es_dato_falso():
+    chequeos = [ch("evidencia", "escalar", "atributo:memoria_ram",
+                   esperado={"valor": 8, "unidad": "GB"}, observado={"valor": 16, "unidad": "GB"},
+                   origen="fabricante")]
+    assert alertas_de(chequeos) == ["dato_falso"]
+    # Otra dimensión (16 GB contra 2 kg) tampoco se puede comparar.
+    distinta = [ch("evidencia", "escalar", "atributo:memoria_ram",
+                   esperado={"valor": 2, "unidad": "kg"}, observado={"valor": 16, "unidad": "GB"},
+                   origen="fabricante")]
+    assert alertas_de(distinta) == ["sin_verificar"]
