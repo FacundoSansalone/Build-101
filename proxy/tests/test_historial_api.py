@@ -471,8 +471,10 @@ def gateway_resultados(request, config_gw):
 
 async def _una_de_cada_resultado(mundo, c: httpx.AsyncClient) -> dict[str, str]:
     """Una compra por resultado, de la más vieja a la más nueva: en curso,
-    aprobada, frenada, retenida, aprobada por una persona y cortada por
-    seguridad (la única con intento de estafa)."""
+    aprobada, frenada, retenida, aprobada por una persona, sin ofertas y
+    cortada por seguridad (la única con intento de estafa)."""
+    from proxy.tests.test_sin_resultados import sin_resultados
+
     ids = {"en_curso": (await crear_compra(c, referencia="r-en_curso"))["compra_id"]}
     for nombre, cart in (("aprobada", "cart_1"), ("frenada", "cart_4"), ("retenida", "cart_2"),
                          ("aprobada_por_persona", "cart_3")):
@@ -485,6 +487,10 @@ async def _una_de_cada_resultado(mundo, c: httpx.AsyncClient) -> dict[str, str]:
             assert r.status_code == 201, r.text
             await checkout(c, compra, contexto, cart)
         ids[nombre] = compra
+    ids["sin_ofertas"] = (await crear_compra(c, referencia="r-sin_ofertas"))["compra_id"]
+    mundo.merchant.manipular = sin_resultados
+    await buscar(c, ids["sin_ofertas"], escenario="baseline")
+    mundo.merchant.manipular = None
     ids["cortada"] = (await crear_compra(c, referencia="r-cortada"))["compra_id"]
     await buscar(c, ids["cortada"], escenario="B")
     await mundo.esperar_fondo()
@@ -517,12 +523,13 @@ async def test_el_listado_filtra_por_resultado_y_por_intento_de_estafa(gateway_r
     assert {v["compra_id"]: v["resultado"] for v in todas} == {
         ids["en_curso"]: "en_curso", ids["aprobada"]: "aprobada", ids["frenada"]: "frenada",
         ids["retenida"]: "retenida", ids["aprobada_por_persona"]: "aprobada",
-        ids["cortada"]: "cortada_por_seguridad",
+        ids["sin_ofertas"]: "sin_ofertas", ids["cortada"]: "cortada_por_seguridad",
     }
     assert por["aprobada"] == [ids["aprobada_por_persona"], ids["aprobada"]]
     assert por["frenada"] == [ids["frenada"]] and por["retenida"] == [ids["retenida"]]
     assert por["en_curso"] == [ids["en_curso"]]
     assert por["cortada_por_seguridad"] == [ids["cortada"]]
+    assert por["sin_ofertas"] == [ids["sin_ofertas"]]
     assert por["vencida"] == [] and por["sin_compra"] == []
     assert estafa == [ids["cortada"]]
     assert sin_estafa == [v["compra_id"] for v in todas if v["compra_id"] != ids["cortada"]]

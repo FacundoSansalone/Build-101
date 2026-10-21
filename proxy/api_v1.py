@@ -853,7 +853,7 @@ def rutas_v1(
     def resumen_de(foto: FotoCompra, vista_compra: dict[str, Any], ahora: datetime) -> dict[str, Any]:
         return explicacion.resumen_de_compra(
             vista_compra, ahora=ahora, ttl_s=nucleo.ttl_compra_s, corte=foto.corte,
-            bloqueo_proxy=foto.bloqueo_proxy,
+            bloqueo_proxy=foto.bloqueo_proxy, sin_ofertas=foto.sin_ofertas,
         )
 
     def vista_listada(foto: FotoCompra, ahora: datetime) -> dict[str, Any]:
@@ -895,7 +895,7 @@ def rutas_v1(
         foto, eventos = await nucleo.explicacion_compra(integrador, _compra_id(request))
         return _json(explicacion.explicar(
             vista(foto), eventos, ahora=datetime.now(timezone.utc), ttl_s=nucleo.ttl_compra_s,
-            corte=foto.corte, bloqueo_proxy=foto.bloqueo_proxy,
+            corte=foto.corte, bloqueo_proxy=foto.bloqueo_proxy, sin_ofertas=foto.sin_ofertas,
         ))
 
     async def resumen(request: Request) -> Response:

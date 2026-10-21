@@ -110,7 +110,7 @@ APROBACION_USADA = {
 
 def test_los_resultados_posibles():
     assert set(RESULTADOS) == {"aprobada", "frenada", "retenida", "cortada_por_seguridad",
-                               "en_curso", "vencida", "sin_compra"}
+                               "en_curso", "vencida", "sin_compra", "sin_ofertas"}
 
 
 @pytest.mark.parametrize("status, resultado", [
@@ -164,6 +164,24 @@ def test_sin_checkout_todavia_en_curso(estado):
 
 def test_vencida():
     assert _resultado(vista("vencida")) == "vencida"
+
+
+def test_sin_ofertas_si_la_ultima_busqueda_volvio_vacia_y_no_hay_checkout():
+    """La marca de la compra (`Compra.sin_ofertas`): el listado la usa sin leer
+    eventos. Con o sin la vida de la compra pasada (se sabe por qué no hubo
+    compra)."""
+    assert _resultado(vista(), sin_ofertas=True) == "sin_ofertas"
+    vieja = vista("negociando", creada=AHORA - timedelta(days=2))
+    assert _resultado(vieja, sin_ofertas=True) == "sin_ofertas"
+    assert _resultado(vista(), sin_ofertas=False) == "en_curso"
+    # Un checkout (veredicto o bloqueo del proxy), un corte o el vencimiento mandan.
+    con = vista(veredictos=[veredicto("aprobado", MANDATO_OK)])
+    assert _resultado(con, sin_ofertas=True) == "aprobada"
+    bloqueo = {"ts": (CREADA + timedelta(minutes=4)).isoformat(), "contexto_id": "ctx-1",
+               "cart_id": "cart_2"}
+    assert _resultado(vista(), sin_ofertas=True, bloqueo_proxy=bloqueo) == "frenada"
+    assert _resultado(vista("bloqueada"), sin_ofertas=True) == "cortada_por_seguridad"
+    assert _resultado(vista("vencida"), sin_ofertas=True) == "vencida"
 
 
 def test_pasada_su_vida_sin_checkout_es_sin_compra():
@@ -322,6 +340,16 @@ def test_vencida_y_sin_compra():
     salida = _explicar(vieja, sin_ofertas)
     assert salida["resultado"] == "sin_compra"
     assert "no tuvo ofertas" in salida["resumen"]
+
+
+def test_sin_ofertas_lo_dice_en_el_resumen():
+    vacia = [_fila("ofertas_recibidas", {"carts": [], "offer_details": []}, minutos=1)]
+    salida = _explicar(vista(), vacia, sin_ofertas=True)
+    assert salida["resultado"] == "sin_ofertas"
+    assert salida["resumen"] == "El comercio no tuvo ofertas para tu pedido: no hubo compra."
+    assert salida["chequeos"] == [] and salida["recibo"] is None and salida["monto"] is None
+    fila = resumen_de_compra(vista(), ahora=AHORA, ttl_s=TTL, sin_ofertas=True)
+    assert fila == {"resultado": "sin_ofertas", "alertas": [], "intento_de_estafa": False}
 
 
 def test_aprobada_por_una_persona():
@@ -736,7 +764,7 @@ def test_resumir_cuenta_por_resultado_alerta_y_moneda():
     assert salida["compras"] == 6
     assert salida["por_resultado"] == {
         "aprobada": 1, "frenada": 4, "retenida": 0, "cortada_por_seguridad": 1,
-        "en_curso": 0, "vencida": 0, "sin_compra": 0,
+        "en_curso": 0, "vencida": 0, "sin_compra": 0, "sin_ofertas": 0,
     }
     assert salida["intentos_de_estafa"] == 2
     assert salida["por_alerta"] == {

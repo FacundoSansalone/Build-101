@@ -622,6 +622,7 @@ puede venir con menos y con `siguiente` (seguí pidiendo).
 | `retenida` | El último quedó en `escalar` y nadie lo aprobó |
 | `cortada_por_seguridad` | El filtro de seguridad cortó la conversación (compra `bloqueada`) |
 | `vencida` | Nadie decidió a tiempo una propuesta |
+| `sin_ofertas` | No hubo checkout y la última búsqueda volvió sin ofertas (si una búsqueda posterior trae ofertas, deja de serlo) |
 | `en_curso` | Todavía no hubo un checkout y la compra está viva |
 | `sin_compra` | Pasaron las 24 h de la compra sin ningún checkout |
 
@@ -694,7 +695,7 @@ fechas, los últimos 30 días hasta el final de hoy, en UTC; hasta 366 días):
 {"desde": "2026-10-01T00:00:00+00:00", "hasta": "2026-11-01T00:00:00+00:00",
  "compras": 42,
  "por_resultado": {"aprobada": 30, "frenada": 6, "retenida": 1, "cortada_por_seguridad": 3,
-                   "en_curso": 2, "vencida": 0, "sin_compra": 0},
+                   "en_curso": 2, "vencida": 0, "sin_compra": 0, "sin_ofertas": 0},
  "intentos_de_estafa": 7,
  "por_alerta": {"manipulacion": 3, "dato_falso": 2, "precio_distinto": 2, "checkout_alterado": 0,
                 "no_cumple": 3, "sin_verificar": 1},

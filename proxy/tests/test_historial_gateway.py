@@ -212,6 +212,35 @@ async def test_un_checkout_que_el_proxy_no_pudo_evaluar_queda_en_la_compra(confi
     assert bloqueado["datos"]["motivo"].startswith("No se pudo evaluar el checkout:")
 
 
+async def test_una_busqueda_sin_ofertas_queda_marcada_en_la_compra(config_gw):
+    """La marca `sin_ofertas` (el listado la usa sin leer eventos): la prende
+    una búsqueda que el comercio terminó sin ofertas y la apaga una posterior
+    que trae ofertas."""
+    from proxy.tests.test_sin_resultados import sin_resultados
+
+    almacen = EstadoMemoria()
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], almacen=almacen)
+    mundo.merchant.manipular = sin_resultados
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(c))["compra_id"]
+        contexto = (await buscar(c, compra_id)).json()["result"]["contextId"]
+        await mundo.esperar_fondo()
+        compra = mundo.proxy.compras.get(compra_id)
+        assert compra.sin_ofertas is True
+        assert (await almacen.cargar_compra(compra_id))["datos"]["sin_ofertas"] is True
+        explicada = (await c.get(f"/v1/compras/{compra_id}/explicacion")).json()
+        listada = (await c.get("/v1/compras", params={"resultado": "sin_ofertas"})).json()
+        assert explicada["resultado"] == "sin_ofertas"
+        assert [v["compra_id"] for v in listada["compras"]] == [compra_id]
+
+        mundo.merchant.manipular = None
+        await buscar(c, compra_id, contexto=contexto)
+        await mundo.esperar_fondo()
+        assert compra.sin_ofertas is False
+        assert (await almacen.cargar_compra(compra_id))["datos"]["sin_ofertas"] is False
+        assert (await c.get(f"/v1/compras/{compra_id}/explicacion")).json()["resultado"] == "en_curso"
+
+
 async def test_las_busquedas_de_una_compra_tienen_tope_en_el_historial(config_gw, monkeypatch):
     """Un agente que busca sin parar no hace crecer el historial sin límite:
     `busqueda_enviada` y `ofertas_recibidas` se guardan hasta

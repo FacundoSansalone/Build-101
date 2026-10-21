@@ -326,25 +326,24 @@ class NucleoProxy:
         (`fotos_actuales`), no una por compra."""
         ttl = self.ttl_compra_s
 
-        def resultado(vista: dict[str, Any], corte: Any, bloqueo: Any) -> str:
+        def resultado(vista: dict[str, Any], c: Compra | FotoCompra) -> str:
             return explicacion.resultado_de(
-                vista, ahora=ahora, ttl_s=ttl, corte=corte, bloqueo_proxy=bloqueo,
+                vista, ahora=ahora, ttl_s=ttl, corte=c.corte, bloqueo_proxy=c.bloqueo_proxy,
+                sin_ofertas=c.sin_ofertas,
             )
 
         salida = {
             c.id: resultado(
                 {"estado": c.estado, "veredictos": c.veredictos, "aprobaciones": [],
                  "creada": c.creada.isoformat()},
-                c.corte, c.bloqueo_proxy,
+                c,
             )
             for c in compras
         }
         dudosas = [c for c in compras if salida[c.id] == "retenida"]
         if dudosas:
             for foto in await self.proxy.fotos_actuales(dudosas):
-                salida[foto.compra_id] = resultado(
-                    vistas.vista_compra(foto, a2a_url=None), foto.corte, foto.bloqueo_proxy,
-                )
+                salida[foto.compra_id] = resultado(vistas.vista_compra(foto, a2a_url=None), foto)
         return salida
 
     async def _escanear(

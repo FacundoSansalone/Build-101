@@ -2636,6 +2636,7 @@ class ProxyGuard:
                     "ofertas",
                     decisiva=self.varias,
                 )
+        self._marcar_sin_ofertas(llamada, contexto_id, False)
         logger.info(
             "← ofertas: contexto=%s escenario=%s carts=%s",
             contexto_id,
@@ -2667,6 +2668,7 @@ class ProxyGuard:
         if previas is not None and previas.comercio_id not in (None, comercio_id):
             return
         logger.info("← sin resultados: contexto=%s", contexto_id)
+        self._marcar_sin_ofertas(llamada, contexto_id, True)
         self._emitir(
             "ofertas_recibidas",
             {"carts": [], "offer_details": []},
@@ -2675,6 +2677,20 @@ class ProxyGuard:
             escenario=respuesta.escenario or pedido.escenario,
             llamada=llamada,
         )
+
+    def _marcar_sin_ofertas(self, llamada: Llamada, contexto_id: Any, valor: bool) -> None:
+        """La marca `Compra.sin_ofertas` de la última búsqueda (la prende una
+        sin ofertas, la apaga una con ofertas). Como el `corte`: el tráfico
+        anónimo no toca una compra de integrador."""
+        compra = llamada.compra or (
+            self.compras.de_contexto(contexto_id) if isinstance(contexto_id, str) else None
+        )
+        if compra is None or compra.sin_ofertas is valor:
+            return
+        if compra.origen == "api" and not llamada.de_integrador:
+            return
+        compra.sin_ofertas = valor
+        self.guardar_compra(compra)
 
     async def _contexto_respuesta_ok(self, llamada: Llamada, result: Any) -> bool:
         """El `contextId` que trae la respuesta (JSON o cada evento SSE).

@@ -15,6 +15,7 @@ I/O, sin entorno y sin reloj (el `ahora` lo pasa quien llama).
 | `aprobada` | el último checkout evaluado llegó a la firma (`aprobado`, `con_avisos`, o `escalar` aprobado por una persona) |
 | `retenida` | el último quedó en `escalar`, sin aprobación usada |
 | `frenada` | el último quedó `bloqueado` (por el Guard, o el proxy no pudo evaluarlo) |
+| `sin_ofertas` | sin checkout y la última búsqueda volvió sin ofertas (la marca `sin_ofertas` de la compra) |
 | `en_curso` | todavía no hubo un checkout y la compra está viva |
 | `sin_compra` | pasó la vida de la compra sin ningún checkout |
 
@@ -52,6 +53,7 @@ from proxy.alertas import (
 
 RESULTADOS: tuple[str, ...] = (
     "aprobada", "frenada", "retenida", "cortada_por_seguridad", "en_curso", "vencida", "sin_compra",
+    "sin_ofertas",
 )
 ETAPAS = frozenset({
     "pedido", "contexto", "busqueda", "ofertas", "seguridad", "intencion", "checkout",
@@ -674,9 +676,11 @@ def _aprobado_por_persona(vista: dict[str, Any], veredicto: dict[str, Any]) -> b
 
 
 def resultado_de(vista: dict[str, Any], *, ahora: datetime, ttl_s: float,
-                 corte: str | None = None, bloqueo_proxy: Any = None) -> str:
+                 corte: str | None = None, bloqueo_proxy: Any = None,
+                 sin_ofertas: bool = False) -> str:
     """El resultado de la compra (tabla del módulo). `ttl_s`: la vida de una
-    compra (`GATEWAY_COMPRA_TTL_S`)."""
+    compra (`GATEWAY_COMPRA_TTL_S`). `sin_ofertas`: la marca de la compra (la
+    última búsqueda volvió sin ofertas)."""
     estado = vista.get("estado")
     if estado == "bloqueada":
         return "cortada_por_seguridad"
@@ -690,6 +694,8 @@ def resultado_de(vista: dict[str, Any], *, ahora: datetime, ttl_s: float,
         if status == "escalar":
             return "aprobada" if _aprobado_por_persona(vista, ultimo) else "retenida"
         return "frenada"
+    if sin_ofertas is True:
+        return "sin_ofertas"
     creada = _fecha_hora(vista.get("creada"))
     if creada is not None and (ahora - creada).total_seconds() > ttl_s:
         return "sin_compra"
@@ -709,13 +715,14 @@ def alertas_de_compra(vista: dict[str, Any], *, corte: str | None = None) -> lis
 
 
 def resumen_de_compra(vista: dict[str, Any], *, ahora: datetime, ttl_s: float,
-                      corte: str | None = None, bloqueo_proxy: Any = None) -> dict[str, Any]:
+                      corte: str | None = None, bloqueo_proxy: Any = None,
+                      sin_ofertas: bool = False) -> dict[str, Any]:
     """Lo que suma cada compra del listado: `resultado`, `alertas` e
     `intento_de_estafa` (sin leer los eventos)."""
     lista = alertas_de_compra(vista, corte=corte)
     return {
         "resultado": resultado_de(vista, ahora=ahora, ttl_s=ttl_s, corte=corte,
-                                  bloqueo_proxy=bloqueo_proxy),
+                                  bloqueo_proxy=bloqueo_proxy, sin_ofertas=sin_ofertas),
         "alertas": lista,
         "intento_de_estafa": es_intento_de_estafa(lista),
     }
@@ -862,7 +869,10 @@ def _resumen(resultado: str, vista: dict[str, Any], ultimo: dict[str, Any] | Non
                 "no se compró nada.")
     if resultado == "en_curso":
         return _resumen_en_curso(vista)
+    if resultado == "sin_ofertas":
+        return "El comercio no tuvo ofertas para tu pedido: no hubo compra."
     if resultado == "sin_compra":
+        # Una compra de antes de guardar la marca `sin_ofertas`: lo dicen los eventos.
         base = "La compra terminó sin que tu agente pidiera un checkout"
         return f"{base}: el comercio no tuvo ofertas para tu pedido." if _sin_ofertas(eventos) else base + "."
     assert ultimo is not None
@@ -1113,11 +1123,12 @@ def _recibo(ultimo: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def explicar(vista: dict[str, Any], eventos: Iterable[Any], *, ahora: datetime, ttl_s: float,
-             corte: str | None = None, bloqueo_proxy: Any = None) -> dict[str, Any]:
+             corte: str | None = None, bloqueo_proxy: Any = None,
+             sin_ofertas: bool = False) -> dict[str, Any]:
     """La explicación de la compra (`GET /v1/compras/{id}/explicacion`)."""
     lista_eventos = _eventos(eventos)
     resultado = resultado_de(vista, ahora=ahora, ttl_s=ttl_s, corte=corte,
-                             bloqueo_proxy=bloqueo_proxy)
+                             bloqueo_proxy=bloqueo_proxy, sin_ofertas=sin_ofertas)
     lista = alertas_de_compra(vista, corte=corte)
     ultimo = _ultimo(vista, bloqueo_proxy)
     resumen = _resumen(resultado, vista, ultimo, corte, lista_eventos)

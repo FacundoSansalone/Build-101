@@ -46,13 +46,15 @@ _CHEQUEO = {
     },
 }
 _ALERTAS = ["manipulacion", "dato_falso", "precio_distinto", "checkout_alterado", "no_cumple", "sin_verificar"]
-_RESULTADOS = ["aprobada", "frenada", "retenida", "cortada_por_seguridad", "en_curso", "vencida", "sin_compra"]
+_RESULTADOS = ["aprobada", "frenada", "retenida", "cortada_por_seguridad", "en_curso", "vencida", "sin_compra",
+               "sin_ofertas"]
 _RESULTADO = {
     "type": "string", "enum": _RESULTADOS,
     "description": "aprobada: el último checkout llegó a la firma (también un escalar que "
     "aprobó una persona); frenada: quedó bloqueado; retenida: escalar sin aprobar; "
     "cortada_por_seguridad: la cortó el filtro; vencida: nadie decidió una alternativa; "
-    "en_curso: todavía sin checkout; sin_compra: pasó su vida sin checkout.",
+    "en_curso: todavía sin checkout; sin_compra: pasó su vida sin checkout; "
+    "sin_ofertas: sin checkout y la última búsqueda volvió sin ofertas.",
 }
 _ALERTA = {
     "type": "string", "enum": _ALERTAS,
