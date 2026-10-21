@@ -420,7 +420,16 @@ CASOS: list[tuple[Chequeo, str]] = [
     (ch("evidencia", "aviso", "sku", observado=INY, origen="declarado"),
      "El producto no está en el catálogo público: sus datos solo los declaró el comercio."),
     (ch("evidencia", "escalar", "titulo", esperado="Apex Urban", observado=INY, origen="catalogo_publico"),
-     "El título: lo que declaró el comercio no coincide con el catálogo público (Apex Urban)."),
+     "El título que declaró el comercio no coincide con el catálogo público: según esa fuente es "
+     "Apex Urban."),
+    (ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+     "La categoría que declaró el comercio no coincide con el catálogo público: según esa fuente es "
+     "Televisions."),
+    (ch("evidencia", "escalar", "talles", esperado=[40, 41], observado=[38], origen="catalogo_publico"),
+     "Los talles que declaró el comercio no coinciden con el catálogo público: según esa fuente son "
+     "40 y 41."),
+    (ch("evidencia", "escalar", "marca", origen="fabricante"),
+     "La marca que declaró el comercio no coincide con el fabricante."),
     (ch("evidencia", "ok", "marca", esperado="Dell", observado="Dell", origen="catalogo_publico"),
      "La marca coincide con el catálogo público."),
     (ch("integridad", "bloquea", "checkout_hash", origen="checkout_firmado"),
@@ -897,6 +906,39 @@ def test_la_linea_de_tiempo_va_en_el_orden_del_historial():
     assert linea[-1]["ts"] == (CREADA + timedelta(minutes=1)).isoformat()
 
 
+def test_los_cambios_de_una_propuesta_concuerdan_en_numero():
+    entregas = _fila("oportunidad", {"vence": "2026-10-21T12:09:00+00:00", "oportunidad": {
+        "id": "op-1", "cart_id": "cart_1", "cambios": [
+            {"campo": "entregas", "pedido": [{"cantidad": 20, "fecha": "2026-10-26"}],
+             "ofrecido": [{"cantidad": 10, "fecha": "2026-10-26"}, {"cantidad": 10, "fecha": "2026-10-28"}]},
+            {"campo": "cantidad", "pedido": 20, "ofrecido": 25},
+        ]}}, minutos=2)
+    sin_valores = _fila("oportunidad", {"vence": "2026-10-21T12:09:00+00:00", "oportunidad": {
+        "id": "op-2", "cart_id": "cart_1", "cambios": [{"campo": "entregas"}, {"campo": "marca"}],
+    }}, minutos=3)
+    textos = [e["texto"] for e in _explicar(vista(), [entregas, sin_valores])["linea_de_tiempo"]
+              if e["etapa"] == "intencion"]
+    assert textos[0] == (
+        "Te propusimos una alternativa que no cumple el pedido literal pero sí la necesidad: las "
+        "entregas pasan de 20 el 26/10/2026 a 10 el 26/10/2026 y 10 el 28/10/2026 y la cantidad "
+        "pasa de 20 a 25.")
+    assert textos[1].endswith(": cambian las entregas y cambia la marca.")
+
+
+@pytest.mark.parametrize("respuesta, texto", [
+    ("Para la oficina nueva", "Nos contaste para qué es: «Para la oficina nueva»."),
+    ("Las fechas pueden variar.", "Nos contaste para qué es: «Las fechas pueden variar.»"),
+    ("¿Sirve para diseño?", "Nos contaste para qué es: «¿Sirve para diseño?»"),
+    ("¡Es urgente!", "Nos contaste para qué es: «¡Es urgente!»"),
+    ("Ya veremos...", "Nos contaste para qué es: «Ya veremos...»"),
+])
+def test_la_cita_del_porque_no_suma_otro_punto(respuesta, texto):
+    contexto = _fila("contexto_registrado", {"turno": 0, "respuesta": respuesta, "omitido": False,
+                                             "vencido": False}, minutos=1)
+    textos = [e["texto"] for e in _explicar(vista(), [contexto])["linea_de_tiempo"]]
+    assert texto in textos
+
+
 def test_el_reenvio_de_una_busqueda_dice_ofertas_solo_si_las_hubo():
     """"Le pasamos las ofertas" solo si esa búsqueda trajo ofertas; sin
     ofertas (o sin saberlo: el historial ya no guarda más búsquedas), "la
@@ -972,8 +1014,9 @@ def test_los_valores_tecnicos_salen_legibles():
            observado="888888", origen="catalogo_publico"),
     ])
     textos = [c["texto"] for c in salida["chequeos"]]
-    assert ("La categoría no cumple lo que pediste: pediste basketball shoes y el catálogo "
-            "público indica lifestyle sneakers.") in textos
+    # Las categorías del catálogo, como los nombres de la taxonomía ("Computer Monitors").
+    assert ("La categoría no cumple lo que pediste: pediste Basketball Shoes y el catálogo "
+            "público indica Lifestyle Sneakers.") in textos
     assert "lifestyle_sneakers" not in salida["resumen"]
-    assert "lifestyle sneakers" in salida["resumen"]
+    assert "Lifestyle Sneakers" in salida["resumen"]
     assert any("999999" in t for t in textos)

@@ -72,6 +72,8 @@ MAX_EVENTOS = 1000
 _RECIBO_RE = re.compile(r"rcb-[0-9a-f]{8,64}")
 # Un valor técnico (`basketball_shoes`): en los textos va con espacios.
 _ENUM_RE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)+")
+# Una categoría del catálogo en minúsculas ("televisions", "basketball_shoes").
+_SLUG_RE = re.compile(r"[a-z0-9]+(?:[_ ][a-z0-9]+)*")
 _KID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 _COMERCIO_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 
@@ -255,6 +257,16 @@ def _valor(valor: Any) -> str | None:
     return None
 
 
+def _valor_de(campo: Any, valor: Any) -> str | None:
+    """`_valor` del campo. Una categoría del catálogo en minúsculas va como
+    los nombres de la taxonomía ("Televisions", "Basketball Shoes"), igual que
+    en la línea de la categoría del producto."""
+    texto = _valor(valor)
+    if campo == "categoria" and texto and isinstance(valor, str) and _SLUG_RE.fullmatch(valor):
+        return " ".join(p[:1].upper() + p[1:] for p in texto.split(" "))
+    return texto
+
+
 def _categoria(valor: Any) -> str | None:
     """"Laptops": el nombre de la taxonomía de Google (el árbol del motor, es
     nuestro); si no está en el árbol (o no hay árbol), el ID."""
@@ -297,7 +309,7 @@ def _requisito(ficha: Any, campo: Any) -> dict[str, Any] | None:
 
 def _pedido(c: dict[str, Any], ficha: Any) -> str | None:
     """Lo pedido, legible: "al menos 16 GB", "como máximo USD 1.500,00", "27 in"."""
-    valor = _valor(c.get("esperado"))
+    valor = _valor_de(c.get("campo"), c.get("esperado"))
     if valor is None:
         return None
     operador = (_requisito(ficha, c.get("campo")) or {}).get("operador")
@@ -421,7 +433,7 @@ def _texto_cumplimiento(c: dict[str, Any], ficha: Any, evidencia: dict[str, Any]
     pronombre = _PRONOMBRE[genero]
     fuente = _fuente(c.get("origen"))
     pedido = _pedido(c, ficha)
-    obs = _valor(c.get("observado"))
+    obs = _valor_de(c.get("campo"), c.get("observado"))
     if caso == "cumple":
         if obs and c.get("origen") != "declarado":
             return f"{_mayus(nombre)} cumple{_n(genero)} lo que pediste ({obs}, según {fuente})."
@@ -432,7 +444,7 @@ def _texto_cumplimiento(c: dict[str, Any], ficha: Any, evidencia: dict[str, Any]
                     f"{fuente} indica {obs}.")
         return f"{_mayus(nombre)} no cumple{_n(genero)} lo que pediste, según {fuente}."
     if caso == "contradicho":
-        declarado = _valor(evidencia.get("observado")) if evidencia else None
+        declarado = _valor_de(c.get("campo"), evidencia.get("observado")) if evidencia else None
         declaro = f"el comercio declaró {declarado}" if declarado else "el comercio declaró otra cosa"
         es = "son" if genero.endswith("p") else "es"
         return (f"{_mayus(nombre)} no {es} lo que pediste: según {fuente} {es} {obs or 'otro'} "
@@ -471,9 +483,17 @@ def _texto_evidencia(c: dict[str, Any]) -> str:
     if caso == "verificado":
         return f"{_mayus(nombre)} coincide{_n(genero)} con {fuente}."
     if caso == "contradicho":
-        publico = _valor(c.get("esperado"))
-        detalle = f" ({publico})" if publico else ""
-        return f"{_mayus(nombre)}: lo que declaró el comercio no coincide con {fuente}{detalle}."
+        # Como la línea de la categoría: "… no coincide con X: según esa fuente es …".
+        if campo == "categoria_taxonomia":
+            publico = _categoria(c.get("esperado"))
+        else:
+            publico = _valor_de(campo, c.get("esperado"))
+        plural = genero.endswith("p")
+        base = (f"{_mayus(nombre)} que declaró el comercio no coincide{'n' if plural else ''} "
+                f"con {fuente}")
+        if publico:
+            return f"{base}: según esa fuente {'son' if plural else 'es'} {publico}."
+        return base + "."
     if caso == "no_declarado":
         return f"{_mayus(nombre)}: el comercio no {pronombre} informó."
     if caso == "sin_dato":
@@ -834,13 +854,13 @@ def _razon(veredicto: dict[str, Any], ficha: Any, resultado_buscado: str) -> tup
     moneda = _moneda_de(veredicto)
     if c["caso"] in ("contradicho", "no_cumple") and c["tipo"] == "cumplimiento"             and c["campo"] != "categoria_taxonomia":
         nombre, _ = _nombre(c["campo"])
-        obs, pedido = _valor(c.get("observado")), _pedido(c, ficha)
+        obs, pedido = _valor_de(c["campo"], c.get("observado")), _pedido(c, ficha)
         if obs and pedido:
             es = "son" if _nombre(c["campo"])[1].endswith("p") else "es"
             frase = (f"{nombre} del producto que eligió tu agente {es} {obs} y pediste {pedido}, "
                      f"según {_fuente(c.get('origen'))}")
             evidencia = _evidencia_de(veredicto, c) if c["caso"] == "contradicho" else None
-            declarado = _valor(evidencia.get("observado")) if evidencia else None
+            declarado = _valor_de(c["campo"], evidencia.get("observado")) if evidencia else None
             if declarado:
                 frase += f" (el comercio había declarado {declarado})"
             return frase + ".", True
@@ -1064,13 +1084,13 @@ def _cambios(datos: dict[str, Any]) -> str:
         if campo not in ("precio", "moneda", "categoria", "uso", "talle", "marca", "comercio",
                          "cantidad", "entregas"):
             continue
-        nombre, _ = _nombre(campo)
-        pedido = _valor(alertas.valor_saneado(cambio.get("pedido"), confiable=True)[0])
-        ofrecido = _valor(alertas.valor_saneado(cambio.get("ofrecido"), confiable=False)[0])
+        nombre, genero = _nombre(campo)
+        pedido = _valor_de(campo, alertas.valor_saneado(cambio.get("pedido"), confiable=True)[0])
+        ofrecido = _valor_de(campo, alertas.valor_saneado(cambio.get("ofrecido"), confiable=False)[0])
         if pedido and ofrecido:
-            partes.append(f"{nombre} pasa de {pedido} a {ofrecido}")
+            partes.append(f"{nombre} pasa{_n(genero)} de {pedido} a {ofrecido}")
         else:
-            partes.append(f"cambia {nombre}")
+            partes.append(f"cambia{_n(genero)} {nombre}")
     return _y(partes[:5])
 
 
@@ -1087,7 +1107,9 @@ def _texto_evento(evento: dict[str, Any], *, hubo_ofertas: bool = False) -> tupl
         if isinstance(respuesta, str) and respuesta.strip():
             limpio = "".join(c for c in respuesta if c.isprintable())[:LARGO_PORQUE].strip()
             limpio = limpio.replace("«", "\"").replace("»", "\"")
-            return "contexto", f"Nos contaste para qué es: «{limpio}»."
+            # Si la cita ya cierra la frase ("…variar.", "¿…?", "…"), no lleva otro punto.
+            punto = "" if limpio.endswith((".", "?", "!", "…")) else "."
+            return "contexto", f"Nos contaste para qué es: «{limpio}»{punto}"
         return "contexto", "Elegiste no contar para qué es la compra: seguimos con tu pedido literal."
     if tipo == "busqueda_enviada":
         return "busqueda", "Tu agente buscó productos en el comercio."
