@@ -608,6 +608,18 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     `CRON_SECRET`, cron diario en `vercel.json`; sin secreto la ruta no
     existe). `proxy/sql/005_historial.sql` (índices) **no está aplicada**.
 
+- **Panel del cliente, fase 2: `/panel` (2026-10-21, rama `panel/web`, a
+  revisar entre los tres).** `proxy/panel/` (`create_app(..., panel=True)`,
+  prendido en Vercel; local con `GATEWAY_PANEL=1`): estáticos sin clave, solo
+  GET, CSP de la consola. La empresa entra con su clave de solo lectura
+  (validada con `GET /v1/resumen`) y ve resumen, lista con filtros y "Cargar
+  más", y el detalle con estafa, línea de tiempo, chequeos y la firma del
+  recibo verificada en el navegador (`recibo.mjs`, extraído de la consola y
+  servido por las dos). Sin permisos propios ni `POST`; avisa si la clave es
+  completa con un `HEAD /v1/comercios` (403 `solo_lectura` vs 200). La API no
+  filtra por `resultado`: dos van como `estado` y el resto lo filtra el
+  navegador. Guía: `docs/INTEGRACION.md` §5.9.
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh

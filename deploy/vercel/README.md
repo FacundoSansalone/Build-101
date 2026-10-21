@@ -32,6 +32,7 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 | `local_sin_supabase.env.ejemplo` | El entorno de esa prueba (sin secretos) |
 | [`proxy/scripts/smoke_v1_pausas.py`](../../proxy/scripts/smoke_v1_pausas.py) | Prueba de las pausas (porqué y oportunidad) con las respuestas por otras instancias |
 | [`proxy/consola/`](../../proxy/consola/) | La consola web del motor (`/consola`): probar una compra desde el navegador ([paso 8](#8-consola-web)) |
+| [`proxy/panel/`](../../proxy/panel/) | El panel del cliente (`/panel`): el historial de compras de la empresa, con su clave de solo lectura ([paso 8b](#8b-panel-del-cliente)) |
 
 Los comandos van desde la raíz del repo, con el venv de `world/ap2`
 (`PY=world/ap2/.venv/Scripts/python` en Windows con Git Bash,
@@ -326,6 +327,41 @@ curl -s -o /dev/null -w '%{http_code}
 
 En la prueba local con varias instancias es la misma página:
 `http://127.0.0.1:8040/consola`.
+
+### 8b. Panel del cliente
+
+**Panel del cliente: https://kaiai-motor.vercel.app/panel.** Lo sirve el mismo
+motor (`create_app(..., panel=True)`, estáticos en `proxy/panel/`, sin clave
+y sin estado; lo prende `crear_app_serverless` junto a la consola). Es para la
+empresa cliente: entra con su **clave de solo lectura** y ve el resumen del
+período, la lista de sus compras con filtros y la explicación de cada una (si
+la intentaron estafar, la línea de tiempo, qué revisamos y el recibo, con la
+firma verificada en el navegador). Detalle para el integrador:
+[`docs/INTEGRACION.md` §5.9](../../docs/INTEGRACION.md#59-el-panel-del-cliente).
+
+1. Generá la clave de lectura del integrador (solo suma la entrada al registro;
+   no imprime el secreto):
+
+   ```sh
+   $PY deploy/vercel/generar_secretos.py --clave-lectura <integrador>
+   ```
+
+   Cargá el `GATEWAY_CLAVES_JSON` nuevo en Vercel y redesplegá (paso 3), y
+   pasale a la empresa la clave de `.temp-db/vercel/clave_lectura_<integrador>.txt`
+   por un canal seguro.
+2. Comprobá la página y que la clave sea de lectura (el `HEAD` es lo mismo que
+   usa el panel para avisar si entraron con una completa):
+
+   ```sh
+   LECTURA=$(cat .temp-db/vercel/clave_lectura_<integrador>.txt)
+   curl -s -o /dev/null -w '%{http_code}\n' "$GW/panel"                                         # 200
+   curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $LECTURA" "$GW/v1/resumen"  # 200
+   curl -s -o /dev/null -w '%{http_code}\n' -I -H "Authorization: Bearer $LECTURA" "$GW/v1/comercios"  # 403
+   ```
+
+Misma CSP que la consola (`default-src 'none'`, `connect-src 'self'`),
+`nosniff`, `no-referrer` y `no-store`; sin recursos externos. En la prueba
+local: `http://127.0.0.1:8040/panel`; con `python -m proxy`, `GATEWAY_PANEL=1`.
 
 ### 9. Retención y purga
 
