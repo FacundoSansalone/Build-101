@@ -326,8 +326,8 @@ async def test_el_cursor_recorre_todas_las_compras_sin_repetir(gateway):
                 break
             params["cursor"] = datos["siguiente"]
         por_referencia = (await c.get("/v1/compras", params={"referencia": "ord-1"})).json()
-        futuro = (await c.get("/v1/compras", params={"desde": "2999-01-01"})).json()
-        de_hoy = (await c.get("/v1/compras", params={"hasta": "2999-01-01", "desde": "2000-01-01"})).json()
+        futuro = (await c.get("/v1/compras", params={"desde": "2099-01-01"})).json()
+        de_hoy = (await c.get("/v1/compras", params={"hasta": "2100-12-31", "desde": "2000-01-01"})).json()
     assert vistas == list(reversed(creadas))
     assert [v["compra_id"] for v in por_referencia["compras"]] == [creadas[4], creadas[1]]
     assert futuro == {"compras": [], "siguiente": None}
@@ -471,3 +471,55 @@ def test_el_peor_caso_de_una_compra_entra_holgado(n_chequeos):
     compra = vista_compra(_foto(veredictos=tuple([vista] * 20)), a2a_url=None)
     total = len(json.dumps(compra, ensure_ascii=False).encode("utf-8"))
     assert total < MAX_BYTES_CUERPO_WEBHOOK / 2, total
+
+
+# -- fechas fuera de rango: 400, nunca 500 -------------------------------------------
+
+
+def _cursor_con(c: str) -> str:
+    crudo = json.dumps({"v": 1, "c": c, "i": COMPRA_ID}).encode()
+    return base64.urlsafe_b64encode(crudo).decode().rstrip("=")
+
+
+@pytest.mark.parametrize("params", [
+    {"desde": "0001-01-01T00:00:00+05:00"},
+    {"hasta": "0001-01-01"},
+    {"desde": "9999-12-31"},
+    {"hasta": "9999-12-31T23:59:59-05:00"},
+    {"desde": "1999-12-31"},
+    {"hasta": "2101-01-01"},
+    {"cursor": _cursor_con("0001-01-01T00:00:00+05:00")},
+    {"cursor": _cursor_con("9999-12-31T23:59:59-05:00")},
+    {"cursor": _cursor_con("1999-01-01T00:00:00+00:00")},
+    {"cursor": _cursor_con("20261021T100000Z")},
+])
+async def test_fechas_fuera_de_rango_en_el_listado_son_400(cliente, nucleo, params):
+    _error(await cliente.get("/v1/compras", params=params), 400, "validacion")
+    assert nucleo.llamadas == []
+
+
+@pytest.mark.parametrize("params", [
+    {"desde": "9999-12-31"}, {"hasta": "0001-01-01"}, {"desde": "0001-01-01T00:00:00+05:00"},
+    {"desde": "2100-12-31"},
+])
+async def test_fechas_fuera_de_rango_en_el_resumen_son_400(cliente, nucleo, params):
+    r = await cliente.get("/v1/resumen", params=params)
+    if r.status_code == 200:
+        # 2100-12-31 es válido: la ventana termina el 2101-01-30, sin 500.
+        assert params == {"desde": "2100-12-31"}
+        return
+    _error(r, 400, "validacion")
+
+
+async def test_el_almacen_no_revienta_con_fechas_extremas():
+    from datetime import timedelta as td
+
+    from proxy.tipos_gateway import ErrorAlmacen
+
+    rara = datetime(1, 1, 1, tzinfo=timezone(td(hours=5)))
+    almacen = EstadoMemoria()
+    for filtro in ({"antes_de": (rara, COMPRA_ID)}, {"desde": rara}, {"hasta": rara}):
+        with pytest.raises(ErrorAlmacen):
+            await almacen.listar_compras("acme", **filtro)
+    with pytest.raises(ErrorAlmacen):
+        await almacen.purgar(rara)

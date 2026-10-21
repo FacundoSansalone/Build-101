@@ -542,7 +542,7 @@ de siempre (`limite`, `estado`):
 
 | Parámetro | Qué hace |
 |---|---|
-| `desde`, `hasta` | Sobre `creada`: `desde` incluido, `hasta` excluido. ISO 8601: una fecha (`2026-10-21`, el día UTC entero) o fecha y hora (`2026-10-21T12:00:00Z`; sin zona, UTC; el `+` de un offset, codificado como `%2B`) |
+| `desde`, `hasta` | Sobre `creada`: `desde` incluido, `hasta` excluido. ISO 8601: una fecha (`2026-10-21`, el día UTC entero) o fecha y hora (`2026-10-21T12:00:00Z`; sin zona, UTC; el `+` de un offset, codificado como `%2B`), entre los años 2000 y 2100 (si no, 400 `validacion`) |
 | `referencia` | Tu `referencia`, exacta |
 | `alerta` | Solo las compras con esa alerta (tabla de abajo) |
 | `cursor` | El `siguiente` de la página anterior: un texto opaco, no lo armes ni lo leas |

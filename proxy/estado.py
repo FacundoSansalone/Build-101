@@ -211,7 +211,7 @@ def _cursor(antes_de: Any) -> tuple[datetime, str] | None:
         return None
     if not isinstance(antes_de, (tuple, list)) or len(antes_de) != 2:
         raise ErrorAlmacen("cursor inválido")
-    return _fecha(antes_de[0]), _id_compra(antes_de[1])
+    return _momento_utc(antes_de[0]), _id_compra(antes_de[1])
 
 
 def _ids_compras(compra_ids: Any) -> list[str]:
@@ -234,10 +234,18 @@ def _antes_que(fila: dict[str, Any], cursor: tuple[datetime, str]) -> bool:
 
 def _iso(fecha: datetime) -> str:
     """ISO 8601 en UTC con `Z`: un `+00:00` en la query string se lee como
-    espacio si alguien no lo codifica."""
-    if fecha.tzinfo is None:
-        fecha = fecha.replace(tzinfo=timezone.utc)
-    return fecha.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    espacio si alguien no lo codifica. Una fecha que no se puede pasar a UTC
+    (el año 1 con zona) es `ErrorAlmacen`, no un `OverflowError`."""
+    return _momento_utc(fecha).isoformat().replace("+00:00", "Z")
+
+
+def _momento_utc(valor: Any) -> datetime:
+    """Una fecha (`_fecha`) ya en UTC; si desborda, `ErrorAlmacen`."""
+    fecha = _fecha(valor)
+    try:
+        return fecha.astimezone(timezone.utc)
+    except OverflowError:
+        raise ErrorAlmacen("fecha fuera de rango") from None
 
 
 def _fecha(valor: Any) -> datetime:
@@ -892,8 +900,8 @@ class EstadoMemoria:
         _id_slug(integrador_id, "integrador_id")
         limite = _limite(limite)
         estados = _estados_filtro(estado)
-        desde = _fecha(desde) if desde is not None else None
-        hasta = _fecha(hasta) if hasta is not None else None
+        desde = _momento_utc(desde) if desde is not None else None
+        hasta = _momento_utc(hasta) if hasta is not None else None
         referencia = _referencia(referencia)
         cursor = _cursor(antes_de)
         filas = [
@@ -970,7 +978,7 @@ class EstadoMemoria:
         veredictos, aprobaciones, entregas de webhooks, esperas y eventos.
         Devuelve cuántas filas borró de cada tabla (sin contar lo que se va
         en cascada con una compra)."""
-        limite = _fecha(antes_de)
+        limite = _momento_utc(antes_de)
 
         def viejas(tabla: OrderedDict[Any, Any] | dict[Any, Any], columna: str) -> list[Any]:
             return [k for k, f in tabla.items() if f.get(columna) and _fecha(f[columna]) < limite]

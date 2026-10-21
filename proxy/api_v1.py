@@ -97,6 +97,10 @@ FECHA_HORA_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?"
 )
 CURSOR_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
+# Los años que aceptan los filtros y el cursor: fuera de esto no hay compras, y
+# una fecha extrema (el año 1 con zona, el 9999) desborda al pasarla a UTC.
+ANIO_MINIMO = 2000
+ANIO_MAXIMO = 2100
 VERSION_CURSOR = 1
 DIAS_RESUMEN = 30
 MAX_DIAS_RESUMEN = 366
@@ -622,23 +626,39 @@ def _limite(request: Request) -> int:
 # -- historial: filtros, cursor y ventana ----------------------------------------
 
 
+def _en_utc(momento: datetime) -> datetime:
+    """En UTC y entre `ANIO_MINIMO` y `ANIO_MAXIMO`; si no, `ValueError` (un año
+    extremo con zona desborda: `OverflowError`, que también es fuera de rango)."""
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    try:
+        utc = momento.astimezone(timezone.utc)
+    except OverflowError:
+        raise ValueError("fecha fuera de rango") from None
+    if not ANIO_MINIMO <= utc.year <= ANIO_MAXIMO:
+        raise ValueError("fecha fuera de rango")
+    return utc
+
+
 def _fecha_param(request: Request, nombre: str, *, fin: bool = False) -> datetime | None:
     """Una fecha ISO 8601 de la query: `YYYY-MM-DD` (un día UTC entero: como
     `hasta` cuenta hasta el final de ese día) o fecha y hora (sin zona, UTC;
-    un `+` sin codificar llega como espacio y se acepta igual)."""
+    un `+` sin codificar llega como espacio y se acepta igual). Entre los años
+    2000 y 2100; si no, 400."""
     crudo = request.query_params.get(nombre)
     if crudo is None:
         return None
     texto = crudo.strip().replace(" ", "+")
-    problema = _error_validacion(nombre, "fecha ISO 8601: YYYY-MM-DD o fecha y hora")
+    problema = _error_validacion(
+        nombre, f"fecha ISO 8601 (YYYY-MM-DD o fecha y hora) entre {ANIO_MINIMO} y {ANIO_MAXIMO}",
+    )
     try:
         if FECHA_RE.fullmatch(texto):
             dia = date.fromisoformat(texto)
-            momento = datetime(dia.year, dia.month, dia.day, tzinfo=timezone.utc)
+            momento = _en_utc(datetime(dia.year, dia.month, dia.day, tzinfo=timezone.utc))
             return momento + timedelta(days=1) if fin else momento
         if FECHA_HORA_RE.fullmatch(texto):
-            momento = datetime.fromisoformat(texto.replace("Z", "+00:00"))
-            return momento if momento.tzinfo is not None else momento.replace(tzinfo=timezone.utc)
+            return _en_utc(datetime.fromisoformat(texto.replace("Z", "+00:00")))
     except (ValueError, OverflowError):
         raise problema from None
     raise problema
@@ -672,10 +692,15 @@ def decodificar_cursor(texto: Any) -> tuple[datetime, str]:
         datos = json.loads(crudo)
         if not isinstance(datos, dict) or set(datos) != {"v", "c", "i"} or datos["v"] != VERSION_CURSOR:
             raise ValueError
-        creada = datetime.fromisoformat(datos["c"]) if isinstance(datos["c"], str) else None
-        if creada is None or creada.tzinfo is None or not es_id(ID_COMPRA_RE, datos["i"]):
+        texto_c = datos["c"]
+        if not isinstance(texto_c, str) or not FECHA_HORA_RE.fullmatch(texto_c):
             raise ValueError
-    except (ValueError, TypeError, binascii.Error, UnicodeDecodeError, RecursionError):
+        creada = datetime.fromisoformat(texto_c.replace("Z", "+00:00"))
+        if creada.tzinfo is None or not es_id(ID_COMPRA_RE, datos["i"]):
+            raise ValueError
+        creada = _en_utc(creada)
+    except (ValueError, TypeError, OverflowError, binascii.Error, UnicodeDecodeError,
+            RecursionError):
         raise problema from None
     return creada, datos["i"]
 
@@ -720,7 +745,7 @@ def _ventana_resumen(request: Request, ahora: datetime) -> tuple[datetime, datet
     if desde is None:
         desde = hasta - timedelta(days=DIAS_RESUMEN)
     _rango(desde, hasta)
-    if hasta - desde > timedelta(days=MAX_DIAS_RESUMEN):
+    if hasta - desde > timedelta(days=MAX_DIAS_RESUMEN):  # años acotados: no desborda
         raise _error_validacion("desde", f"el período es de hasta {MAX_DIAS_RESUMEN} días")
     return desde, hasta
 
