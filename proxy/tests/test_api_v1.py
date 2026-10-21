@@ -810,3 +810,24 @@ def test_pagina_docs_escapa_todo_el_spec():
     pagina = openapi.pagina_docs(spec)
     assert "<img" not in pagina and "<b>" not in pagina
     assert pagina.startswith("<!doctype html>")
+
+
+def test_openapi_documenta_solo_lectura_en_los_post():
+    """Una clave de solo lectura (`proxy/claves.py`) solo consulta: todo POST de
+    `/v1` con clave documenta el 403 `solo_lectura`; las GET y las públicas, no."""
+    spec = openapi.especificacion(URL_PUBLICA)
+    for ruta, ops in spec["paths"].items():
+        for metodo, op in ops.items():
+            publica = op.get("security") == []
+            respuesta = op["responses"].get("403")
+            if metodo == "post" and not publica:
+                assert respuesta is not None, (metodo, ruta)
+                assert "solo_lectura" in respuesta["description"], (metodo, ruta)
+            elif respuesta is not None:
+                assert "solo_lectura" not in respuesta["description"], (metodo, ruta)
+    # El 403 de `POST /v1/compras` sigue con `comercio_no_permitido`.
+    crear = spec["paths"]["/v1/compras"]["post"]["responses"]["403"]["description"]
+    assert "comercio_no_permitido" in crear and "solo_lectura" in crear
+    respuesta = spec["paths"]["/v1/compras/{compra_id}/respuesta"]["post"]["responses"]["403"]
+    assert respuesta["description"] == "Códigos: solo_lectura"
+    assert "solo_lectura" in spec["components"]["schemas"]["Error"]["description"]

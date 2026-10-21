@@ -57,8 +57,10 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
         "type": "object",
         "required": ["error"],
         "description": "Todo error de `/v1` tiene esta forma, también una ruta que no "
-        "existe (404 `no_encontrado`) o un método que la ruta no acepta (405 "
-        "`metodo_no_permitido`, con los que acepta en `Allow`).",
+        "existe (404 `no_encontrado`), un método que la ruta no acepta (405 "
+        "`metodo_no_permitido`, con los que acepta en `Allow`) o una clave de solo "
+        "lectura en algo que no es una consulta permitida (403 `solo_lectura`, con "
+        '`WWW-Authenticate: Bearer error="insufficient_scope"`).',
         "properties": {
             "error": {
                 "type": "object",
@@ -487,9 +489,23 @@ ERRORES: dict[str, str] = {
 }
 
 
+# Una clave de solo lectura (`proxy/claves.py`, `RUTAS_LECTURA`) solo consulta:
+# todo POST de `/v1` con clave le da 403 `solo_lectura`, antes de llegar a la API.
+SOLO_LECTURA = "solo_lectura"
+
+
+def _codigos(status: str, metodo: str, errores: list[str], publica: bool) -> str:
+    """Los códigos de un status: los de `ERRORES` si la operación los declara,
+    más `solo_lectura` en el 403 de un POST con clave."""
+    codigos = [ERRORES[status]] if status in errores else []
+    if status == "403" and metodo == "post" and not publica:
+        codigos.append(SOLO_LECTURA)
+    return ", ".join(codigos)
+
+
 def _operacion(
     resumen: str, descripcion: str, cuerpo: str | None, respuestas: _Respuestas,
-    errores: list[str], publica: bool, ruta: str,
+    errores: list[str], publica: bool, ruta: str, metodo: str = "get",
 ) -> dict[str, Any]:
     op: dict[str, Any] = {
         "summary": resumen,
@@ -513,9 +529,12 @@ def _operacion(
         if esquema is not None:
             contenido = {"content": {"application/json": {"schema": _ref(esquema)}}}
         op["responses"][status] = {"description": texto, **contenido}
-    for status in [*errores, "500"]:
+    estados = [*errores]
+    if metodo == "post" and not publica and "403" not in estados:
+        estados.append("403")
+    for status in [*estados, "500"]:
         op["responses"][status] = {
-            "description": f"Códigos: {ERRORES[status]}",
+            "description": f"Códigos: {_codigos(status, metodo, errores, publica) or ERRORES[status]}",
             "content": {"application/json": {"schema": _ref("Error")}},
         }
     return op
@@ -527,7 +546,7 @@ def especificacion(url_publica: str) -> dict[str, Any]:
     paths: dict[str, dict[str, Any]] = {}
     for metodo, ruta, resumen, descripcion, cuerpo, respuestas, errores, publica in OPERACIONES:
         paths.setdefault(ruta, {})[metodo] = _operacion(
-            resumen, descripcion, cuerpo, respuestas, errores, publica, ruta,
+            resumen, descripcion, cuerpo, respuestas, errores, publica, ruta, metodo,
         )
     return {
         "openapi": "3.1.0",
