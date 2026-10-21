@@ -98,6 +98,8 @@ from proxy.compras import (
 from proxy.config import RUTA_PURGA, Config, hoy_en, zona_horaria
 from proxy.consola import RUTAS_ABIERTAS as RUTAS_CONSOLA
 from proxy.consola import rutas_consola
+from proxy.panel import RUTAS_ABIERTAS as RUTAS_PANEL
+from proxy.panel import rutas_panel
 from proxy.esperas import Apertura, EsperaCompartida, EsperaLocal, Esperas
 from proxy.estado import (
     EstadoMemoria,
@@ -4656,6 +4658,7 @@ def create_app(
     rutas_control: bool = True,
     rutas_heredadas: bool = True,
     consola: bool = False,
+    panel: bool = False,
 ) -> Starlette:
     """Arma la app. `transport` permite inyectar el comercio en los tests.
 
@@ -4702,6 +4705,12 @@ def create_app(
     oyentes. No tiene permisos propios: llama a `/v1` y `/a2a/m/{comercio}`
     con la clave que pega el usuario. La prende el despliegue serverless; en
     `python -m proxy`, `GATEWAY_CONSOLA=1`.
+
+    `panel=True` suma el panel del cliente (`proxy/panel/`): `GET /panel` y
+    sus estáticos, y `GET /panel/` → 307 a `/panel`, sin clave en los dos
+    oyentes. La empresa entra con su clave de solo lectura y el navegador lee
+    su historial de `/v1`; la página no tiene permisos propios. Lo prende el
+    despliegue serverless; en `python -m proxy`, `GATEWAY_PANEL=1`.
 
     Con los defaults la app es la de siempre.
     """
@@ -4789,9 +4798,13 @@ def create_app(
     rutas += rutas_v1(
         nucleo, max_cuerpo_bytes=config.max_cuerpo_v1, url_publica=config.gateway_public_url,
     )
+    abiertas: set[str] = set()
     if consola:
         rutas += rutas_consola()
-    abiertas: set[str] = set(RUTAS_CONSOLA) if consola else set()
+        abiertas |= RUTAS_CONSOLA
+    if panel:
+        rutas += rutas_panel()
+        abiertas |= RUTAS_PANEL
     if config.purga_secreto is not None:
         # La purga de la retención (Vercel Cron): fuera de `/v1` (ninguna
         # clave de API la usa) y solo con su secreto (`proxy/retencion.py`).

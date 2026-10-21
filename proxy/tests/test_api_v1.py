@@ -747,7 +747,7 @@ async def test_openapi_lista_todas_las_rutas(cliente, nucleo):
     }
     en_spec = {(m, p) for p, ops in spec["paths"].items() for m in ops}
     assert en_spec == rutas
-    assert len(rutas) == 16
+    assert len(rutas) == 17
 
     publicas = {p for p, ops in spec["paths"].items() for op in ops.values()
                 if op.get("security") == []}

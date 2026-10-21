@@ -77,6 +77,16 @@ async def test_el_listado_pasa_los_filtros_al_nucleo(cliente, nucleo):
     assert filtros.cursor is None
 
 
+async def test_el_listado_pasa_resultado_e_intento_de_estafa(cliente, nucleo):
+    r = await cliente.get("/v1/compras", params={"resultado": "frenada", "intento_de_estafa": "true"})
+    assert r.status_code == 200, r.text
+    assert nucleo.filtros.resultado == "frenada" and nucleo.filtros.intento_de_estafa is True
+    await cliente.get("/v1/compras", params={"intento_de_estafa": "false"})
+    assert nucleo.filtros.resultado is None and nucleo.filtros.intento_de_estafa is False
+    await cliente.get("/v1/compras")
+    assert nucleo.filtros.resultado is None and nucleo.filtros.intento_de_estafa is None
+
+
 @pytest.mark.parametrize("valor, esperado", [
     ("2026-10-21T10:00:00Z", datetime(2026, 10, 21, 10, tzinfo=timezone.utc)),
     ("2026-10-21T10:00:00+00:00", datetime(2026, 10, 21, 10, tzinfo=timezone.utc)),
@@ -102,6 +112,11 @@ async def test_fechas_con_hora(cliente, nucleo, valor, esperado):
     ({"referencia": "x" * 201}, "referencia"),
     ({"referencia": "ord\u0007"}, "referencia"),
     ({"estado": "inventado"}, "estado"),
+    ({"resultado": "inventado"}, "resultado"),
+    ({"resultado": "Aprobada"}, "resultado"),
+    ({"intento_de_estafa": "si"}, "intento_de_estafa"),
+    ({"intento_de_estafa": "1"}, "intento_de_estafa"),
+    ({"intento_de_estafa": "True"}, "intento_de_estafa"),
     ({"cursor": "no es un cursor"}, "cursor"),
     ({"cursor": "e30"}, "cursor"),
     ({"cursor": base64.urlsafe_b64encode(b'{"v":2,"c":"2026-10-21T12:00:00+00:00","i":"cmp-0123456789abcdef"}').decode().rstrip("=")}, "cursor"),
@@ -247,6 +262,10 @@ async def test_explicacion_de_una_compra_frenada_por_un_dato_falso(config_gw, gu
     assert datos["resumen"].startswith("Frenamos la compra antes de que la firmaras:")
     assert "según el catálogo público" in datos["resumen"]
     assert datos["monto"] == 149.0 and datos["moneda"] == "USD"
+    # Los datos de la compra, para mostrarla con un solo pedido.
+    assert datos["pedido"] == "zapatillas Nike para exterior" and datos["referencia"] == "ord-b2"
+    assert datos["comercio"] == "merchant_1" and datos["tope"] == {"precio": 150, "moneda": "USD"}
+    assert datos["creada"] == listado[0]["creada"]
     assert datos["recibo"]["firmado"] is True
     etapas = [e["etapa"] for e in datos["linea_de_tiempo"]]
     assert etapas[0] == "pedido" and "verificacion" in etapas and "checkout" in etapas
@@ -254,6 +273,7 @@ async def test_explicacion_de_una_compra_frenada_por_un_dato_falso(config_gw, gu
     _sin_texto_del_comercio(r, "B2")
     (fila,) = listado
     assert fila["resultado"] == "frenada" and fila["intento_de_estafa"] is True
+    assert (fila["monto"], fila["moneda"]) == (datos["monto"], datos["moneda"]) == (149.0, "USD")
     assert "dato_falso" in fila["alertas"]
     assert resumen["compras"] == 1 and resumen["por_resultado"]["frenada"] == 1
     assert resumen["intentos_de_estafa"] == 1 and resumen["por_alerta"]["dato_falso"] == 1
@@ -417,6 +437,207 @@ async def test_el_listado_por_alerta_mira_mas_alla_de_una_pagina(config_gw):
     assert datos["siguiente"] is None
     assert nada == {"compras": [], "siguiente": None}
     await asyncio.sleep(0)
+
+
+# -- el filtro por resultado y por intento de estafa ---------------------------------------
+
+
+def _evaluador_por_cart():
+    """El Guard de prueba: cart_1 aprobado, cart_2 y cart_3 escalar, cart_4 bloqueado."""
+    from contracts import Veredicto
+    from proxy.evaluador import EvaluadorCargado
+
+    estados = {"cart_1": "aprobado", "cart_2": "escalar", "cart_3": "escalar", "cart_4": "bloqueado"}
+
+    def evaluar(ficha, ofertas_vistas, cart_id_elegido, catalogo, politica=None,
+                checkout_hash=None, ahora=None, checkout=None):
+        return Veredicto(status=estados[cart_id_elegido], cart_id_elegido=cart_id_elegido,
+                         cart_id_recomendado="cart_1", ranking=["cart_1"], chequeos=[],
+                         motivo="motivo de test")
+
+    return EvaluadorCargado(evaluar=evaluar, nombre="guard")
+
+
+@pytest.fixture(params=["una", "varias"])
+def gateway_resultados(request, config_gw):
+    if request.param == "una":
+        return armar_gateway(config_gw, _evaluador_por_cart(), almacen=EstadoMemoria(),
+                             filtro=_filtro_que_corta), None
+    base = BaseFalsa()
+    almacen = EstadoSupabase(URL_SUPABASE, "clave", transport=base.transporte())
+    return armar_gateway(_config_varias(config_gw), _evaluador_por_cart(), almacen=almacen,
+                         demo=None, filtro=_filtro_que_corta), base
+
+
+async def _una_de_cada_resultado(mundo, c: httpx.AsyncClient) -> dict[str, str]:
+    """Una compra por resultado, de la más vieja a la más nueva: en curso,
+    aprobada, frenada, retenida, aprobada por una persona y cortada por
+    seguridad (la única con intento de estafa)."""
+    ids = {"en_curso": (await crear_compra(c, referencia="r-en_curso"))["compra_id"]}
+    for nombre, cart in (("aprobada", "cart_1"), ("frenada", "cart_4"), ("retenida", "cart_2"),
+                         ("aprobada_por_persona", "cart_3")):
+        compra = (await crear_compra(c, referencia=f"r-{nombre}"))["compra_id"]
+        contexto = (await buscar(c, compra, escenario="baseline")).json()["result"]["contextId"]
+        await checkout(c, compra, contexto, cart)
+        if nombre == "aprobada_por_persona":
+            r = await c.post(f"/v1/compras/{compra}/aprobaciones",
+                             json={"cart_id": cart, "contexto_id": contexto})
+            assert r.status_code == 201, r.text
+            await checkout(c, compra, contexto, cart)
+        ids[nombre] = compra
+    ids["cortada"] = (await crear_compra(c, referencia="r-cortada"))["compra_id"]
+    await buscar(c, ids["cortada"], escenario="B")
+    await mundo.esperar_fondo()
+    return ids
+
+
+async def _ids(c: httpx.AsyncClient, **params: str) -> list[str]:
+    r = await c.get("/v1/compras", params=params)
+    assert r.status_code == 200, r.text
+    return [v["compra_id"] for v in r.json()["compras"]]
+
+
+async def test_el_listado_filtra_por_resultado_y_por_intento_de_estafa(gateway_resultados):
+    from proxy.explicacion import RESULTADOS
+
+    mundo, _ = gateway_resultados
+    async with cliente_publico(mundo.app) as c:
+        ids = await _una_de_cada_resultado(mundo, c)
+        todas = (await c.get("/v1/compras")).json()["compras"]
+        por = {r: await _ids(c, resultado=r) for r in RESULTADOS}
+        estafa = await _ids(c, intento_de_estafa="true")
+        sin_estafa = await _ids(c, intento_de_estafa="false")
+        # Combinado con los demás filtros.
+        con_referencia = await _ids(c, resultado="aprobada", referencia="r-aprobada")
+        con_estado = await _ids(c, resultado="cortada_por_seguridad", estado="bloqueada")
+        contradictorio = await _ids(c, resultado="cortada_por_seguridad", estado="creada")
+        estafa_y_alerta = await _ids(c, intento_de_estafa="true", alerta="manipulacion")
+        estafa_aprobada = await _ids(c, intento_de_estafa="true", resultado="aprobada")
+    # Cada compra cae en el filtro del resultado que dice el listado.
+    assert {v["compra_id"]: v["resultado"] for v in todas} == {
+        ids["en_curso"]: "en_curso", ids["aprobada"]: "aprobada", ids["frenada"]: "frenada",
+        ids["retenida"]: "retenida", ids["aprobada_por_persona"]: "aprobada",
+        ids["cortada"]: "cortada_por_seguridad",
+    }
+    assert por["aprobada"] == [ids["aprobada_por_persona"], ids["aprobada"]]
+    assert por["frenada"] == [ids["frenada"]] and por["retenida"] == [ids["retenida"]]
+    assert por["en_curso"] == [ids["en_curso"]]
+    assert por["cortada_por_seguridad"] == [ids["cortada"]]
+    assert por["vencida"] == [] and por["sin_compra"] == []
+    assert estafa == [ids["cortada"]]
+    assert sin_estafa == [v["compra_id"] for v in todas if v["compra_id"] != ids["cortada"]]
+    assert con_referencia == [ids["aprobada"]]
+    assert con_estado == [ids["cortada"]] and contradictorio == []
+    assert estafa_y_alerta == [ids["cortada"]] and estafa_aprobada == []
+
+
+async def test_el_filtro_por_resultado_pagina_con_el_cursor(gateway_resultados):
+    mundo, _ = gateway_resultados
+    async with cliente_publico(mundo.app) as c:
+        ids = await _una_de_cada_resultado(mundo, c)
+        primera = (await c.get("/v1/compras", params={"resultado": "aprobada", "limite": "1"})).json()
+        segunda = (await c.get("/v1/compras", params={
+            "resultado": "aprobada", "limite": "1", "cursor": primera["siguiente"],
+        })).json()
+    assert [v["compra_id"] for v in primera["compras"]] == [ids["aprobada_por_persona"]]
+    assert primera["siguiente"] is not None
+    assert [v["compra_id"] for v in segunda["compras"]] == [ids["aprobada"]]
+    assert all(v["resultado"] == "aprobada" for v in primera["compras"] + segunda["compras"])
+
+
+async def test_el_filtro_por_resultado_tiene_el_tope_de_escaneo_de_alerta(config_gw, monkeypatch):
+    """Como `alerta`: se filtra en el gateway al recorrer, y mira como mucho
+    `MAX_ESCANEO_LISTADO` compras por pedido; si no llenó la página, la
+    devuelve con `siguiente` (seguí pidiendo)."""
+    from proxy import gateway
+
+    monkeypatch.setattr(gateway, "LOTE_ESCANEO", 2)
+    monkeypatch.setattr(gateway, "MAX_ESCANEO_LISTADO", 2)
+    mundo = armar_gateway(config_gw, _evaluador_por_cart(), almacen=EstadoMemoria())
+    async with cliente_publico(mundo.app) as c:
+        frenada = (await crear_compra(c))["compra_id"]
+        contexto = (await buscar(c, frenada, escenario="baseline")).json()["result"]["contextId"]
+        await checkout(c, frenada, contexto, "cart_4")
+        for _ in range(4):
+            await crear_compra(c)
+        vistas: list[str] = []
+        params: dict[str, str] = {"resultado": "frenada"}
+        pedidos = 0
+        while True:
+            datos = (await c.get("/v1/compras", params=params)).json()
+            pedidos += 1
+            vistas += [v["compra_id"] for v in datos["compras"]]
+            if datos["siguiente"] is None:
+                break
+            params["cursor"] = datos["siguiente"]
+    assert vistas == [frenada]
+    # Cuatro en curso más nuevas, de a dos por pedido: hace falta seguir pidiendo.
+    assert pedidos >= 3
+
+
+async def test_sin_compra_cuando_pasa_la_vida_de_la_compra(config_gw):
+    mundo = armar_gateway(replace(config_gw, compra_ttl_s=1), _evaluador_por_cart(),
+                          almacen=EstadoMemoria())
+    async with cliente_publico(mundo.app) as c:
+        vieja = (await crear_compra(c))["compra_id"]
+        await asyncio.sleep(1.1)
+        nueva = (await crear_compra(c))["compra_id"]
+        sin_compra = await _ids(c, resultado="sin_compra")
+        en_curso = await _ids(c, resultado="en_curso")
+    assert sin_compra == [vieja] and en_curso == [nueva]
+
+
+async def test_el_filtro_por_resultado_no_hace_n_mas_1(config_gw):
+    """Con varias instancias, las aprobaciones (que deciden entre `retenida` y
+    `aprobada`) se leen de una vez por página del almacén, no por compra."""
+    base = BaseFalsa()
+    almacen = EstadoSupabase(URL_SUPABASE, "clave", transport=base.transporte())
+    mundo = armar_gateway(_config_varias(config_gw), _evaluador_por_cart(), almacen=almacen,
+                          demo=None)
+    async with cliente_publico(mundo.app) as c:
+        for _ in range(4):
+            compra = (await crear_compra(c))["compra_id"]
+            contexto = (await buscar(c, compra, escenario="baseline")).json()["result"]["contextId"]
+            await checkout(c, compra, contexto, "cart_2")
+        await mundo.esperar_fondo()
+        antes = len(base.pedidos)
+        retenidas = await _ids(c, resultado="retenida")
+        pedidos = base.pedidos[antes:]
+    assert len(retenidas) == 4
+    tablas = [p.url.path.rsplit("/", 1)[-1] for p in pedidos]
+    assert tablas.count("gw_compras") == 1, tablas
+    # Una lectura de aprobaciones para decidir el resultado y otra para las fotos.
+    assert tablas.count("gw_aprobaciones") <= 2, tablas
+
+
+# -- el monto de cada compra: el mismo en el listado y en la explicación --------------
+
+
+async def test_el_listado_trae_el_monto_de_la_explicacion(cliente, nucleo):
+    """`monto` y `moneda` de cada compra del listado salen con la misma regla
+    que los de la explicación (`explicacion.monto_de_compra`): el del último
+    checkout evaluado, o null si no hubo o si el proxy frenó uno después."""
+    from proxy.tests.test_api_v1 import AHORA, _foto
+
+    veredicto = {"status": "bloqueado", "cart_id": "cart_2", "chequeos": [], "alertas": [],
+                 "monto": 401.35, "moneda": "USD", "ts": AHORA.isoformat()}
+    despues = (AHORA + timedelta(minutes=1)).isoformat()
+    casos = [
+        (_foto(), None, None),
+        (_foto(veredictos=(veredicto,)), 401.35, "USD"),
+        (_foto(veredictos=({**veredicto, "monto": None, "moneda": None},)), None, None),
+        # El proxy frenó un checkout después del último veredicto: sin monto.
+        (_foto(veredictos=(veredicto,), bloqueo_proxy={"ts": despues}), None, None),
+    ]
+    for foto, monto, moneda in casos:
+        nucleo.foto = foto
+        fila = (await cliente.get("/v1/compras")).json()["compras"][0]
+        explicada = (await cliente.get(f"/v1/compras/{COMPRA_ID}/explicacion")).json()
+        assert (fila["monto"], fila["moneda"]) == (monto, moneda), foto.veredictos
+        assert (explicada["monto"], explicada["moneda"]) == (monto, moneda)
+    # El GET de una compra (y los webhooks) siguen sin esos campos arriba.
+    una = (await cliente.get(f"/v1/compras/{COMPRA_ID}")).json()
+    assert "monto" not in una and "moneda" not in una
 
 
 # -- el tamaño: el listado sin el detalle y el peor caso de una compra ---------------

@@ -51,6 +51,7 @@ TIPOS = {
     "/consola": ("text/html", "index.html"),
     "/consola/app.js": ("text/javascript", "app.js"),
     "/consola/logica.mjs": ("text/javascript", "logica.mjs"),
+    "/consola/recibo.mjs": ("text/javascript", "recibo.mjs"),
     "/consola/estilo.css": ("text/css", "estilo.css"),
 }
 CSP = (
@@ -219,7 +220,7 @@ def _texto(nombre: str) -> str:
     return (CARPETA / nombre).read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("archivo", ["app.js", "logica.mjs", "index.html"])
+@pytest.mark.parametrize("archivo", ["app.js", "logica.mjs", "recibo.mjs", "index.html"])
 def test_el_js_no_arma_html_con_texto(archivo):
     texto = _texto(archivo)
     for prohibido in (
@@ -230,7 +231,7 @@ def test_el_js_no_arma_html_con_texto(archivo):
         assert prohibido not in texto, f"{archivo} usa {prohibido}"
 
 
-@pytest.mark.parametrize("archivo", ["app.js", "logica.mjs", "index.html", "estilo.css"])
+@pytest.mark.parametrize("archivo", ["app.js", "logica.mjs", "recibo.mjs", "index.html", "estilo.css"])
 def test_sin_urls_externas(archivo):
     urls = set(re.findall(r"""(?i)\b(?:https?:)?//[a-z0-9.-]+\.[a-z]{2,}[^\s"'`<>)]*""", _texto(archivo)))
     assert urls <= URLS_PERMITIDAS, f"{archivo}: {sorted(urls - URLS_PERMITIDAS)}"
@@ -247,7 +248,9 @@ def test_el_html_no_tiene_scripts_ni_estilos_en_linea():
     assert not re.search(r"\sstyle\s*=", html, re.I)
     assert not re.search(r"\son[a-z]+\s*=", html, re.I)
     for ref in re.findall(r"""(?:src|href)="([^"]+)\"""", html):
-        assert ref.startswith(("/consola/", "/v1/", "#", "data:image/svg+xml,")), ref
+        assert ref.startswith(("/consola/", "/v1/", "#", "data:image/svg+xml,")) or ref == "/panel", ref
+    # El link al panel del cliente (y el panel tiene uno a la consola).
+    assert '<a href="/panel">Panel</a>' in html
     assert '<html lang="es">' in html
     # El campo de la clave: password y sin name (un formulario nunca la manda).
     (campo,) = re.findall(r"<input id=\"clave\"[^>]*>", html, re.S)

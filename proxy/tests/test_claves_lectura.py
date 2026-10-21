@@ -52,8 +52,10 @@ from proxy.tests.gateway_ayudantes import (
     CLAVE_OTRO,
     FICHA,
     GATEWAY_PUBLIC_URL,
+    KID_ACME,
     MERCHANT_B_HOST,
     SECRETO_WEBHOOK,
+    SHA_ACME,
     FakeMerchantB,
     armar_gateway,
     buscar,
@@ -362,9 +364,11 @@ def gateway(request, config) -> Gateway:
         kwargs = {"demo": None, "almacen": EstadoSupabase(
             "https://base.supabase.test", "clave-de-prueba", transport=BaseFalsa().transporte()
         )}
+    # Con la consola y el panel prendidos, como en Vercel: sus rutas también
+    # se clasifican (`test_cada_ruta_de_la_app_esta_clasificada`).
     mundo = armar_gateway(
         config, evaluador_espia()[0], merchant=merchant, integradores=registro_con_lectura(),
-        **kwargs,
+        consola=True, panel=True, **kwargs,
     )
     return Gateway(mundo.app, base, merchant, nombre)
 
@@ -514,6 +518,92 @@ async def test_cada_ruta_de_v1_de_la_app_sigue_la_lista_blanca(gateway):
     assert probadas["permitidas"] >= 4 and probadas["prohibidas"] >= 11, probadas
 
 
+async def test_cada_ruta_de_la_app_esta_clasificada(gateway):
+    """Todas las rutas reales de la app, no solo las de `/v1`, caen en una
+    clase conocida: una ruta nueva sin clasificar rompe este test. Las
+    estáticas de la consola y del panel del cliente son iguales con la clave
+    de lectura, sin clave o con la completa (la página es pública; los datos
+    los pide el navegador a `/v1` con la clave)."""
+    from proxy import consola, panel
+    from proxy.config import RUTA_PURGA
+
+    estaticas = consola.RUTAS_ABIERTAS | panel.RUTAS_ABIERTAS
+    publico = gateway.base == BASE_PUBLICA or gateway.nombre.startswith("vercel")
+    sin_clasificar: list[str] = []
+    vistas: set[str] = set()
+    async with (_cliente(gateway, CLAVE_LECTURA) as lectura, _cliente(gateway, None) as anonimo,
+                _cliente(gateway, CLAVE_ACME) as completa):
+        for ruta in gateway.app.routes:
+            patron = getattr(ruta, "path", "")
+            if patron in estaticas:
+                for metodo in sorted(getattr(ruta, "methods", None) or ()):
+                    respuestas = [await c.request(metodo, patron) for c in (lectura, anonimo, completa)]
+                    codigos = {r.status_code for r in respuestas}
+                    assert len(codigos) == 1 and codigos <= {200, 307}, (gateway.nombre, metodo, patron, codigos)
+                    assert len({r.content for r in respuestas}) == 1, (gateway.nombre, metodo, patron)
+                    assert all(
+                        r.headers["content-security-policy"].startswith("default-src 'none'")
+                        for r in respuestas
+                    ), patron
+                vistas.add(patron)
+            elif patron == "/v1" or patron.startswith("/v1/"):
+                continue  # test_cada_ruta_de_v1_de_la_app_sigue_la_lista_blanca
+            elif patron.startswith("/a2a/"):
+                continue  # test_lectura_no_sirve_para_el_trafico_a2a
+            elif patron.startswith("/guard/"):
+                # La API de control: en el público no existe; en el local la
+                # protege ControlLocal (test_control.py).
+                if publico:
+                    r = await lectura.get(patron)
+                    assert r.status_code == 404, (gateway.nombre, patron)
+            elif patron == RUTA_PURGA:
+                continue  # solo con su secreto (test_retencion.py)
+            else:
+                sin_clasificar.append(patron)
+    assert sin_clasificar == [], (gateway.nombre, sin_clasificar)
+    assert vistas == estaticas, (gateway.nombre, sorted(estaticas - vistas))
+    assert {"/panel", "/panel/app.js", "/consola"} <= vistas
+
+
+async def test_v1_clave_dice_de_quien_es_y_que_puede(gateway):
+    """`GET /v1/clave`: el integrador, el `kid` y los permisos de la clave que
+    autenticó (`[]` es una completa). Lo usa el panel para avisar si entraron
+    con una completa. Nunca el secreto ni el sha256, y sin efectos."""
+    async with (_cliente(gateway, CLAVE_ACME) as completa, _cliente(gateway, CLAVE_LECTURA) as lectura,
+                _cliente(gateway, CLAVE_OTRO) as otro, _cliente(gateway, None) as anonimo):
+        compra = (await crear_compra(completa))["compra_id"]
+        antes = (await completa.get(f"/v1/compras/{compra}")).json()
+        r_lectura = await lectura.get("/v1/clave")
+        r_completa = await completa.get("/v1/clave")
+        r_otro = await otro.get("/v1/clave")
+        sin_clave = await anonimo.get("/v1/clave")
+        despues = (await completa.get(f"/v1/compras/{compra}")).json()
+        ids = await _ids_de_compras(completa)
+    assert r_lectura.status_code == r_completa.status_code == r_otro.status_code == 200, gateway.nombre
+    assert r_lectura.json() == {
+        "integrador": {"id": "acme", "nombre": "ACME Compras"}, "kid": KID_LECTURA,
+        "permisos": ["lectura"],
+    }
+    assert r_completa.json() == {
+        "integrador": {"id": "acme", "nombre": "ACME Compras"}, "kid": KID_ACME, "permisos": [],
+    }
+    assert r_otro.json()["integrador"]["id"] == "otro" and r_otro.json()["permisos"] == []
+    for r, clave, sha in ((r_lectura, CLAVE_LECTURA, SHA_LECTURA), (r_completa, CLAVE_ACME, SHA_ACME)):
+        assert clave not in r.text and clave.rsplit("_", 1)[-1] not in r.text and sha not in r.text
+    assert sin_clave.status_code == 401 and sin_clave.json()["error"]["codigo"] == "no_autenticado"
+    # Sin efectos: ni compras nuevas, ni cambios, ni nada al comercio.
+    assert ids == [compra] and despues == antes
+    assert gateway.merchant.recibidos == []
+
+
+async def test_v1_clave_con_una_clave_de_baja_o_mal_escrita_es_401(gateway):
+    cambiada = CLAVE_LECTURA[:-1] + _otra_letra(CLAVE_LECTURA)
+    for clave in (cambiada, CLAVE_LECTURA_BAJA):
+        async with _cliente(gateway, clave) as c:
+            r = await c.get("/v1/clave")
+        assert r.status_code == 401 and r.json()["error"]["codigo"] == "clave_invalida", gateway.nombre
+
+
 def test_la_lista_blanca_es_solo_get_en_v1():
     assert RUTAS_LECTURA, "la lista no puede estar vacía"
     for metodo, patron in RUTAS_LECTURA:
@@ -521,7 +611,7 @@ def test_la_lista_blanca_es_solo_get_en_v1():
         assert patron.startswith("/v1/") and patron not in RUTAS_V1_PUBLICAS, patron
     pedidas = {
         "/v1/compras", "/v1/compras/{compra_id}", "/v1/compras/{compra_id}/explicacion",
-        "/v1/resumen", "/v1/comercios", "/v1/webhooks/entregas",
+        "/v1/resumen", "/v1/comercios", "/v1/webhooks/entregas", "/v1/clave",
     }
     assert {p for _, p in RUTAS_LECTURA} == pedidas
 

@@ -326,7 +326,7 @@ def test_la_app_completa_con_lo_que_fuerza_el_despliegue():
     assert proxy.almacen.durable is True
 
 
-def test_solo_a2a_m_v1_y_la_consola():
+def test_solo_a2a_m_v1_la_consola_y_el_panel():
     rutas = _rutas(_serverless())
     assert not any(r.startswith("/guard") for r in rutas)
     assert "/a2a/merchant_agent" not in rutas
@@ -337,9 +337,15 @@ def test_solo_a2a_m_v1_y_la_consola():
     consola = {r for r in rutas if r == "/" or r == "/consola" or r.startswith("/consola/")}
     assert consola == {
         "/", "/consola", "/consola/", "/consola/app.js", "/consola/logica.mjs",
-        "/consola/estilo.css",
+        "/consola/recibo.mjs", "/consola/estilo.css",
     }
-    assert all(r == "/v1" or r.startswith(("/a2a/m/", "/v1/")) for r in rutas - consola)
+    # Y el panel del cliente (estáticos sin clave, ver test_panel.py).
+    panel = {r for r in rutas if r == "/panel" or r.startswith("/panel/")}
+    assert panel == {
+        "/panel", "/panel/", "/panel/app.js", "/panel/logica.mjs", "/panel/vista.mjs",
+        "/panel/recibo.mjs", "/panel/estilo.css",
+    }
+    assert all(r == "/v1" or r.startswith(("/a2a/m/", "/v1/")) for r in rutas - consola - panel)
 
 
 async def test_openapi_public_key_y_las_rutas_que_no_estan():

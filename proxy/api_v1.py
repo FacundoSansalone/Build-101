@@ -50,6 +50,7 @@ from starlette.types import Receive, Scope, Send
 from contracts import CheckoutVisto, Ficha, OfertasVistas, Requisito
 from proxy import a2a, explicacion, openapi, vistas
 from proxy.alertas import ALERTAS
+from proxy.claves import ClaveAutenticada
 from proxy.tipos_gateway import (
     ID_COMPRA_RE,
     ID_SEGURO_RE,
@@ -713,6 +714,12 @@ def _filtros_listado(request: Request) -> FiltrosListado:
     alerta = request.query_params.get("alerta")
     if alerta is not None and alerta not in ALERTAS:
         raise _error_validacion("alerta", "una de: " + ", ".join(ALERTAS))
+    resultado = request.query_params.get("resultado")
+    if resultado is not None and resultado not in explicacion.RESULTADOS:
+        raise _error_validacion("resultado", "uno de: " + ", ".join(explicacion.RESULTADOS))
+    crudo_estafa = request.query_params.get("intento_de_estafa")
+    if crudo_estafa is not None and crudo_estafa not in ("true", "false"):
+        raise _error_validacion("intento_de_estafa", "true o false")
     problemas = _Problemas()
     referencia = _texto(
         problemas, dict(request.query_params), "referencia", "referencia",
@@ -728,7 +735,9 @@ def _filtros_listado(request: Request) -> FiltrosListado:
     cursor = decodificar_cursor(crudo) if crudo is not None else None
     return FiltrosListado(
         limite=limite, estado=estado, desde=desde, hasta=hasta, referencia=referencia,
-        alerta=alerta, cursor=cursor,
+        alerta=alerta, cursor=cursor, resultado=resultado,
+        intento_de_estafa=None if crudo_estafa is None else crudo_estafa == "true",
+        ahora=datetime.now(timezone.utc),
     )
 
 
@@ -848,18 +857,21 @@ def rutas_v1(
         )
 
     def vista_listada(foto: FotoCompra, ahora: datetime) -> dict[str, Any]:
-        """La `VistaCompra` con lo del historial: `resultado`, `alertas` e
-        `intento_de_estafa` (de los veredictos guardados, sin eventos). Sin el
-        `chequeos_detalle` de los veredictos: 200 compras con 20 veredictos
-        cada una no entran en una respuesta (el detalle está en la compra y en
-        su explicación)."""
+        """La `VistaCompra` con lo del historial: `resultado`, `alertas`,
+        `intento_de_estafa` (de los veredictos guardados, sin eventos) y el
+        `monto` y la `moneda` con la regla de la explicación
+        (`explicacion.monto_de_compra`), así el listado y el detalle coinciden.
+        Sin el `chequeos_detalle` de los veredictos: 200 compras con 20
+        veredictos cada una no entran en una respuesta (el detalle está en la
+        compra y en su explicación)."""
         datos = vista(foto)
         resumen = resumen_de(foto, datos, ahora)
+        monto, moneda = explicacion.monto_de_compra(datos, foto.bloqueo_proxy)
         datos["veredictos"] = [
             {k: v for k, v in veredicto.items() if k != "chequeos_detalle"}
             for veredicto in datos["veredictos"]
         ]
-        return {**datos, **resumen}
+        return {**datos, **resumen, "monto": monto, "moneda": moneda}
 
     async def crear_compra(request: Request) -> Response:
         integrador = integrador_de(request)
@@ -871,7 +883,8 @@ def rutas_v1(
         integrador = integrador_de(request)
         filtros = _filtros_listado(request)
         pagina = await nucleo.listar_compras(integrador, filtros)
-        ahora = datetime.now(timezone.utc)
+        # El mismo momento con el que se filtró por `resultado`.
+        ahora = filtros.ahora or datetime.now(timezone.utc)
         return _json({
             "compras": [vista_listada(f, ahora) for f in pagina.fotos[:filtros.limite]],
             "siguiente": codificar_cursor(pagina.siguiente),
@@ -935,6 +948,20 @@ def rutas_v1(
         solicitud = validar_solicitud_filtrar(await leer_json(request, max_cuerpo_bytes))
         return _json(await nucleo.filtrar(integrador, solicitud))
 
+    async def clave(request: Request) -> Response:
+        """De quién es la clave del pedido y qué puede: el integrador, el `kid`
+        (público) y los permisos (`[]` es una clave completa). Nunca el secreto
+        ni el sha256."""
+        integrador = integrador_de(request)
+        autenticada = getattr(request.state, "clave", None)
+        if not isinstance(autenticada, ClaveAutenticada) or autenticada.integrador.id != integrador.id:
+            raise ErrorApi(401, "no_autenticado", "Falta la clave de API.")
+        return _json({
+            "integrador": {"id": integrador.id, "nombre": integrador.nombre},
+            "kid": autenticada.kid,
+            "permisos": sorted(autenticada.permisos or ()),
+        })
+
     async def comercios(request: Request) -> Response:
         integrador = integrador_de(request)
         return _json({
@@ -994,6 +1021,7 @@ def rutas_v1(
         ("/v1/evaluar", "POST", evaluar),
         ("/v1/filtrar", "POST", filtrar),
         ("/v1/comercios", "GET", comercios),
+        ("/v1/clave", "GET", clave),
         ("/v1/webhooks/entregas", "GET", entregas),
         ("/v1/webhooks/prueba", "POST", probar_webhook),
         ("/v1/public-key", "GET", clave_publica),

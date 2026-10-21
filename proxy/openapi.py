@@ -289,6 +289,12 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
                     "resultado": _RESULTADO,
                     "alertas": {"type": "array", "items": _ALERTA},
                     "intento_de_estafa": {"type": "boolean"},
+                    "monto": _nullable({
+                        "type": "number",
+                        "description": "El del último checkout evaluado, como en la "
+                        "explicación; null si no hubo (o si el gateway frenó uno después).",
+                    }),
+                    "moneda": _nullable(_MONEDA),
                 },
             },
         ],
@@ -300,9 +306,24 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
             "siguiente": _nullable({
                 "type": "string",
                 "description": "Cursor opaco para la página siguiente (`?cursor=`), o null si "
-                "no hay más. Con `alerta`, una página puede venir con menos compras y "
-                "`siguiente`: el gateway mira hasta 1000 por pedido.",
+                "no hay más. Con `alerta`, `resultado` o `intento_de_estafa`, una página "
+                "puede venir con menos compras y `siguiente`: el gateway mira hasta 1000 por "
+                "pedido.",
             }),
+        },
+    },
+    "VistaClave": {
+        "type": "object",
+        "properties": {
+            "integrador": {"type": "object", "properties": {
+                "id": _SLUG, "nombre": {"type": "string"},
+            }},
+            "kid": _nullable({"type": "string", "pattern": "^[0-9a-f]{12}$"}),
+            "permisos": {
+                "type": "array", "items": {"type": "string", "enum": ["lectura"]},
+                "description": "Vacío: una clave completa. `lectura`: solo los GET de la lista "
+                "de solo lectura.",
+            },
         },
     },
     "Explicacion": {
@@ -311,6 +332,16 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
         "verificados: nunca texto, ids ni el recibo firmado del comercio.",
         "properties": {
             "compra_id": _ID_COMPRA,
+            "pedido": _nullable({"type": "string", "description": "Lo que mandaste en `pedido`."}),
+            "referencia": _nullable({"type": "string"}),
+            "comercio": _nullable(_SLUG),
+            "creada": _nullable(_FECHA),
+            "tope": _nullable({
+                "type": "object",
+                "description": "El tope que autorizaste: el precio máximo y la moneda "
+                "obligatorios de la ficha vigente (null si falta alguno).",
+                "properties": {"precio": {"type": "number"}, "moneda": _MONEDA},
+            }),
             "resultado": _RESULTADO,
             "intento_de_estafa": {"type": "boolean"},
             "alertas": {"type": "array", "items": _ALERTA},
@@ -533,8 +564,9 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
      "Las compras del integrador, la más reciente primero (`creada desc`), cada una con su "
      "`resultado`, sus `alertas` e `intento_de_estafa`. Filtros: `limite` (1 a 200, 50 por "
      "defecto), `estado`, `desde` y `hasta` (sobre `creada`; `hasta` excluido; un día "
-     "`YYYY-MM-DD` es entero, en UTC), `referencia` (exacta) y `alerta`. Para la página "
-     "siguiente, `cursor` con el `siguiente` de la respuesta.",
+     "`YYYY-MM-DD` es entero, en UTC), `referencia` (exacta), `alerta`, `resultado` e "
+     "`intento_de_estafa`, combinables. Para la página siguiente, `cursor` con el "
+     "`siguiente` de la respuesta.",
      None, {"200": ("Compras", "ListaCompras")}, ["400", "401", "503"], False),
     ("get", "/v1/compras/{compra_id}", "Ver una compra",
      "Estado, ficha vigente, lo pendiente, veredictos y aprobaciones. Sirve para "
@@ -580,6 +612,11 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
     ("get", "/v1/comercios", "Comercios permitidos",
      "Los comercios que el integrador puede usar, con su URL A2A.",
      None, {"200": ("Comercios", "ListaComercios")}, ["401"], False),
+    ("get", "/v1/clave", "Tu clave",
+     "De quién es la clave del pedido y qué puede: el integrador, el `kid` (público) y "
+     "los permisos (`[]` es una clave completa; `[\"lectura\"]`, una de solo lectura). "
+     "Nunca el secreto ni el sha256. La puede usar una clave de solo lectura.",
+     None, {"200": ("Clave", "VistaClave")}, ["401"], False),
     ("get", "/v1/webhooks/entregas", "Entregas de webhooks",
      "Las últimas entregas (en memoria: no sobreviven a un reinicio). Parámetro "
      "`limite` (1 a 200).",
@@ -612,6 +649,9 @@ PARAMETROS: dict[tuple[str, str], list[dict[str, Any]]] = {
         _query("hasta", _FECHA_QUERY, "Creadas antes de ese momento (un día entero si es una fecha)."),
         _query("referencia", {"type": "string", "maxLength": 200}, "La `referencia` exacta."),
         _query("alerta", {"type": "string", "enum": _ALERTAS}, "Solo las que tienen esa alerta."),
+        _query("resultado", {"type": "string", "enum": _RESULTADOS}, "Solo las de ese resultado."),
+        _query("intento_de_estafa", {"type": "string", "enum": ["true", "false"]},
+               "`true`: solo las que tienen alguna alerta de estafa; `false`: las que no."),
         _query("cursor", {"type": "string"}, "El `siguiente` de la página anterior."),
     ],
     ("get", "/v1/resumen"): [

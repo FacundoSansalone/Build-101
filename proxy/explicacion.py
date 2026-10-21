@@ -71,6 +71,7 @@ _RECIBO_RE = re.compile(r"rcb-[0-9a-f]{8,64}")
 # Un valor técnico (`basketball_shoes`): en los textos va con espacios.
 _ENUM_RE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)+")
 _KID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+_COMERCIO_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 
 # -- nombres ---------------------------------------------------------------------
 
@@ -910,9 +911,11 @@ def _eventos(eventos: Iterable[Any]) -> list[dict[str, Any]]:
     return salida
 
 
-def _tope(ficha: Any) -> str | None:
+def _precio_y_moneda(ficha: Any) -> tuple[float | int | None, str | None]:
+    """El precio máximo y la moneda obligatorios de la ficha (cada uno None
+    si falta)."""
     if not isinstance(ficha, dict) or not isinstance(ficha.get("requisitos"), list):
-        return None
+        return None, None
     tope = moneda = None
     for r in ficha["requisitos"]:
         if not isinstance(r, dict) or r.get("obligatorio") is not True:
@@ -922,7 +925,19 @@ def _tope(ficha: Any) -> str | None:
         elif r.get("campo") == "moneda" and isinstance(r.get("valor"), str) \
                 and MONEDA_RE.fullmatch(r["valor"]):
             moneda = r["valor"]
+    return tope, moneda
+
+
+def _tope(ficha: Any) -> str | None:
+    tope, moneda = _precio_y_moneda(ficha)
     return _monto(tope, moneda) if tope is not None else None
+
+
+def tope_de_ficha(ficha: Any) -> dict[str, Any] | None:
+    """El tope que autorizó el usuario, `{"precio", "moneda"}` (el precio
+    máximo y la moneda obligatorios de la ficha), o None si falta alguno."""
+    tope, moneda = _precio_y_moneda(ficha)
+    return {"precio": tope, "moneda": moneda} if tope is not None and moneda is not None else None
 
 
 def _texto_bloqueado(datos: dict[str, Any]) -> tuple[str, str]:
@@ -1110,8 +1125,17 @@ def explicar(vista: dict[str, Any], eventos: Iterable[Any], *, ahora: datetime, 
     monto, moneda = monto_de_compra(vista, bloqueo_proxy)
     chequeos = explicar_chequeos(ultimo, vista.get("ficha")) if ultimo and not ultimo.get("proxy") else []
     compra_id = vista.get("compra_id")
+    comercio = vista.get("comercio")
+    creada = vista.get("creada")
     return {
         "compra_id": compra_id if isinstance(compra_id, str) else None,
+        # Los datos de la compra (para mostrarla con un solo pedido): el pedido
+        # y la referencia son de la empresa, el comercio es el id de su ruta.
+        "pedido": vista.get("pedido") if isinstance(vista.get("pedido"), str) else None,
+        "referencia": vista.get("referencia") if isinstance(vista.get("referencia"), str) else None,
+        "comercio": comercio if isinstance(comercio, str) and _COMERCIO_RE.fullmatch(comercio) else None,
+        "creada": creada if _fecha_hora(creada) is not None else None,
+        "tope": tope_de_ficha(vista.get("ficha")),
         "resultado": resultado,
         "intento_de_estafa": es_intento_de_estafa(lista),
         "alertas": lista,

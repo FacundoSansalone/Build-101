@@ -10,6 +10,9 @@ memoria ni disco compartidos (diseño 2.2 del plan de Vercel):
 - además, la consola web (`/consola`, y `/` → 307 a `/consola`;
   `create_app(..., consola=True)`, ver `proxy/consola/`): estáticos sin
   clave que llaman a la API con la clave que pega el usuario;
+- y el panel del cliente (`/panel`; `create_app(..., panel=True)`, ver
+  `proxy/panel/`): el historial de compras de la empresa, con su clave de
+  solo lectura;
 - integradores y comercios de `GATEWAY_CLAVES_JSON` y
   `GATEWAY_COMERCIOS_JSON` (los archivos no se leen), con la validación
   cruzada de siempre y sin webhooks inseguros;
@@ -435,6 +438,7 @@ def _armar(
         rutas_control=False,
         rutas_heredadas=False,
         consola=True,
+        panel=True,
     )
     logger.info(
         "Motor KaiAI (serverless) | integradores: %d | comercios: %s | filtro: %s | "

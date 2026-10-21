@@ -131,8 +131,8 @@ Vale para `/v1/*` y para el tráfico A2A (`/a2a/m/{comercio}`). Solo
 
 Una clave de lectura es tuya como la completa (las mismas compras, los mismos
 comercios, las mismas entregas de webhooks), pero **solo consulta**. Sirve
-para lo que corre donde una clave puede quedar a la vista: el panel web en el
-navegador, un tablero interno, un script de reportes. Si alguien la copia,
+para lo que corre donde una clave puede quedar a la vista: el [panel web en el
+navegador](#59-el-panel-del-cliente), un tablero interno, un script de reportes. Si alguien la copia,
 puede mirar tus compras pero no comprar, ni contestar un porqué, ni decidir
 una propuesta, ni aprobar un checkout.
 
@@ -148,6 +148,7 @@ el gateway sume más adelante, da **403 `solo_lectura`**.
 | `GET /v1/resumen` | Sí |
 | `GET /v1/comercios` | Sí |
 | `GET /v1/webhooks/entregas` | Sí |
+| `GET /v1/clave` | Sí: de quién es la clave y qué puede (`"permisos": ["lectura"]`) |
 | `/v1/public-key`, `/v1/openapi.json`, `/v1/docs` | Como siempre: no piden clave |
 | `POST /v1/compras` (crear una compra) | No: 403 |
 | `POST /v1/compras/{compra_id}/respuesta`, `/decision`, `/aprobaciones` | No: 403 |
@@ -477,6 +478,56 @@ También tiene una pestaña para probar `/v1/filtrar`.
 - Lo que escribe el comercio (por ejemplo `item_label`) se muestra como texto,
   nunca como HTML: puede traer una inyección.
 
+### 5.9 El panel del cliente
+
+**Panel del cliente: https://kaiai-motor.vercel.app/panel.** Es para tu
+empresa, no para tu agente: el historial de las compras que hicieron tus
+agentes con KaiAI, qué pidió cada uno, qué pasó, por qué aprobamos o
+frenamos cada compra y si el comercio intentó estafarlos. Lo mismo que
+`GET /v1/compras`, `GET /v1/compras/{id}/explicacion`, `GET /v1/resumen` y
+`GET /v1/clave` ([Historial y explicación](#historial-y-explicación)), en una
+página: todo lo filtra y lo calcula la API, el panel solo lo muestra.
+
+**Cómo entrar:** pegás tu [clave de solo lectura](#claves-de-solo-lectura)
+(`psg_…`, te la da el operador: `generar_secretos.py --clave-lectura`).
+Se valida con `GET /v1/resumen`; si no vale o está dada de baja, la página
+lo dice y no entra. Con una clave completa el panel funciona igual, pero
+muestra un aviso: conviene la de lectura, porque si alguien la copia solo
+puede mirar. Para saber cuál es (y mostrar el nombre de tu empresa), el
+panel lee `GET /v1/clave`.
+
+**Qué muestra:**
+
+- **Arriba, el resumen del período** (últimos 7, 30 o 90 días, desde la
+  medianoche de tu hora local): compras, aprobadas, frenadas o retenidas,
+  cortadas por seguridad, intentos de estafa y el monto frenado por moneda.
+- **La lista de compras**, la más nueva primero: fecha (en tu hora local),
+  pedido, tu `referencia`, comercio, monto (el `monto` del listado, el mismo
+  de la explicación; si no hubo checkout, el tope), resultado y alertas, con
+  "Cargar más" (`siguiente`). Filtros por resultado, por alerta (o "cualquier
+  intento de estafa", `intento_de_estafa=true`) y por referencia exacta: los
+  aplica la API.
+- **El detalle de cada compra** (`/panel#/compra/cmp-…`, un enlace que podés
+  compartir con alguien que tenga la clave): el resumen en una frase; si hubo
+  intento de estafa, de qué tipo (intentaron manipular a tu agente, datos
+  falsos del comercio, precio distinto al publicado o checkout alterado;
+  `no_cumple` y `sin_verificar` no son estafa y salen como aviso); la línea
+  de tiempo; qué revisamos, chequeo por chequeo; y el recibo, con un botón que
+  verifica la firma ES256 en tu navegador contra `GET /v1/public-key`. El
+  detalle es un solo pedido (la explicación trae los datos de la compra); el
+  JWS sale de `GET /v1/compras/{id}`, que se pide solo al verificar.
+
+**Cómo cuida la clave y los datos** (como la consola): la clave queda en la
+memoria de la pestaña (o en `sessionStorage` si marcás "recordar en esta
+pestaña") y solo viaja a este mismo sitio, en `Authorization`; "Salir" la
+borra junto con todo lo que se mostró. La página tiene una CSP estricta
+(`default-src 'none'`, `connect-src 'self'`), sin recursos externos, y pone
+todo dato como texto, nunca como HTML. El panel no tiene permisos propios ni
+cambia nada: solo lee.
+
+Si corrés el gateway vos (`python -m proxy`), el panel se prende con
+`GATEWAY_PANEL=1` (`http://<host>:<puerto>/panel`); en Vercel está siempre.
+
 ## 6. Referencia de la API
 
 Todo es JSON. Los POST exigen `Content-Type: application/json`. Las fechas
@@ -489,7 +540,7 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 | Método y ruta | Para qué | Respuesta |
 |---|---|---|
 | `POST /v1/compras` | Crear una compra (§5.1) | 201 `VistaCompra` |
-| `GET /v1/compras?limite=50&estado=…&desde=…&hasta=…&referencia=…&alerta=…&cursor=…` | Tus compras, la más nueva primero (`limite` de 1 a 200), con filtros y paginación ([historial](#historial-y-explicación)) | `{"compras": [VistaCompra + resultado, alertas, intento_de_estafa], "siguiente": cursor \| null}` |
+| `GET /v1/compras?limite=50&estado=…&desde=…&hasta=…&referencia=…&alerta=…&resultado=…&intento_de_estafa=…&cursor=…` | Tus compras, la más nueva primero (`limite` de 1 a 200), con filtros y paginación ([historial](#historial-y-explicación)) | `{"compras": [VistaCompra + resultado, alertas, intento_de_estafa, monto, moneda], "siguiente": cursor \| null}` |
 | `GET /v1/compras/{id}` | Una compra | `VistaCompra` |
 | `GET /v1/compras/{id}/explicacion` | La compra en lenguaje claro | `Explicacion` |
 | `GET /v1/resumen?desde=…&hasta=…` | Cuántas compras por resultado y alerta, intentos de estafa y monto frenado (por defecto, los últimos 30 días) | `Resumen` |
@@ -499,6 +550,7 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 | `POST /v1/evaluar` | Modo mínimo (§8) | `VistaVeredicto` + `comercio_firmado` |
 | `POST /v1/filtrar` | Filtrar contenido externo (§9) | `{"pasa", "status", "motivo", "senales"}` |
 | `GET /v1/comercios` | Los comercios que podés usar | `{"comercios": [{"id", "nombre", "a2a_url"}]}` |
+| `GET /v1/clave` | De quién es la clave del pedido y qué puede (también con una de solo lectura). Nunca el secreto ni el sha256 | `{"integrador": {"id", "nombre"}, "kid", "permisos": [...]}`: `[]` es una clave completa, `["lectura"]` una de solo lectura |
 | `GET /v1/webhooks/entregas?limite=50` | Las últimas entregas de tu webhook | `{"entregas": [...]}` |
 | `POST /v1/webhooks/prueba` (cuerpo `{}`) | Manda un `ping` a tu webhook, un solo intento | La entrega |
 | `GET /v1/public-key` | Clave pública de los recibos (sin clave de API) | `{"kid", "jwk", "keys": [jwk]}` |
@@ -532,9 +584,9 @@ que declara el vendedor.
 
 ### Historial y explicación
 
-Para el panel de tu empresa (o un reporte): qué pidió cada usuario, qué
-pasó, si el comercio intentó estafarlo y por qué KaiAI aprobó o frenó la
-compra. Todo determinístico, sin modelos de lenguaje y sin texto del
+Para el panel de tu empresa (el nuestro es [`/panel`](#59-el-panel-del-cliente))
+o un reporte: qué pidió cada usuario, qué pasó, si el comercio intentó
+estafarlo y por qué KaiAI aprobó o frenó la compra. Todo determinístico, sin modelos de lenguaje y sin texto del
 comercio. Con una [clave de solo lectura](#claves-de-solo-lectura) alcanza.
 
 **El listado** (`GET /v1/compras`) suma filtros y paginación sin cambiar lo
@@ -545,15 +597,21 @@ de siempre (`limite`, `estado`):
 | `desde`, `hasta` | Sobre `creada`: `desde` incluido, `hasta` excluido. ISO 8601: una fecha (`2026-10-21`, el día UTC entero) o fecha y hora (`2026-10-21T12:00:00Z`; sin zona, UTC; el `+` de un offset, codificado como `%2B`), entre los años 2000 y 2100 (si no, 400 `validacion`) |
 | `referencia` | Tu `referencia`, exacta |
 | `alerta` | Solo las compras con esa alerta (tabla de abajo) |
+| `resultado` | Solo las compras con ese resultado (tabla de abajo) |
+| `intento_de_estafa` | `true`: solo las que tienen alguna de las cuatro alertas de estafa; `false`: las que no |
 | `cursor` | El `siguiente` de la página anterior: un texto opaco, no lo armes ni lo leas |
 
 La respuesta es `{"compras": [...], "siguiente": "<cursor>" | null}`, en
-orden `creada desc, id desc`, y cada compra suma `resultado`, `alertas` e
-`intento_de_estafa`. En el listado los veredictos vienen sin
+orden `creada desc, id desc`, y cada compra suma `resultado`, `alertas`,
+`intento_de_estafa`, `monto` y `moneda`. El monto es el mismo que el de la
+explicación: el del último checkout evaluado, o `null` si no hubo (o si el
+gateway frenó uno después sin evaluarlo); así el listado y el detalle
+coinciden siempre. En el listado los veredictos vienen sin
 `chequeos_detalle` (para que la página no pese de más): el detalle está en
-`GET /v1/compras/{id}` y en la explicación. `siguiente: null` es que no hay más. Con `alerta` el
-gateway mira hasta 1000 compras por pedido: una página puede venir con menos
-y con `siguiente` (seguí pidiendo).
+`GET /v1/compras/{id}` y en la explicación. `siguiente: null` es que no hay más. Los
+filtros se combinan entre sí y con el `cursor`. Con `alerta`, `resultado` o
+`intento_de_estafa` el gateway mira hasta 1000 compras por pedido: una página
+puede venir con menos y con `siguiente` (seguí pidiendo).
 
 **Resultado** (el mismo en el listado y en la explicación):
 
@@ -583,7 +641,10 @@ true si hay alguna de las cuatro primeras):
 no es tuya):
 
 ```json
-{"compra_id": "cmp-…", "resultado": "frenada", "intento_de_estafa": true,
+{"compra_id": "cmp-…", "pedido": "un monitor de 27 pulgadas", "referencia": "ord-123",
+ "comercio": "merchant_1", "creada": "2026-10-21T12:00:00+00:00",
+ "tope": {"precio": 400.0, "moneda": "USD"},
+ "resultado": "frenada", "intento_de_estafa": true,
  "alertas": ["dato_falso"],
  "resumen": "Frenamos la compra antes de que la firmaras: el tamaño de pantalla del producto que eligió tu agente es 24 in y pediste 27 in, según el fabricante (el comercio había declarado 27 in).",
  "linea_de_tiempo": [
@@ -618,9 +679,13 @@ no es tuya):
   1000 eventos. La línea de tiempo sale del historial de eventos de la compra;
   si el operador corre una sola instancia con Supabase, puede traer solo la
   creación (el resultado y los chequeos salen igual).
+- `pedido`, `referencia`, `comercio`, `creada` y `tope` son los datos de la
+  compra (los tuyos y el id de la ruta del comercio), para mostrarla con un
+  solo pedido. `tope` es `{"precio", "moneda"}` del precio máximo y la moneda
+  obligatorios de la ficha vigente, o `null` si falta alguno.
 - `chequeos` son los del último veredicto, del más grave al menos. `recibo`
   no trae el JWS (su payload puede tener valores que declaró el comercio): lo
-  tenés en `GET /v1/compras/{id}`.
+  tenés en `GET /v1/compras/{id}`, solo si querés verificar la firma.
 
 **El resumen** (`GET /v1/resumen?desde=2026-10-01&hasta=2026-10-31`; sin
 fechas, los últimos 30 días hasta el final de hoy, en UTC; hasta 366 días):

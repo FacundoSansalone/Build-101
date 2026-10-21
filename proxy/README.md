@@ -818,12 +818,17 @@ integrador: [`docs/INTEGRACION.md`](../docs/INTEGRACION.md#historial-y-explicaci
 - **La explicación** (`explicacion.py`, funciones puras): resultado,
   alertas, intento de estafa, resumen, línea de tiempo y un texto por
   chequeo, con plantillas fijas.
-- **`/v1`**: `GET /v1/compras` con `desde`, `hasta`, `referencia`, `alerta`
-  y `cursor` (y en cada compra `resultado`, `alertas` e
-  `intento_de_estafa`); `GET /v1/compras/{id}/explicacion`; `GET
-  /v1/resumen`. Con varias instancias, los contextos y las aprobaciones de
-  la página salen en una consulta por tabla (`compra_id=in.(…)`), no dos por
-  compra.
+- **`/v1`**: `GET /v1/compras` con `desde`, `hasta`, `referencia`, `alerta`,
+  `resultado`, `intento_de_estafa` y `cursor` (y en cada compra `resultado`,
+  `alertas`, `intento_de_estafa`, `monto` y `moneda`);
+  `GET /v1/compras/{id}/explicacion` (con `pedido`, `referencia`, `comercio`,
+  `creada` y `tope`); `GET /v1/resumen`; `GET /v1/clave` (integrador, `kid` y
+  `permisos` de la clave). `resultado` va a la base como `estado` cuando
+  equivale (`cortada_por_seguridad`, `vencida`); el resto, `alerta` e
+  `intento_de_estafa` se filtran en el gateway al recorrer (hasta
+  `MAX_ESCANEO_LISTADO` compras por pedido). Con varias instancias, los
+  contextos y las aprobaciones de la página salen en una consulta por tabla
+  (`compra_id=in.(…)`), no dos por compra.
 - **Retención** (`retencion.py`): las tablas `gw_*` se guardan
   `GATEWAY_RETENCION_DIAS` días (90; de 7 a 3650, y más que la vida de una
   compra). La purga (`AlmacenEstado.purgar`) la dispara un `GET` o `POST` a
@@ -855,6 +860,7 @@ integrador: [`docs/INTEGRACION.md`](../docs/INTEGRACION.md#historial-y-explicaci
 | `GATEWAY_MAX_CUERPO_A2A_BYTES` | `5242880` | Tope de un pedido A2A de integrador |
 | `GATEWAY_COMPRA_TTL_S` | `86400` | Vida de una compra de integrador |
 | `GATEWAY_CONSOLA` | `0` | `1`: la consola web (`/consola`, `proxy/consola/`) en los dos oyentes, sin clave (llama a `/v1` con la que pega el usuario). En Vercel está siempre prendida |
+| `GATEWAY_PANEL` | `0` | `1`: el panel del cliente (`/panel`, `proxy/panel/`) en los dos oyentes, sin clave (la empresa entra con su clave de solo lectura y el navegador lee `/v1`). En Vercel está siempre prendido |
 | `GATEWAY_RETENCION_DIAS` | `90` | Días que se guardan las tablas `gw_*` (de 7 a 3650; más que `GATEWAY_COMPRA_TTL_S`). En Vercel, hasta 365 |
 | `GATEWAY_PURGA_SECRETO` | — | Secreto de `/interno/purgar` (16 caracteres o más, sin espacios). Sin él (ni `CRON_SECRET`), o si no sirve, no hay purga (y el motor arranca igual) |
 | `CRON_SECRET` | — | El que Vercel manda en el `Authorization` de cada cron: vale como `GATEWAY_PURGA_SECRETO` si esa no está (si están las dos, iguales) |
@@ -971,7 +977,8 @@ intención queda apagada (pedido literal).
 | `api_v1.py` | Rutas `/v1`, validación estricta (ficha con tope, requisitos que el Guard sabe chequear) y errores |
 | `vistas.py` | Lo que ve el integrador de una compra (`VistaCompra`), sin texto del vendedor |
 | `openapi.py` | OpenAPI 3.1 de `/v1` y la página `/v1/docs` (HTML sin scripts) |
-| `consola/` | La consola web (`/consola`, y `/` → 307): `rutas_consola()` sirve `index.html`, `app.js` (la vista), `logica.mjs` (lógica pura: cuerpos de `/v1`, JSON-RPC, lectura con latido, veredicto y verificación del recibo con WebCrypto) y `estilo.css`, sin clave, con CSP estricta, `nosniff`, `no-referrer` y `no-store`. Hace lo del agente de un integrador con la clave que pega el usuario; no tiene permisos propios. La prende `create_app(..., consola=True)` (Vercel; en `python -m proxy`, `GATEWAY_CONSOLA=1`). Consola web: https://kaiai-motor.vercel.app/consola |
+| `consola/` | La consola web (`/consola`, y `/` → 307): `rutas_consola()` sirve `index.html`, `app.js` (la vista), `logica.mjs` (lógica pura: cuerpos de `/v1`, JSON-RPC, lectura con latido y veredicto), `recibo.mjs` (verificación del recibo con WebCrypto, la misma que usa el panel) y `estilo.css`, sin clave, con CSP estricta, `nosniff`, `no-referrer` y `no-store`. Hace lo del agente de un integrador con la clave que pega el usuario; no tiene permisos propios. La prende `create_app(..., consola=True)` (Vercel; en `python -m proxy`, `GATEWAY_CONSOLA=1`). Consola web: https://kaiai-motor.vercel.app/consola |
+| `panel/` | El panel del cliente (`/panel`, y `/panel/` → 307): `rutas_panel()` sirve `index.html`, `app.js` (el controlador), `logica.mjs` (lógica pura: período, query de `/v1/resumen` y `/v1/compras` con filtros y cursor, montos y fechas locales, resultado y alerta a texto, ícono y tono, el `compra_id` validado), `vista.mjs` (arma los nodos con `textContent`), `estilo.css` (los tokens de `/demo`) y `recibo.mjs` (el mismo archivo que `/consola/recibo.mjs`), sin clave, con la CSP de la consola, `nosniff`, `no-referrer` y `no-store`. La empresa entra con su clave de solo lectura y ve el resumen, la lista y la explicación de cada compra, con la firma del recibo verificada en el navegador; no tiene permisos propios. La prende `create_app(..., panel=True)` (Vercel; en `python -m proxy`, `GATEWAY_PANEL=1`). Panel del cliente: https://kaiai-motor.vercel.app/panel |
 | `claves.py` | Claves `psg_` (sha256), registro de integradores, claves de solo lectura (`RUTAS_LECTURA`), middleware `AutenticacionGateway` y la CLI `python -m proxy.claves` |
 | `comercios.py` | Registro de comercios (`/a2a/m/{id}`, sin URL libre) y la política con sus `merchant_ids` |
 | `webhooks.py` | `Despachador`: webhooks firmados (HMAC con `t`), reintentos, SSRF con IP fijada; `verificar_firma` para el receptor |
