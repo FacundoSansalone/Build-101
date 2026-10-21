@@ -466,7 +466,7 @@ async def test_sin_server_en_el_scope_es_local(clave_y_registro):
     scope = {"type": "http", "method": "GET", "path": "/a2a/merchant_agent", "headers": [],
              "query_string": b"", "server": None}
     await mw(scope, receive, send)
-    assert vistos == [{"oyente": "local", "integrador": None}]
+    assert vistos == [{"oyente": "local", "integrador": None, "clave": None}]
     assert enviados[0]["status"] == 200
 
 
@@ -542,7 +542,7 @@ async def test_todo_publico_sin_server_en_el_scope(clave_y_registro):
              "query_string": b"", "server": None}
     await mw(scope, receive, send)
     assert vistos == [] and enviados[0]["status"] == 401
-    assert scope["state"] == {"oyente": "publico", "integrador": None}
+    assert scope["state"] == {"oyente": "publico", "integrador": None, "clave": None}
 
 
 def test_todo_publico_por_defecto_es_false(clave_y_registro):

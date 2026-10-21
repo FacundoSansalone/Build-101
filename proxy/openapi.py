@@ -305,6 +305,20 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
             }),
         },
     },
+    "VistaClave": {
+        "type": "object",
+        "properties": {
+            "integrador": {"type": "object", "properties": {
+                "id": _SLUG, "nombre": {"type": "string"},
+            }},
+            "kid": _nullable({"type": "string", "pattern": "^[0-9a-f]{12}$"}),
+            "permisos": {
+                "type": "array", "items": {"type": "string", "enum": ["lectura"]},
+                "description": "Vacío: una clave completa. `lectura`: solo los GET de la lista "
+                "de solo lectura.",
+            },
+        },
+    },
     "Explicacion": {
         "type": "object",
         "description": "La compra en lenguaje claro, con plantillas del gateway y solo valores "
@@ -580,6 +594,11 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
     ("get", "/v1/comercios", "Comercios permitidos",
      "Los comercios que el integrador puede usar, con su URL A2A.",
      None, {"200": ("Comercios", "ListaComercios")}, ["401"], False),
+    ("get", "/v1/clave", "Tu clave",
+     "De quién es la clave del pedido y qué puede: el integrador, el `kid` (público) y "
+     "los permisos (`[]` es una clave completa; `[\"lectura\"]`, una de solo lectura). "
+     "Nunca el secreto ni el sha256. La puede usar una clave de solo lectura.",
+     None, {"200": ("Clave", "VistaClave")}, ["401"], False),
     ("get", "/v1/webhooks/entregas", "Entregas de webhooks",
      "Las últimas entregas (en memoria: no sobreviven a un reinicio). Parámetro "
      "`limite` (1 a 200).",

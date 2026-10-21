@@ -52,8 +52,10 @@ from proxy.tests.gateway_ayudantes import (
     CLAVE_OTRO,
     FICHA,
     GATEWAY_PUBLIC_URL,
+    KID_ACME,
     MERCHANT_B_HOST,
     SECRETO_WEBHOOK,
+    SHA_ACME,
     FakeMerchantB,
     armar_gateway,
     buscar,
@@ -563,25 +565,43 @@ async def test_cada_ruta_de_la_app_esta_clasificada(gateway):
     assert {"/panel", "/panel/app.js", "/consola"} <= vistas
 
 
-async def test_el_panel_distingue_la_clave_con_un_head_sin_efectos(gateway):
-    """El panel avisa si entraron con la clave completa sin probar nada que
-    cambie algo: `HEAD /v1/comercios` (un método seguro) es 403 `solo_lectura`
-    con la de lectura (docs/INTEGRACION.md §4: "también `HEAD`") y 200 con la
-    completa. Si esto cambia, el aviso del panel (`tipoDeClave` en
-    proxy/panel/logica.mjs) deja de ser cierto."""
-    async with _cliente(gateway, CLAVE_ACME) as completa, _cliente(gateway, CLAVE_LECTURA) as lectura:
+async def test_v1_clave_dice_de_quien_es_y_que_puede(gateway):
+    """`GET /v1/clave`: el integrador, el `kid` y los permisos de la clave que
+    autenticó (`[]` es una completa). Lo usa el panel para avisar si entraron
+    con una completa. Nunca el secreto ni el sha256, y sin efectos."""
+    async with (_cliente(gateway, CLAVE_ACME) as completa, _cliente(gateway, CLAVE_LECTURA) as lectura,
+                _cliente(gateway, CLAVE_OTRO) as otro, _cliente(gateway, None) as anonimo):
         compra = (await crear_compra(completa))["compra_id"]
         antes = (await completa.get(f"/v1/compras/{compra}")).json()
-        r_lectura = await lectura.head("/v1/comercios")
-        r_completa = await completa.head("/v1/comercios")
+        r_lectura = await lectura.get("/v1/clave")
+        r_completa = await completa.get("/v1/clave")
+        r_otro = await otro.get("/v1/clave")
+        sin_clave = await anonimo.get("/v1/clave")
         despues = (await completa.get(f"/v1/compras/{compra}")).json()
         ids = await _ids_de_compras(completa)
-    _es_solo_lectura(r_lectura, gateway.nombre)
-    assert r_completa.status_code == 200, (gateway.nombre, r_completa.status_code)
-    assert "insufficient_scope" not in r_completa.headers.get("www-authenticate", "")
+    assert r_lectura.status_code == r_completa.status_code == r_otro.status_code == 200, gateway.nombre
+    assert r_lectura.json() == {
+        "integrador": {"id": "acme", "nombre": "ACME Compras"}, "kid": KID_LECTURA,
+        "permisos": ["lectura"],
+    }
+    assert r_completa.json() == {
+        "integrador": {"id": "acme", "nombre": "ACME Compras"}, "kid": KID_ACME, "permisos": [],
+    }
+    assert r_otro.json()["integrador"]["id"] == "otro" and r_otro.json()["permisos"] == []
+    for r, clave, sha in ((r_lectura, CLAVE_LECTURA, SHA_LECTURA), (r_completa, CLAVE_ACME, SHA_ACME)):
+        assert clave not in r.text and clave.rsplit("_", 1)[-1] not in r.text and sha not in r.text
+    assert sin_clave.status_code == 401 and sin_clave.json()["error"]["codigo"] == "no_autenticado"
     # Sin efectos: ni compras nuevas, ni cambios, ni nada al comercio.
     assert ids == [compra] and despues == antes
     assert gateway.merchant.recibidos == []
+
+
+async def test_v1_clave_con_una_clave_de_baja_o_mal_escrita_es_401(gateway):
+    cambiada = CLAVE_LECTURA[:-1] + _otra_letra(CLAVE_LECTURA)
+    for clave in (cambiada, CLAVE_LECTURA_BAJA):
+        async with _cliente(gateway, clave) as c:
+            r = await c.get("/v1/clave")
+        assert r.status_code == 401 and r.json()["error"]["codigo"] == "clave_invalida", gateway.nombre
 
 
 def test_la_lista_blanca_es_solo_get_en_v1():
@@ -591,7 +611,7 @@ def test_la_lista_blanca_es_solo_get_en_v1():
         assert patron.startswith("/v1/") and patron not in RUTAS_V1_PUBLICAS, patron
     pedidas = {
         "/v1/compras", "/v1/compras/{compra_id}", "/v1/compras/{compra_id}/explicacion",
-        "/v1/resumen", "/v1/comercios", "/v1/webhooks/entregas",
+        "/v1/resumen", "/v1/comercios", "/v1/webhooks/entregas", "/v1/clave",
     }
     assert {p for _, p in RUTAS_LECTURA} == pedidas
 

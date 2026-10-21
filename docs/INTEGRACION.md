@@ -148,6 +148,7 @@ el gateway sume más adelante, da **403 `solo_lectura`**.
 | `GET /v1/resumen` | Sí |
 | `GET /v1/comercios` | Sí |
 | `GET /v1/webhooks/entregas` | Sí |
+| `GET /v1/clave` | Sí: de quién es la clave y qué puede (`"permisos": ["lectura"]`) |
 | `/v1/public-key`, `/v1/openapi.json`, `/v1/docs` | Como siempre: no piden clave |
 | `POST /v1/compras` (crear una compra) | No: 403 |
 | `POST /v1/compras/{compra_id}/respuesta`, `/decision`, `/aprobaciones` | No: 403 |
@@ -549,6 +550,7 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 | `POST /v1/evaluar` | Modo mínimo (§8) | `VistaVeredicto` + `comercio_firmado` |
 | `POST /v1/filtrar` | Filtrar contenido externo (§9) | `{"pasa", "status", "motivo", "senales"}` |
 | `GET /v1/comercios` | Los comercios que podés usar | `{"comercios": [{"id", "nombre", "a2a_url"}]}` |
+| `GET /v1/clave` | De quién es la clave del pedido y qué puede (también con una de solo lectura). Nunca el secreto ni el sha256 | `{"integrador": {"id", "nombre"}, "kid", "permisos": [...]}`: `[]` es una clave completa, `["lectura"]` una de solo lectura |
 | `GET /v1/webhooks/entregas?limite=50` | Las últimas entregas de tu webhook | `{"entregas": [...]}` |
 | `POST /v1/webhooks/prueba` (cuerpo `{}`) | Manda un `ping` a tu webhook, un solo intento | La entrega |
 | `GET /v1/public-key` | Clave pública de los recibos (sin clave de API) | `{"kid", "jwk", "keys": [jwk]}` |

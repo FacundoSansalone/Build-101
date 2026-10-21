@@ -50,6 +50,7 @@ from starlette.types import Receive, Scope, Send
 from contracts import CheckoutVisto, Ficha, OfertasVistas, Requisito
 from proxy import a2a, explicacion, openapi, vistas
 from proxy.alertas import ALERTAS
+from proxy.claves import ClaveAutenticada
 from proxy.tipos_gateway import (
     ID_COMPRA_RE,
     ID_SEGURO_RE,
@@ -935,6 +936,20 @@ def rutas_v1(
         solicitud = validar_solicitud_filtrar(await leer_json(request, max_cuerpo_bytes))
         return _json(await nucleo.filtrar(integrador, solicitud))
 
+    async def clave(request: Request) -> Response:
+        """De quién es la clave del pedido y qué puede: el integrador, el `kid`
+        (público) y los permisos (`[]` es una clave completa). Nunca el secreto
+        ni el sha256."""
+        integrador = integrador_de(request)
+        autenticada = getattr(request.state, "clave", None)
+        if not isinstance(autenticada, ClaveAutenticada) or autenticada.integrador.id != integrador.id:
+            raise ErrorApi(401, "no_autenticado", "Falta la clave de API.")
+        return _json({
+            "integrador": {"id": integrador.id, "nombre": integrador.nombre},
+            "kid": autenticada.kid,
+            "permisos": sorted(autenticada.permisos or ()),
+        })
+
     async def comercios(request: Request) -> Response:
         integrador = integrador_de(request)
         return _json({
@@ -994,6 +1009,7 @@ def rutas_v1(
         ("/v1/evaluar", "POST", evaluar),
         ("/v1/filtrar", "POST", filtrar),
         ("/v1/comercios", "GET", comercios),
+        ("/v1/clave", "GET", clave),
         ("/v1/webhooks/entregas", "GET", entregas),
         ("/v1/webhooks/prueba", "POST", probar_webhook),
         ("/v1/public-key", "GET", clave_publica),

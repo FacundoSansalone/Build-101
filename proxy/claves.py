@@ -118,6 +118,9 @@ RUTAS_LECTURA: tuple[tuple[str, str], ...] = (
     ("GET", "/v1/resumen"),
     ("GET", "/v1/comercios"),
     ("GET", "/v1/webhooks/entregas"),
+    # De quién es la clave y qué puede (el panel lo usa para avisar si
+    # entraron con una completa). Nunca el secreto ni el sha256.
+    ("GET", "/v1/clave"),
 )
 
 
@@ -195,6 +198,7 @@ class ClaveAutenticada:
 
     integrador: Integrador
     permisos: frozenset[str] | None = None
+    kid: str | None = None  # público (`psg_<kid>_…`): lo muestra `GET /v1/clave`
 
     @property
     def solo_lectura(self) -> bool:
@@ -297,7 +301,7 @@ class RegistroIntegradores:
         integrador = self._integradores.get(guardada.integrador_id)
         if integrador is None:
             return None
-        return ClaveAutenticada(integrador=integrador, permisos=guardada.permisos)
+        return ClaveAutenticada(integrador=integrador, permisos=guardada.permisos, kid=kid)
 
     def get(self, integrador_id: str) -> Integrador | None:
         return self._integradores.get(integrador_id)
@@ -553,6 +557,7 @@ class AutenticacionGateway:
         estado = scope.setdefault("state", {})
         estado["oyente"] = oyente
         estado["integrador"] = None
+        estado["clave"] = None
 
         resultado = self._resolver(scope, oyente)
         if isinstance(resultado, JSONResponse):
@@ -592,6 +597,8 @@ class AutenticacionGateway:
             return resultado
         if not resultado.permite(scope["method"], scope["path"]):
             return _solo_lectura()
+        # Para `GET /v1/clave` (el kid y los permisos de la que autenticó).
+        scope.setdefault("state", {})["clave"] = resultado
         return resultado.integrador
 
     def _claves_presentes(self, scope: Scope) -> tuple[list[str], str | None]:
