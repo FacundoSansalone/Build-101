@@ -1187,12 +1187,14 @@ def explicar(vista: dict[str, Any], eventos: Iterable[Any], *, ahora: datetime, 
 
 def resumir(entradas: Iterable[dict[str, Any]], *, desde: datetime, hasta: datetime) -> dict[str, Any]:
     """`GET /v1/resumen`: cuántas compras por resultado y por alerta, cuántos
-    intentos de estafa y el monto frenado por moneda. Cada entrada es la de
-    `resumen_de_compra` con `monto` y `moneda` (`monto_de_compra`)."""
+    intentos de estafa y, por moneda, el monto frenado (las `frenada`) y el
+    retenido (las `retenida`: un `escalar` que aprobó una persona es
+    `aprobada` y no cuenta). Cada entrada es la de `resumen_de_compra` con
+    `monto` y `moneda` (`monto_de_compra`)."""
     por_resultado = {r: 0 for r in RESULTADOS}
     por_alerta = {a: 0 for a in ALERTAS}
     estafas = 0
-    frenado: dict[str, float] = {}
+    montos: dict[str, dict[str, float]] = {"frenada": {}, "retenida": {}}
     total = 0
     for entrada in entradas:
         total += 1
@@ -1204,9 +1206,10 @@ def resumir(entradas: Iterable[dict[str, Any]], *, desde: datetime, hasta: datet
         if entrada.get("intento_de_estafa") is True:
             estafas += 1
         monto, moneda = _numero(entrada.get("monto")), entrada.get("moneda")
-        if resultado == "frenada" and monto is not None and isinstance(moneda, str) \
+        if resultado in montos and monto is not None and isinstance(moneda, str) \
                 and MONEDA_RE.fullmatch(moneda):
-            frenado[moneda] = frenado.get(moneda, 0.0) + float(monto)
+            suma = montos[resultado]
+            suma[moneda] = suma.get(moneda, 0.0) + float(monto)
     return {
         "desde": desde.isoformat(),
         "hasta": hasta.isoformat(),
@@ -1214,8 +1217,13 @@ def resumir(entradas: Iterable[dict[str, Any]], *, desde: datetime, hasta: datet
         "por_resultado": por_resultado,
         "intentos_de_estafa": estafas,
         "por_alerta": por_alerta,
-        "monto_frenado": [{"moneda": m, "total": round(t, 2)} for m, t in sorted(frenado.items())],
+        "monto_frenado": _por_moneda(montos["frenada"]),
+        "monto_retenido": _por_moneda(montos["retenida"]),
     }
+
+
+def _por_moneda(sumas: dict[str, float]) -> list[dict[str, Any]]:
+    return [{"moneda": m, "total": round(t, 2)} for m, t in sorted(sumas.items())]
 
 
 def ventana_por_defecto(ahora: datetime, dias: int = 30) -> tuple[datetime, datetime]:

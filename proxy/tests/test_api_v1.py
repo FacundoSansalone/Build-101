@@ -841,6 +841,10 @@ def test_openapi_lista_los_resultados_de_la_explicacion():
     assert set(esquemas["Resumen"]["properties"]["por_resultado"]["properties"]) == set(explicacion.RESULTADOS)
     (filtro,) = [p for p in spec["paths"]["/v1/compras"]["get"]["parameters"] if p["name"] == "resultado"]
     assert filtro["schema"]["enum"] == list(explicacion.RESULTADOS)
+    # Lo frenado y lo retenido sin aprobar, cada uno por moneda.
+    resumen = esquemas["Resumen"]["properties"]
+    for clave in ("monto_frenado", "monto_retenido"):
+        assert resumen[clave]["type"] == "array" and resumen[clave]["description"], clave
 
 
 def test_openapi_documenta_solo_lectura_en_los_post():

@@ -409,6 +409,14 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
                     "moneda": _MONEDA, "total": {"type": "number"},
                 }},
             },
+            "monto_retenido": {
+                "type": "array",
+                "description": "Lo que cobrarían las compras retenidas que nadie aprobó, por "
+                "moneda (una que aprobó una persona es aprobada y no cuenta).",
+                "items": {"type": "object", "properties": {
+                    "moneda": _MONEDA, "total": {"type": "number"},
+                }},
+            },
             "completo": {
                 "type": "boolean",
                 "description": "false si el período tiene más de 5000 compras (cuenta las 5000 "

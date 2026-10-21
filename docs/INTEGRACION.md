@@ -700,12 +700,15 @@ fechas, los últimos 30 días hasta el final de hoy, en UTC; hasta 366 días):
  "por_alerta": {"manipulacion": 3, "dato_falso": 2, "precio_distinto": 2, "checkout_alterado": 0,
                 "no_cumple": 3, "sin_verificar": 1},
  "monto_frenado": [{"moneda": "USD", "total": 2148.5}],
+ "monto_retenido": [{"moneda": "USD", "total": 349.0}],
  "completo": true}
 ```
 
 `monto_frenado` suma lo que habrían cobrado las compras `frenada`, por
-moneda. `completo: false` si el período tiene más de 5000 compras (cuenta
-las más nuevas): achicá el período.
+moneda, y `monto_retenido`, lo que cobrarían las `retenida` (las que nadie
+aprobó: una que aprobó una persona es `aprobada` y no cuenta).
+`completo: false` si el período tiene más de 5000 compras (cuenta las más
+nuevas): achicá el período.
 
 **Retención:** el operador guarda las compras, su historial y sus
 aprobaciones `GATEWAY_RETENCION_DIAS` días (90 por defecto); lo más viejo se

@@ -758,21 +758,30 @@ def test_resumir_cuenta_por_resultado_alerta_y_moneda():
          "intento_de_estafa": True, "monto": None, "moneda": None},
         {"resultado": "aprobada", "alertas": [], "intento_de_estafa": False,
          "monto": 5000, "moneda": "USD"},
+        {"resultado": "retenida", "alertas": ["sin_verificar"], "intento_de_estafa": False,
+         "monto": 50.25, "moneda": "USD"},
+        {"resultado": "retenida", "alertas": [], "intento_de_estafa": False,
+         "monto": 10, "moneda": "EUR"},
+        {"resultado": "retenida", "alertas": [], "intento_de_estafa": False,
+         "monto": 7, "moneda": "<b>"},
     ]
     salida = resumir(entradas, desde=CREADA, hasta=AHORA)
     assert salida["desde"] == CREADA.isoformat() and salida["hasta"] == AHORA.isoformat()
-    assert salida["compras"] == 6
+    assert salida["compras"] == 9
     assert salida["por_resultado"] == {
-        "aprobada": 1, "frenada": 4, "retenida": 0, "cortada_por_seguridad": 1,
+        "aprobada": 1, "frenada": 4, "retenida": 3, "cortada_por_seguridad": 1,
         "en_curso": 0, "vencida": 0, "sin_compra": 0, "sin_ofertas": 0,
     }
     assert salida["intentos_de_estafa"] == 2
     assert salida["por_alerta"] == {
         "manipulacion": 1, "dato_falso": 1, "precio_distinto": 0, "checkout_alterado": 0,
-        "no_cumple": 1, "sin_verificar": 0,
+        "no_cumple": 1, "sin_verificar": 1,
     }
     assert salida["monto_frenado"] == [{"moneda": "ARS", "total": 1000.0},
                                        {"moneda": "USD", "total": 200.0}]
+    # Lo retenido (sin aprobar: una retenida que aprobó una persona es aprobada), aparte.
+    assert salida["monto_retenido"] == [{"moneda": "EUR", "total": 10.0},
+                                        {"moneda": "USD", "total": 50.25}]
 
 
 def test_el_plural_concuerda():
