@@ -540,7 +540,7 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 | Método y ruta | Para qué | Respuesta |
 |---|---|---|
 | `POST /v1/compras` | Crear una compra (§5.1) | 201 `VistaCompra` |
-| `GET /v1/compras?limite=50&estado=…&desde=…&hasta=…&referencia=…&alerta=…&cursor=…` | Tus compras, la más nueva primero (`limite` de 1 a 200), con filtros y paginación ([historial](#historial-y-explicación)) | `{"compras": [VistaCompra + resultado, alertas, intento_de_estafa], "siguiente": cursor \| null}` |
+| `GET /v1/compras?limite=50&estado=…&desde=…&hasta=…&referencia=…&alerta=…&cursor=…` | Tus compras, la más nueva primero (`limite` de 1 a 200), con filtros y paginación ([historial](#historial-y-explicación)) | `{"compras": [VistaCompra + resultado, alertas, intento_de_estafa, monto, moneda], "siguiente": cursor \| null}` |
 | `GET /v1/compras/{id}` | Una compra | `VistaCompra` |
 | `GET /v1/compras/{id}/explicacion` | La compra en lenguaje claro | `Explicacion` |
 | `GET /v1/resumen?desde=…&hasta=…` | Cuántas compras por resultado y alerta, intentos de estafa y monto frenado (por defecto, los últimos 30 días) | `Resumen` |
@@ -600,8 +600,11 @@ de siempre (`limite`, `estado`):
 | `cursor` | El `siguiente` de la página anterior: un texto opaco, no lo armes ni lo leas |
 
 La respuesta es `{"compras": [...], "siguiente": "<cursor>" | null}`, en
-orden `creada desc, id desc`, y cada compra suma `resultado`, `alertas` e
-`intento_de_estafa`. En el listado los veredictos vienen sin
+orden `creada desc, id desc`, y cada compra suma `resultado`, `alertas`,
+`intento_de_estafa`, `monto` y `moneda`. El monto es el mismo que el de la
+explicación: el del último checkout evaluado, o `null` si no hubo (o si el
+gateway frenó uno después sin evaluarlo); así el listado y el detalle
+coinciden siempre. En el listado los veredictos vienen sin
 `chequeos_detalle` (para que la página no pese de más): el detalle está en
 `GET /v1/compras/{id}` y en la explicación. `siguiente: null` es que no hay más. Con `alerta` el
 gateway mira hasta 1000 compras por pedido: una página puede venir con menos

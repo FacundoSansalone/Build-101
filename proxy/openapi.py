@@ -289,6 +289,12 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
                     "resultado": _RESULTADO,
                     "alertas": {"type": "array", "items": _ALERTA},
                     "intento_de_estafa": {"type": "boolean"},
+                    "monto": _nullable({
+                        "type": "number",
+                        "description": "El del último checkout evaluado, como en la "
+                        "explicación; null si no hubo (o si el gateway frenó uno después).",
+                    }),
+                    "moneda": _nullable(_MONEDA),
                 },
             },
         ],

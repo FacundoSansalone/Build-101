@@ -254,6 +254,7 @@ async def test_explicacion_de_una_compra_frenada_por_un_dato_falso(config_gw, gu
     _sin_texto_del_comercio(r, "B2")
     (fila,) = listado
     assert fila["resultado"] == "frenada" and fila["intento_de_estafa"] is True
+    assert (fila["monto"], fila["moneda"]) == (datos["monto"], datos["moneda"]) == (149.0, "USD")
     assert "dato_falso" in fila["alertas"]
     assert resumen["compras"] == 1 and resumen["por_resultado"]["frenada"] == 1
     assert resumen["intentos_de_estafa"] == 1 and resumen["por_alerta"]["dato_falso"] == 1
@@ -417,6 +418,36 @@ async def test_el_listado_por_alerta_mira_mas_alla_de_una_pagina(config_gw):
     assert datos["siguiente"] is None
     assert nada == {"compras": [], "siguiente": None}
     await asyncio.sleep(0)
+
+
+# -- el monto de cada compra: el mismo en el listado y en la explicación --------------
+
+
+async def test_el_listado_trae_el_monto_de_la_explicacion(cliente, nucleo):
+    """`monto` y `moneda` de cada compra del listado salen con la misma regla
+    que los de la explicación (`explicacion.monto_de_compra`): el del último
+    checkout evaluado, o null si no hubo o si el proxy frenó uno después."""
+    from proxy.tests.test_api_v1 import AHORA, _foto
+
+    veredicto = {"status": "bloqueado", "cart_id": "cart_2", "chequeos": [], "alertas": [],
+                 "monto": 401.35, "moneda": "USD", "ts": AHORA.isoformat()}
+    despues = (AHORA + timedelta(minutes=1)).isoformat()
+    casos = [
+        (_foto(), None, None),
+        (_foto(veredictos=(veredicto,)), 401.35, "USD"),
+        (_foto(veredictos=({**veredicto, "monto": None, "moneda": None},)), None, None),
+        # El proxy frenó un checkout después del último veredicto: sin monto.
+        (_foto(veredictos=(veredicto,), bloqueo_proxy={"ts": despues}), None, None),
+    ]
+    for foto, monto, moneda in casos:
+        nucleo.foto = foto
+        fila = (await cliente.get("/v1/compras")).json()["compras"][0]
+        explicada = (await cliente.get(f"/v1/compras/{COMPRA_ID}/explicacion")).json()
+        assert (fila["monto"], fila["moneda"]) == (monto, moneda), foto.veredictos
+        assert (explicada["monto"], explicada["moneda"]) == (monto, moneda)
+    # El GET de una compra (y los webhooks) siguen sin esos campos arriba.
+    una = (await cliente.get(f"/v1/compras/{COMPRA_ID}")).json()
+    assert "monto" not in una and "moneda" not in una
 
 
 # -- el tamaño: el listado sin el detalle y el peor caso de una compra ---------------
