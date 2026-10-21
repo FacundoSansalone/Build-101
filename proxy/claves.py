@@ -19,11 +19,18 @@
   andando) salvo que una clave `psg_` presente tiene que ser válida. Las
   `rutas_abiertas` (rutas exactas: la consola web, `proxy/consola/`) pasan
   sin clave en los dos oyentes: son archivos estáticos sin estado.
+- **Claves de solo lectura** (`"permisos": ["lectura"]` en la clave; sin el
+  campo, la clave es completa como siempre): para el panel web, que corre
+  en el navegador. Son del mismo integrador y ven lo mismo, pero solo pueden
+  lo que está en la lista blanca `RUTAS_LECTURA` (GET en `/v1`); el resto de
+  `/v1` y todo `/a2a/*` da 403 `solo_lectura` acá, antes de llegar a la app.
+  El permiso sale de la clave autenticada, nunca de algo que mande el
+  cliente.
 
 Nunca se loguea la clave ni el header `Authorization`. Middleware ASGI puro
 (como `ControlLocal`) para no interferir con el SSE.
 
-CLI: `python -m proxy.claves nueva --integrador acme` y
+CLI: `python -m proxy.claves nueva --integrador acme [--lectura]` y
 `python -m proxy.claves secreto-webhook`.
 """
 
@@ -86,7 +93,7 @@ _CLAVES_ARCHIVO = frozenset({"integradores"})
 _CLAVES_INTEGRADOR = frozenset(
     {"id", "nombre", "claves", "comercios", "webhook", "max_compras_activas"}
 )
-_CLAVES_CLAVE = frozenset({"kid", "sha256", "creada", "activa"})
+_CLAVES_CLAVE = frozenset({"kid", "sha256", "creada", "activa", "permisos"})
 _CLAVES_WEBHOOK = frozenset({"url", "secreto_env"})
 
 # Rutas por oyente (diseño §1.2). `/guard` sin barra también cuenta: en el
@@ -94,6 +101,37 @@ _CLAVES_WEBHOOK = frozenset({"url", "secreto_env"})
 _PREFIJO_GUARD = "/guard"
 _PREFIJO_V1 = "/v1"
 _PREFIJO_A2A = "/a2a"
+
+# -- permisos -----------------------------------------------------------------
+PERMISO_LECTURA = "lectura"
+PERMISOS_CONOCIDOS: frozenset[str] = frozenset({PERMISO_LECTURA})
+
+# Lo único que puede una clave de lectura: (método, patrón de ruta), con
+# `{x}` = un segmento cualquiera (el handler valida el id y da el mismo error
+# que a la clave completa). Es una lista blanca: una ruta nueva de `/v1`
+# queda prohibida para lectura hasta que alguien la sume acá. Solo GET; las
+# rutas públicas (`RUTAS_V1_PUBLICAS`) pasan sin clave como siempre.
+RUTAS_LECTURA: tuple[tuple[str, str], ...] = (
+    ("GET", "/v1/compras"),
+    ("GET", "/v1/compras/{compra_id}"),
+    ("GET", "/v1/compras/{compra_id}/explicacion"),
+    ("GET", "/v1/resumen"),
+    ("GET", "/v1/comercios"),
+    ("GET", "/v1/webhooks/entregas"),
+)
+
+
+def _regla(metodo: str, patron: str) -> tuple[str, re.Pattern[str]]:
+    segmentos = [
+        "[^/]+" if s.startswith("{") and s.endswith("}") else re.escape(s)
+        for s in patron.split("/")
+    ]
+    return metodo, re.compile("/".join(segmentos))
+
+
+_REGLAS_POR_PERMISO: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
+    PERMISO_LECTURA: tuple(_regla(m, p) for m, p in RUTAS_LECTURA),
+}
 
 
 # -- formato de la clave ------------------------------------------------------
@@ -145,6 +183,33 @@ class _ClaveGuardada:
     sha256: str
     activa: bool
     integrador_id: str
+    permisos: frozenset[str] | None = None  # None = clave completa (sin "permisos")
+
+
+@dataclass(frozen=True)
+class ClaveAutenticada:
+    """Una clave que autenticó: de qué integrador es y qué puede.
+
+    `permisos` None es una clave completa (como todas las de antes); si no,
+    la clave solo puede las rutas de esos permisos (hoy, `lectura`)."""
+
+    integrador: Integrador
+    permisos: frozenset[str] | None = None
+
+    @property
+    def solo_lectura(self) -> bool:
+        return self.permisos is not None
+
+    def permite(self, metodo: str, path: str) -> bool:
+        """Si esta clave puede `metodo` sobre `path`. Una completa puede todo
+        (lo demás lo decide la app); una con permisos, solo su lista blanca."""
+        if self.permisos is None:
+            return True
+        return any(
+            metodo == m and regla.fullmatch(path) is not None
+            for permiso in self.permisos
+            for m, regla in _REGLAS_POR_PERMISO.get(permiso, ())
+        )
 
 
 class RegistroIntegradores:
@@ -213,9 +278,15 @@ class RegistroIntegradores:
         return any(c.activa for c in self._claves.values())
 
     def autenticar(self, clave: str | None) -> Integrador | None:
-        """El integrador dueño de `clave`, o None. Siempre calcula un hash y lo
-        compara contra uno guardado (o el ficticio), sea cual sea el motivo
-        del rechazo."""
+        """El integrador dueño de `clave`, o None (sin mirar los permisos: el
+        middleware usa `autenticar_clave`)."""
+        autenticada = self.autenticar_clave(clave)
+        return autenticada.integrador if autenticada is not None else None
+
+    def autenticar_clave(self, clave: str | None) -> ClaveAutenticada | None:
+        """El integrador dueño de `clave` y sus permisos, o None. Siempre
+        calcula un hash y lo compara contra uno guardado (o el ficticio), sea
+        cual sea el motivo del rechazo y sea completa o de lectura."""
         kid = parsear_kid(clave) if isinstance(clave, str) else None
         recibido = hash_clave(clave) if isinstance(clave, str) else _HASH_FICTICIO
         guardada = self._claves.get(kid) if kid is not None else None
@@ -223,7 +294,10 @@ class RegistroIntegradores:
         coincide = hmac.compare_digest(recibido.encode("ascii"), esperado.encode("ascii"))
         if kid is None or guardada is None or not coincide or not guardada.activa:
             return None
-        return self._integradores.get(guardada.integrador_id)
+        integrador = self._integradores.get(guardada.integrador_id)
+        if integrador is None:
+            return None
+        return ClaveAutenticada(integrador=integrador, permisos=guardada.permisos)
 
     def get(self, integrador_id: str) -> Integrador | None:
         return self._integradores.get(integrador_id)
@@ -304,7 +378,28 @@ def _clave_desde_dict(c: Any, donde: str, integrador_id: str) -> tuple[str, _Cla
     activa = c.get("activa", True)
     if not isinstance(activa, bool):
         raise ConfigInvalida(f"{donde}: 'activa' tiene que ser true o false")
-    return kid, _ClaveGuardada(sha256=sha, activa=activa, integrador_id=integrador_id)
+    permisos = _permisos_desde_dict(c, donde)
+    return kid, _ClaveGuardada(
+        sha256=sha, activa=activa, integrador_id=integrador_id, permisos=permisos
+    )
+
+
+def _permisos_desde_dict(c: dict[str, Any], donde: str) -> frozenset[str] | None:
+    """Sin `permisos`, None (clave completa: los archivos de antes siguen
+    igual). Con el campo, una lista no vacía de permisos conocidos: un valor
+    mal escrito o una lista vacía no se interpretan (¿ninguno o todos?)."""
+    if "permisos" not in c:
+        return None
+    permisos = c["permisos"]
+    validos = isinstance(permisos, list) and bool(permisos) and all(
+        isinstance(p, str) and p in PERMISOS_CONOCIDOS for p in permisos
+    )
+    if not validos:
+        raise ConfigInvalida(
+            f"{donde}: 'permisos' tiene que ser una lista con valores de "
+            f"{sorted(PERMISOS_CONOCIDOS)} (sin el campo, la clave es completa)"
+        )
+    return frozenset(permisos)
 
 
 def _webhook_desde_dict(w: Any, donde: str, env: Mapping[str, str]) -> ConfigWebhook | None:
@@ -387,6 +482,17 @@ def _no_encontrado() -> JSONResponse:
     return _error(404, "no_encontrado", "No existe.")
 
 
+def _solo_lectura() -> JSONResponse:
+    # La forma de /v1 también en /a2a, como el 401 de la clave (RFC 6750:
+    # la clave vale pero no alcanza).
+    return _error(
+        403, "solo_lectura",
+        "La clave es de solo lectura: sirve para consultar (GET en /v1), "
+        "no para comprar, contestar ni aprobar.",
+        headers={"WWW-Authenticate": 'Bearer error="insufficient_scope"'},
+    )
+
+
 class AutenticacionGateway:
     """Reglas por ruta y oyente (diseño §1.2). Deja en `scope["state"]`:
 
@@ -403,6 +509,12 @@ class AutenticacionGateway:
     `rutas_abiertas`: rutas exactas que pasan sin clave en cualquier oyente
     (la consola web: archivos estáticos, sin estado; ver `proxy.consola`).
     Nunca abre nada bajo `/guard`, `/v1` ni `/a2a`.
+
+    Una clave con permisos (de solo lectura) que autenticó solo pasa por su
+    lista blanca (`RUTAS_LECTURA`); en el resto de `/v1` y en `/a2a/*`, 403
+    `solo_lectura` sin llegar a la app (en el local tampoco se degrada a
+    anónimo). Primero se autentica: una clave que no vale es 401 aunque sea
+    de lectura.
     """
 
     def __init__(
@@ -461,13 +573,26 @@ class AutenticacionGateway:
         if path in RUTAS_V1_PUBLICAS or path in self.rutas_abiertas:
             return None
         if _bajo(path, _PREFIJO_V1):
-            return self._exigir_clave(scope)
+            return self._con_permiso(scope, self._exigir_clave(scope))
         if _bajo(path, _PREFIJO_A2A):
             if publico:
-                return self._exigir_clave(scope)
-            return self._clave_opcional(scope)
+                return self._con_permiso(scope, self._exigir_clave(scope))
+            return self._con_permiso(scope, self._clave_opcional(scope))
         # El público es una lista cerrada: lo que no es /a2a ni /v1 no existe.
         return _no_encontrado() if publico else None
+
+    @staticmethod
+    def _con_permiso(
+        scope: Scope, resultado: ClaveAutenticada | None | JSONResponse
+    ) -> Integrador | None | JSONResponse:
+        """El integrador si la clave puede este método y ruta; si no, 403. Lo
+        que decide es el permiso guardado de la clave que autenticó: ningún
+        header ni parámetro del pedido lo cambia."""
+        if not isinstance(resultado, ClaveAutenticada):
+            return resultado
+        if not resultado.permite(scope["method"], scope["path"]):
+            return _solo_lectura()
+        return resultado.integrador
 
     def _claves_presentes(self, scope: Scope) -> tuple[list[str], str | None]:
         """(todos los valores de Authorization, la clave psg_ si hay una sola)."""
@@ -484,16 +609,16 @@ class AutenticacionGateway:
             extraer_bearer(v) is not None or _parece_clave(v) for v in valores
         )
 
-    def _exigir_clave(self, scope: Scope) -> Integrador | JSONResponse:
+    def _exigir_clave(self, scope: Scope) -> ClaveAutenticada | JSONResponse:
         valores, clave = self._claves_presentes(scope)
         if self._ambiguo(valores):
             return _clave_invalida()
         if clave is None:
             return _clave_invalida() if any(map(_parece_clave, valores)) else _no_autenticado()
-        integrador = self.registro.autenticar(clave)
-        return integrador if integrador is not None else _clave_invalida()
+        autenticada = self.registro.autenticar_clave(clave)
+        return autenticada if autenticada is not None else _clave_invalida()
 
-    def _clave_opcional(self, scope: Scope) -> Integrador | None | JSONResponse:
+    def _clave_opcional(self, scope: Scope) -> ClaveAutenticada | None | JSONResponse:
         """Oyente local, `/a2a/*`: sin clave nuestra es anónimo (la demo); con
         `Bearer psg_…` tiene que ser válida, nunca se degrada a anónimo.
 
@@ -505,8 +630,8 @@ class AutenticacionGateway:
             return _clave_invalida()
         if clave is None:
             return _clave_invalida() if any(map(_parece_clave, valores)) else None
-        integrador = self.registro.autenticar(clave)
-        return integrador if integrador is not None else _clave_invalida()
+        autenticada = self.registro.autenticar_clave(clave)
+        return autenticada if autenticada is not None else _clave_invalida()
 
 
 def _parece_clave(valor: str) -> bool:
@@ -519,11 +644,16 @@ def _cmd_nueva(args: argparse.Namespace) -> int:
         print(f"id de integrador inválido: {args.integrador!r}", file=sys.stderr)
         return 2
     clave, kid, sha = generar_clave()
-    objeto = {"kid": kid, "sha256": sha, "creada": date.today().isoformat(), "activa": True}
+    objeto: dict[str, Any] = {
+        "kid": kid, "sha256": sha, "creada": date.today().isoformat(), "activa": True,
+    }
+    if args.lectura:
+        objeto["permisos"] = [PERMISO_LECTURA]
+    tipo = "de solo lectura (GET en /v1; no sirve para comprar)" if args.lectura else "nueva"
     # stdout: la clave y el objeto, una línea cada uno (se puede parsear).
     # stderr: las indicaciones para el operador.
     print(
-        f"Clave nueva para el integrador {args.integrador}. Se muestra una sola vez: "
+        f"Clave {tipo} para el integrador {args.integrador}. Se muestra una sola vez: "
         "entregala por un canal seguro. En el archivo de claves va solo el objeto, "
         f"dentro de 'claves' del integrador {args.integrador}.",
         file=sys.stderr,
@@ -550,6 +680,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="comando", required=True)
     nueva = sub.add_parser("nueva", help="genera una clave de API para un integrador")
     nueva.add_argument("--integrador", required=True, help="id del integrador (como en el archivo)")
+    nueva.add_argument("--lectura", action="store_true",
+                       help='clave de solo lectura ("permisos": ["lectura"]): GET en /v1, para el panel')
     nueva.set_defaults(func=_cmd_nueva)
     secreto = sub.add_parser("secreto-webhook", help="genera un secreto whsec_ para firmar webhooks")
     secreto.set_defaults(func=_cmd_secreto_webhook)

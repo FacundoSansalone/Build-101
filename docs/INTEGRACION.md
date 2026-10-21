@@ -63,6 +63,10 @@ El operador te da:
 - **La URL base del gateway**, por ejemplo `https://gw.example.com`.
 - **Opcional, un webhook:** vos le das una URL `https://` de tu backend y el
   operador te da un secreto `whsec_…` para verificar las firmas.
+- **Opcional, una clave de solo lectura** (misma forma `psg_…`) para el
+  panel web o cualquier pantalla que solo consulta: ve tus compras, pero no
+  sirve para comprar ni para contestar nada ([§4](#claves-de-solo-lectura)).
+  Pedísela al operador aparte; la completa queda en tu backend.
 
 La especificación completa está en `GET /v1/openapi.json` (OpenAPI 3.1) y una
 versión legible en `GET /v1/docs`. Los dos son públicos.
@@ -122,6 +126,45 @@ Vale para `/v1/*` y para el tráfico A2A (`/a2a/m/{comercio}`). Solo
   `compra_desconocida`, igual que una que no existe.
 - **La clave nunca llega al comercio.** El gateway saca `Authorization` y
   `X-Compra-Id` antes de reenviar.
+
+### Claves de solo lectura
+
+Una clave de lectura es tuya como la completa (las mismas compras, los mismos
+comercios, las mismas entregas de webhooks), pero **solo consulta**. Sirve
+para lo que corre donde una clave puede quedar a la vista: el panel web en el
+navegador, un tablero interno, un script de reportes. Si alguien la copia,
+puede mirar tus compras pero no comprar, ni contestar un porqué, ni decidir
+una propuesta, ni aprobar un checkout.
+
+Se usa igual (`Authorization: Bearer psg_…`). Lo que puede es una lista
+cerrada: todo lo que no está acá abajo como "Sí", también una ruta nueva que
+el gateway sume más adelante, da **403 `solo_lectura`**.
+
+| Pedido | Clave de lectura |
+|---|---|
+| `GET /v1/compras` | Sí: tus compras, igual que con la completa |
+| `GET /v1/compras/{compra_id}` | Sí |
+| `GET /v1/compras/{compra_id}/explicacion` | Sí |
+| `GET /v1/resumen` | Sí |
+| `GET /v1/comercios` | Sí |
+| `GET /v1/webhooks/entregas` | Sí |
+| `/v1/public-key`, `/v1/openapi.json`, `/v1/docs` | Como siempre: no piden clave |
+| `POST /v1/compras` (crear una compra) | No: 403 |
+| `POST /v1/compras/{compra_id}/respuesta`, `/decision`, `/aprobaciones` | No: 403 |
+| `POST /v1/evaluar`, `POST /v1/filtrar` | No: 403 |
+| `POST /v1/webhooks/prueba` | No: 403 |
+| Cualquier otro método o ruta de `/v1` (también `HEAD`) | No: 403 |
+| Todo el tráfico A2A (`/a2a/m/{comercio}`, también la Agent Card) | No: 403, sin reenviar nada al comercio |
+
+- El 403 tiene la forma de error de `/v1` también en A2A, como el 401 de la
+  clave: `{"error": {"codigo": "solo_lectura", "mensaje": "…"}}`, con
+  `WWW-Authenticate: Bearer error="insufficient_scope"`.
+- **Primero se autentica.** Una clave de lectura que no existe, está mal
+  escrita o está dada de baja es 401 `clave_invalida`, como cualquier otra.
+- **El permiso es de la clave**, guardado del lado del gateway. Ningún header
+  ni parámetro que mandes lo cambia, y mandar las dos claves juntas es 401
+  (más de un `Authorization`).
+- Una compra de otro integrador sigue siendo 404 `compra_desconocida`.
 
 ## 5. Flujo completo, paso a paso
 
@@ -669,6 +712,7 @@ reabrirías el canal que el gateway cierra.
 | 400 | `checkout_invalido` | `/v1/evaluar` con un checkout que no es un `ap2.checkout` |
 | 401 | `no_autenticado`, `clave_invalida` | Falta la clave o no vale |
 | 403 | `comercio_no_permitido` | El comercio no existe o no está habilitado para tu clave |
+| 403 | `solo_lectura` | La clave es de solo lectura y el pedido no es una consulta permitida ([§4](#claves-de-solo-lectura)) |
 | 404 | `compra_desconocida`, `no_encontrado` | La compra no existe (o no es tuya); la ruta no existe |
 | 405 | `metodo_no_permitido` | La ruta existe pero no acepta ese método (los que acepta van en `Allow`) |
 | 409 | `estado` | La compra no está esperando eso (`detalle.estado`) |
@@ -707,7 +751,8 @@ status HTTP y un error JSON-RPC con el código en `data.codigo`:
 | 413 | `cuerpo_demasiado_grande` | El pedido supera 5 MB |
 | 503 | `estado_no_disponible` | El gateway no pudo leer su estado: reintentá |
 
-El 401 de la clave sale sin JSON-RPC, con la forma de `/v1`. Si el gateway ya
+El 401 de la clave y el 403 `solo_lectura` (una clave de lectura no sirve para
+A2A) salen sin JSON-RPC, con la forma de `/v1`. Si el gateway ya
 reenvió el pedido y algo sale mal después (el comercio no responde, el
 checkout no se puede evaluar), tu agente recibe una tarea `failed` con un
 `guard.veredicto` `bloqueado`: nunca un checkout sin verificar.

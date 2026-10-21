@@ -579,12 +579,22 @@ la demo arranca igual.
   anónimo). Más de un `Authorization` con una clave nuestra: 401.
 - Sin clave: 401 `no_autenticado` (`WWW-Authenticate: Bearer`); clave mala:
   401 `clave_invalida`. Nunca se loguea la clave ni el header.
+- **Clave de solo lectura** (`"permisos": ["lectura"]`, para el panel web):
+  el mismo integrador, pero solo la lista blanca `RUTAS_LECTURA` de
+  `claves.py` (GET de compras, una compra y su explicación, resumen,
+  comercios y entregas). El resto de `/v1` y todo `/a2a/*` (también la ruta
+  de la demo en el local: no se degrada a anónimo) es 403 `solo_lectura` en
+  el middleware, antes de la app y del comercio. Una ruta nueva de `/v1`
+  queda prohibida para lectura hasta sumarla a la lista;
+  `test_claves_lectura.py` recorre las rutas reales de la app y lo exige.
+  Tabla para integradores: [INTEGRACION.md §4](../docs/INTEGRACION.md#claves-de-solo-lectura).
 
-Generar una clave (imprime la clave una sola vez y el objeto para el archivo)
-y un secreto de webhook:
+Generar una clave (imprime la clave una sola vez y el objeto para el archivo),
+una de solo lectura y un secreto de webhook:
 
 ```sh
 world/ap2/.venv/bin/python -m proxy.claves nueva --integrador acme
+world/ap2/.venv/bin/python -m proxy.claves nueva --integrador acme --lectura
 world/ap2/.venv/bin/python -m proxy.claves secreto-webhook
 ```
 
@@ -697,7 +707,11 @@ por defecto. **No hay URL libre:** el upstream sale siempre del registro.
     {
       "id": "acme",
       "nombre": "ACME Compras",
-      "claves": [{"kid": "a1b2c3d4e5f6", "sha256": "<64 hex>", "creada": "2026-10-18", "activa": true}],
+      "claves": [
+        {"kid": "a1b2c3d4e5f6", "sha256": "<64 hex>", "creada": "2026-10-18", "activa": true},
+        {"kid": "f6e5d4c3b2a1", "sha256": "<otros 64 hex>", "creada": "2026-10-21", "activa": true,
+         "permisos": ["lectura"]}
+      ],
       "comercios": ["merchant_1", "tienda_b"],
       "webhook": {"url": "https://acme.example/hooks/guard", "secreto_env": "WEBHOOK_SECRETO_ACME"},
       "max_compras_activas": 1000
@@ -707,6 +721,12 @@ por defecto. **No hay URL libre:** el upstream sale siempre del registro.
 ```
 
 - `comercios` vacío o ausente = solo el por defecto.
+- `permisos` en una clave: sin el campo es **completa** (todas las claves de
+  antes siguen igual). `["lectura"]` es de **solo lectura** (la segunda del
+  ejemplo, para el panel): ve lo mismo que la completa del integrador y nada
+  más ([Autenticación](#autenticación)). Otro valor, una lista vacía o
+  `null`: no arranca. Una clave de lectura activa también cuenta para abrir
+  el oyente público.
 - `webhook.secreto_env` nombra la variable de entorno con el secreto (al
   menos 32 caracteres; `proxy.claves secreto-webhook` genera uno `whsec_…`).
   El secreto nunca va en el archivo.
@@ -907,7 +927,7 @@ intención queda apagada (pedido literal).
 | `vistas.py` | Lo que ve el integrador de una compra (`VistaCompra`), sin texto del vendedor |
 | `openapi.py` | OpenAPI 3.1 de `/v1` y la página `/v1/docs` (HTML sin scripts) |
 | `consola/` | La consola web (`/consola`, y `/` → 307): `rutas_consola()` sirve `index.html`, `app.js` (la vista), `logica.mjs` (lógica pura: cuerpos de `/v1`, JSON-RPC, lectura con latido, veredicto y verificación del recibo con WebCrypto) y `estilo.css`, sin clave, con CSP estricta, `nosniff`, `no-referrer` y `no-store`. Hace lo del agente de un integrador con la clave que pega el usuario; no tiene permisos propios. La prende `create_app(..., consola=True)` (Vercel; en `python -m proxy`, `GATEWAY_CONSOLA=1`). Consola web: https://kaiai-motor.vercel.app/consola |
-| `claves.py` | Claves `psg_` (sha256), registro de integradores, middleware `AutenticacionGateway` y la CLI `python -m proxy.claves` |
+| `claves.py` | Claves `psg_` (sha256), registro de integradores, claves de solo lectura (`RUTAS_LECTURA`), middleware `AutenticacionGateway` y la CLI `python -m proxy.claves` |
 | `comercios.py` | Registro de comercios (`/a2a/m/{id}`, sin URL libre) y la política con sus `merchant_ids` |
 | `webhooks.py` | `Despachador`: webhooks firmados (HMAC con `t`), reintentos, SSRF con IP fijada; `verificar_firma` para el receptor |
 | `estado.py` | Almacén del gateway: `EstadoMemoria` (default) y `EstadoSupabase` (`GATEWAY_ESTADO=supabase`) |
@@ -946,6 +966,7 @@ receptor de webhooks se inyectan):
 | Archivo | Qué cubre |
 |---|---|
 | `test_claves.py`, `test_comercios.py` | Formato y verificación de claves, middleware por oyente, CLI; registro de comercios y URLs |
+| `test_claves_lectura.py` | Claves de solo lectura: formato, lista blanca contra las rutas reales (memoria, varias instancias, Vercel; oyente local y público), A2A, tiempo constante, `generar_secretos.py --clave-lectura` |
 | `test_gateway_revision.py` | Regresiones de la revisión adversarial del gateway: desalojo de memoria, aprobaciones solo del dueño, GET de `/guard/*` sin token, escrituras en orden, listado tras un reinicio y límite concurrente |
 | `test_revision_esperas_y_caches.py` | Segunda revisión: otra búsqueda sin plazo espera la llamada, una consulta al almacén por contexto y llamada en el tráfico anónimo, marcas de una fila de otro reloj, caché del filtro sobre la Agent Card y los duplicados (`anidado_de_mas`, `en_hilo`) |
 | `test_webhooks.py` | Firma, reintentos, SSRF (IPs no globales, IP fijada, sin redirecciones), cola y registro de entregas |
