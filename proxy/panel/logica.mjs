@@ -204,6 +204,10 @@ export const RESULTADOS = Object.freeze({
   vencida: { texto: "Vencida", tono: "neutro", icono: "reloj", descripcion: "Nadie decidió a tiempo una propuesta." },
   en_curso: { texto: "En curso", tono: "info", icono: "curso", descripcion: "Todavía no hubo un checkout." },
   sin_compra: { texto: "Sin compra", tono: "neutro", icono: "guion", descripcion: "Pasaron 24 h sin ningún checkout." },
+  sin_ofertas: {
+    texto: "Sin ofertas", tono: "neutro", icono: "lupa",
+    descripcion: "El comercio no tuvo ofertas para el pedido: no hubo compra.",
+  },
 });
 
 export function infoResultado(resultado) {

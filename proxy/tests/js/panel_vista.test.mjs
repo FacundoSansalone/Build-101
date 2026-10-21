@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 
 import { ICONOS, SVG_NS, crearVista } from "../../panel/vista.mjs";
 import {
-  chequeosDe, datosDeCompra, lineaDeTiempo, separarAlertas, tarjetasResumen,
+  RESULTADOS, chequeosDe, datosDeCompra, lineaDeTiempo, separarAlertas, tarjetasResumen,
 } from "../../panel/logica.mjs";
 
 // ---------------------------------------------------------------------------
@@ -165,6 +165,10 @@ test("icono: solo los de la lista, como SVG sin eventos", () => {
   // Un tono que no es de la lista queda neutro.
   assert.equal(v.chip({ texto: "x", tono: "<b>", icono: "check" }).getAttribute("data-tono"), "neutro");
   assert.ok(Object.isFrozen(ICONOS));
+  // Cada resultado tiene un ícono de la lista (no cae en el guion por error).
+  for (const [resultado, info] of Object.entries(RESULTADOS)) {
+    assert.ok(Object.hasOwn(ICONOS, info.icono), resultado);
+  }
 });
 
 test("tarjetaResumen: título con ícono, valor, detalle o más monedas", () => {

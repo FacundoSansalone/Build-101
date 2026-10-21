@@ -183,6 +183,7 @@ test("infoResultado: texto, tono e ícono para cada resultado de la API", () => 
     aprobada: ["Aprobada", "ok"], frenada: ["Frenada", "crit"], retenida: ["Retenida", "aviso"],
     cortada_por_seguridad: ["Cortada por seguridad", "crit"], vencida: ["Vencida", "neutro"],
     en_curso: ["En curso", "info"], sin_compra: ["Sin compra", "neutro"],
+    sin_ofertas: ["Sin ofertas", "neutro"],
   };
   assert.deepEqual(Object.keys(RESULTADOS).sort(), Object.keys(esperados).sort());
   const iconos = new Set();
@@ -346,7 +347,10 @@ test("combinarCompras: sin repetir, en orden y solo con ids válidos", () => {
 
 const RESUMEN = {
   desde: "2026-10-01T00:00:00+00:00", hasta: "2026-11-01T00:00:00+00:00", compras: 42,
-  por_resultado: { aprobada: 30, frenada: 6, retenida: 1, cortada_por_seguridad: 3, en_curso: 2, vencida: 0, sin_compra: 0 },
+  por_resultado: {
+    aprobada: 30, frenada: 6, retenida: 1, cortada_por_seguridad: 3, en_curso: 2, vencida: 0, sin_compra: 0,
+    sin_ofertas: 0,
+  },
   intentos_de_estafa: 7,
   por_alerta: { manipulacion: 3, dato_falso: 2, precio_distinto: 2, checkout_alterado: 0, no_cumple: 3, sin_verificar: 1 },
   monto_frenado: [{ moneda: "ARS", total: 150000 }, { moneda: "USD", total: 2148.5 }],
