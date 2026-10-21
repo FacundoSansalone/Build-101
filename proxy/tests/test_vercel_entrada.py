@@ -337,7 +337,7 @@ def test_solo_a2a_m_v1_y_la_consola():
     consola = {r for r in rutas if r == "/" or r == "/consola" or r.startswith("/consola/")}
     assert consola == {
         "/", "/consola", "/consola/", "/consola/app.js", "/consola/logica.mjs",
-        "/consola/estilo.css",
+        "/consola/recibo.mjs", "/consola/estilo.css",
     }
     assert all(r == "/v1" or r.startswith(("/a2a/m/", "/v1/")) for r in rutas - consola)
 

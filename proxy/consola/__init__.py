@@ -10,8 +10,9 @@ clave, y la API decide igual que con cualquier integrador.
 Lo que sirve este módulo son archivos estáticos de esta carpeta, sin estado y
 sin clave (como `/v1/docs`):
 
-- `GET /consola` (la página), `GET /consola/app.js`, `GET /consola/logica.mjs`
-  y `GET /consola/estilo.css`;
+- `GET /consola` (la página), `GET /consola/app.js`, `GET /consola/logica.mjs`,
+  `GET /consola/recibo.mjs` (la verificación del recibo, que comparte con el
+  panel del cliente) y `GET /consola/estilo.css`;
 - `GET /` y `GET /consola/` → 307 a `/consola`.
 
 Todo con una CSP estricta (solo recursos propios, sin scripts ni estilos en
@@ -49,6 +50,9 @@ ARCHIVOS: dict[str, tuple[str, str]] = {
     RUTA: ("index.html", "text/html; charset=utf-8"),
     f"{RUTA}/app.js": ("app.js", "text/javascript; charset=utf-8"),
     f"{RUTA}/logica.mjs": ("logica.mjs", "text/javascript; charset=utf-8"),
+    # La verificación del recibo (la importa logica.mjs; el panel del cliente
+    # sirve este mismo archivo, ver `proxy.panel`).
+    f"{RUTA}/recibo.mjs": ("recibo.mjs", "text/javascript; charset=utf-8"),
     f"{RUTA}/estilo.css": ("estilo.css", "text/css; charset=utf-8"),
 }
 REDIRECCIONES = ("/", f"{RUTA}/")

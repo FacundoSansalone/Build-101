@@ -436,7 +436,7 @@ def test_los_estaticos_de_la_consola_entran_en_el_bundle():
     )
     assert set(estaticos) == {
         "proxy/consola/index.html", "proxy/consola/app.js", "proxy/consola/logica.mjs",
-        "proxy/consola/estilo.css",
+        "proxy/consola/recibo.mjs", "proxy/consola/estilo.css",
     }
     for ruta in estaticos:
         assert se_sube(ruta), f"{ruta} no se subiría"
