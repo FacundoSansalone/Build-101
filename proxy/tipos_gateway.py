@@ -141,6 +141,20 @@ class SolicitudFiltrar:
     origen: OrigenContenido
 
 
+@dataclass(frozen=True)
+class FiltrosListado:
+    """`GET /v1/compras` ya validado: el límite, los filtros y el cursor
+    (`(creada, id)` de la última compra de la página anterior)."""
+
+    limite: int = 50
+    estado: str | None = None
+    desde: datetime | None = None
+    hasta: datetime | None = None   # excluido
+    referencia: str | None = None
+    alerta: str | None = None
+    cursor: tuple[datetime, str] | None = None
+
+
 # -- foto de una compra (de compras.Compra a la API y los webhooks) ----------
 @dataclass(frozen=True)
 class FotoCompra:
@@ -167,6 +181,14 @@ class FotoCompra:
     corte: str | None = None
     # El último checkout que el proxy frenó sin veredicto (`Compra.bloqueo_proxy`).
     bloqueo_proxy: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class PaginaCompras:
+    """Una página del listado y, si puede haber más, dónde sigue."""
+
+    fotos: tuple[FotoCompra, ...]
+    siguiente: tuple[datetime, str] | None = None
 
 
 # -- entregas de webhooks ----------------------------------------------------
@@ -203,7 +225,15 @@ class AlmacenEstado(Protocol):
     async def guardar_compra(self, fila: dict[str, Any]) -> None: ...
     async def cargar_compra(self, compra_id: str) -> dict[str, Any] | None: ...
     async def listar_compras(
-        self, integrador_id: str, *, limite: int = 50, estado: str | None = None
+        self,
+        integrador_id: str,
+        *,
+        limite: int = 50,
+        estado: str | tuple[str, ...] | None = None,
+        desde: datetime | None = None,
+        hasta: datetime | None = None,
+        referencia: str | None = None,
+        antes_de: tuple[datetime | str, str] | None = None,
     ) -> list[dict[str, Any]]: ...
     async def contar_activas(self, integrador_id: str, desde: datetime) -> int: ...
     async def atar_contexto(self, contexto_id: str, compra_id: str, comercio_id: str) -> str: ...
@@ -250,6 +280,12 @@ class AlmacenEstado(Protocol):
         self, fila: dict[str, Any]
     ) -> tuple[dict[str, Any], bool]: ...
     async def aprobaciones_de_compra(self, compra_id: str) -> list[dict[str, Any]]: ...
+    # -- historial (panel del cliente) ----------------------------------------
+    async def contextos_de_compras(self, compra_ids: Any) -> dict[str, list[str]]: ...
+    async def aprobaciones_de_compras(
+        self, compra_ids: Any
+    ) -> dict[str, list[dict[str, Any]]]: ...
+    async def purgar(self, antes_de: datetime) -> dict[str, int]: ...
     async def guardar_evento(self, fila: dict[str, Any]) -> None: ...
     async def listar_eventos(
         self, compra_id: str, desde_orden: int = 0, *, limite: int = 100
@@ -271,13 +307,24 @@ class AlmacenEstado(Protocol):
 
 # -- núcleo que consume la API /v1 (lo implementa la integración) -----------
 class NucleoGateway(Protocol):
+    # La vida de una compra (`GATEWAY_COMPRA_TTL_S`): pasada sin checkout, `sin_compra`.
+    ttl_compra_s: float
+
     def comercios_de(self, integrador: Integrador) -> list[Comercio]: ...
     def url_a2a(self, comercio_id: str) -> str: ...
     async def crear_compra(self, integrador: Integrador, solicitud: SolicitudCompra) -> FotoCompra: ...
     async def obtener_compra(self, integrador: Integrador, compra_id: str) -> FotoCompra: ...
     async def listar_compras(
-        self, integrador: Integrador, *, limite: int, estado: str | None
-    ) -> list[FotoCompra]: ...
+        self, integrador: Integrador, filtros: FiltrosListado
+    ) -> PaginaCompras: ...
+    # Historial (panel del cliente): la compra con sus eventos saneados, y las
+    # compras de un período (con False si no entraron todas).
+    async def explicacion_compra(
+        self, integrador: Integrador, compra_id: str
+    ) -> tuple[FotoCompra, list[dict[str, Any]]]: ...
+    async def resumen_compras(
+        self, integrador: Integrador, desde: datetime, hasta: datetime
+    ) -> tuple[list[FotoCompra], bool]: ...
     async def responder_porque(
         self, integrador: Integrador, compra_id: str, respuesta: str | None
     ) -> FotoCompra: ...

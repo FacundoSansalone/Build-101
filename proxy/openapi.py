@@ -46,6 +46,14 @@ _CHEQUEO = {
     },
 }
 _ALERTAS = ["manipulacion", "dato_falso", "precio_distinto", "checkout_alterado", "no_cumple", "sin_verificar"]
+_RESULTADOS = ["aprobada", "frenada", "retenida", "cortada_por_seguridad", "en_curso", "vencida", "sin_compra"]
+_RESULTADO = {
+    "type": "string", "enum": _RESULTADOS,
+    "description": "aprobada: el último checkout llegó a la firma (también un escalar que "
+    "aprobó una persona); frenada: quedó bloqueado; retenida: escalar sin aprobar; "
+    "cortada_por_seguridad: la cortó el filtro; vencida: nadie decidió una alternativa; "
+    "en_curso: todavía sin checkout; sin_compra: pasó su vida sin checkout.",
+}
 _ALERTA = {
     "type": "string", "enum": _ALERTAS,
     "description": "`manipulacion`, `dato_falso`, `precio_distinto` y `checkout_alterado` son "
@@ -270,9 +278,108 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
             "aprobaciones": {"type": "array", "items": _ref("VistaAprobacion")},
         },
     },
+    "CompraListada": {
+        "allOf": [
+            _ref("VistaCompra"),
+            {
+                "type": "object",
+                "properties": {
+                    "resultado": _RESULTADO,
+                    "alertas": {"type": "array", "items": _ALERTA},
+                    "intento_de_estafa": {"type": "boolean"},
+                },
+            },
+        ],
+    },
     "ListaCompras": {
         "type": "object",
-        "properties": {"compras": {"type": "array", "items": _ref("VistaCompra")}},
+        "properties": {
+            "compras": {"type": "array", "items": _ref("CompraListada")},
+            "siguiente": _nullable({
+                "type": "string",
+                "description": "Cursor opaco para la página siguiente (`?cursor=`), o null si "
+                "no hay más. Con `alerta`, una página puede venir con menos compras y "
+                "`siguiente`: el gateway mira hasta 1000 por pedido.",
+            }),
+        },
+    },
+    "Explicacion": {
+        "type": "object",
+        "description": "La compra en lenguaje claro, con plantillas del gateway y solo valores "
+        "verificados: nunca texto, ids ni el recibo firmado del comercio.",
+        "properties": {
+            "compra_id": _ID_COMPRA,
+            "resultado": _RESULTADO,
+            "intento_de_estafa": {"type": "boolean"},
+            "alertas": {"type": "array", "items": _ALERTA},
+            "resumen": {"type": "string"},
+            "linea_de_tiempo": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ts": _FECHA,
+                        "etapa": {"type": "string", "enum": [
+                            "pedido", "contexto", "busqueda", "ofertas", "seguridad", "intencion",
+                            "checkout", "verificacion", "aprobacion", "resultado",
+                        ]},
+                        "texto": {"type": "string"},
+                    },
+                },
+            },
+            "chequeos": {
+                "type": "array",
+                "description": "Los chequeos del último veredicto, del más grave al menos.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tema": {"type": "string", "examples": ["precio", "memoria_ram", "checkout"]},
+                        "resultado": {"type": "string", "enum": ["ok", "aviso", "escalar", "bloquea"]},
+                        "texto": {"type": "string"},
+                    },
+                },
+            },
+            "recibo": _nullable({
+                "type": "object",
+                "description": "El recibo del último veredicto (el JWS está en la compra).",
+                "properties": {
+                    "id": {"type": "string"}, "kid": _nullable({"type": "string"}),
+                    "firmado": {"type": "boolean"},
+                },
+            }),
+            "monto": _nullable({"type": "number"}),
+            "moneda": _nullable(_MONEDA),
+        },
+    },
+    "Resumen": {
+        "type": "object",
+        "properties": {
+            "desde": _FECHA,
+            "hasta": _FECHA,
+            "compras": {"type": "integer"},
+            "por_resultado": {
+                "type": "object",
+                "properties": {r: {"type": "integer"} for r in _RESULTADOS},
+            },
+            "intentos_de_estafa": {"type": "integer"},
+            "por_alerta": {
+                "type": "object",
+                "description": "Compras con cada alerta (una compra cuenta en varias).",
+                "properties": {a: {"type": "integer"} for a in _ALERTAS},
+            },
+            "monto_frenado": {
+                "type": "array",
+                "description": "Lo que habrían cobrado las compras frenadas, por moneda.",
+                "items": {"type": "object", "properties": {
+                    "moneda": _MONEDA, "total": {"type": "number"},
+                }},
+            },
+            "completo": {
+                "type": "boolean",
+                "description": "false si el período tiene más de 5000 compras (cuenta las 5000 "
+                "más nuevas): achicá el período.",
+            },
+        },
     },
     "SolicitudRespuesta": {
         "type": "object",
@@ -421,13 +528,26 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
      "SolicitudCompra", {"201": ("Compra creada", "VistaCompra")},
      ["400", "401", "403", "413", "415", "429", "503"], False),
     ("get", "/v1/compras", "Listar compras",
-     "Las compras del integrador, la más reciente primero. Parámetros: `limite` (1 a "
-     "200, 50 por defecto) y `estado`.",
+     "Las compras del integrador, la más reciente primero (`creada desc`), cada una con su "
+     "`resultado`, sus `alertas` e `intento_de_estafa`. Filtros: `limite` (1 a 200, 50 por "
+     "defecto), `estado`, `desde` y `hasta` (sobre `creada`; `hasta` excluido; un día "
+     "`YYYY-MM-DD` es entero, en UTC), `referencia` (exacta) y `alerta`. Para la página "
+     "siguiente, `cursor` con el `siguiente` de la respuesta.",
      None, {"200": ("Compras", "ListaCompras")}, ["400", "401", "503"], False),
     ("get", "/v1/compras/{compra_id}", "Ver una compra",
      "Estado, ficha vigente, lo pendiente, veredictos y aprobaciones. Sirve para "
      "reconciliar si se perdió un webhook.",
      None, {"200": ("Compra", "VistaCompra")}, ["401", "404", "503"], False),
+    ("get", "/v1/compras/{compra_id}/explicacion", "Explicar una compra",
+     "Qué pidió el usuario, qué pasó, si el comercio intentó estafarlo y por qué KaiAI "
+     "aprobó o frenó la compra, en lenguaje claro y sin texto del comercio: resultado, "
+     "alertas, un resumen, la línea de tiempo y un texto por chequeo.",
+     None, {"200": ("Explicación", "Explicacion")}, ["401", "404", "503"], False),
+    ("get", "/v1/resumen", "Resumen de compras",
+     "Cuántas compras hubo en el período por resultado y por alerta, cuántos intentos de "
+     "estafa y el monto frenado por moneda. `desde` y `hasta` (ISO 8601, sobre `creada`; "
+     "por defecto los últimos 30 días hasta el final de hoy, en UTC; hasta 366 días).",
+     None, {"200": ("Resumen", "Resumen")}, ["400", "401", "503"], False),
     ("post", "/v1/compras/{compra_id}/respuesta", "Contestar el porqué",
      "Solo con la compra en `esperando_contexto`. El silencio no es autorización: si "
      "vence, se sigue el pedido literal.",
@@ -475,6 +595,32 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
      None, {"200": ("HTML", None)}, [], True),
 ]
 
+def _query(nombre: str, esquema: dict[str, Any], descripcion: str) -> dict[str, Any]:
+    return {"name": nombre, "in": "query", "required": False, "schema": esquema,
+            "description": descripcion}
+
+
+_FECHA_QUERY = {"type": "string", "examples": ["2026-10-01", "2026-10-21T12:00:00Z"]}
+# Parámetros de query de cada operación (además de `compra_id` en la ruta).
+PARAMETROS: dict[tuple[str, str], list[dict[str, Any]]] = {
+    ("get", "/v1/compras"): [
+        _query("limite", {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}, "Compras por página."),
+        _query("estado", {"type": "string", "enum": _ESTADOS}, "Solo las de ese estado."),
+        _query("desde", _FECHA_QUERY, "Creadas desde ese momento (incluido)."),
+        _query("hasta", _FECHA_QUERY, "Creadas antes de ese momento (un día entero si es una fecha)."),
+        _query("referencia", {"type": "string", "maxLength": 200}, "La `referencia` exacta."),
+        _query("alerta", {"type": "string", "enum": _ALERTAS}, "Solo las que tienen esa alerta."),
+        _query("cursor", {"type": "string"}, "El `siguiente` de la página anterior."),
+    ],
+    ("get", "/v1/resumen"): [
+        _query("desde", _FECHA_QUERY, "Por defecto, 30 días antes de `hasta`."),
+        _query("hasta", _FECHA_QUERY, "Por defecto, el final de hoy (UTC)."),
+    ],
+    ("get", "/v1/webhooks/entregas"): [
+        _query("limite", {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}, "Entregas."),
+    ],
+}
+
 ERRORES: dict[str, str] = {
     "400": "json_invalido, validacion, ficha_sin_tope, requisito_no_soportado, checkout_invalido",
     "401": "no_autenticado, clave_invalida",
@@ -519,6 +665,8 @@ def _operacion(
         op["parameters"] = [{
             "name": "compra_id", "in": "path", "required": True, "schema": _ID_COMPRA,
         }]
+    if (metodo, ruta) in PARAMETROS:
+        op["parameters"] = [*op.get("parameters", []), *PARAMETROS[(metodo, ruta)]]
     if cuerpo is not None:
         op["requestBody"] = {
             "required": True,

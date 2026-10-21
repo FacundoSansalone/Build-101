@@ -44,7 +44,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Literal
 
 from contracts import Evento
-from proxy import sin_estado
+from proxy import explicacion, sin_estado
 from proxy.aprobaciones import Aprobacion, SinEscalar, aprobacion_desde_fila
 from proxy.comercios import politica_de
 from proxy.compras import ESTADOS_ESPERANDO, Compra, EstadoInvalido
@@ -55,8 +55,10 @@ from proxy.tipos_gateway import (
     Comercio,
     ErrorAlmacen,
     ErrorApi,
+    FiltrosListado,
     FotoCompra,
     Integrador,
+    PaginaCompras,
     SolicitudCompra,
     SolicitudEvaluar,
     SolicitudFiltrar,
@@ -83,8 +85,16 @@ _PASO_RESOLUCION_S = 0.01
 # compra en el almacén hasta esto (si no llegó, la foto con el estado que va
 # a tener).
 ESPERA_RESOLUCION_COMPARTIDA_S = 3.0
-# Fotos del listado armadas a la vez (cada una son dos lecturas al almacén).
-_FOTOS_A_LA_VEZ = 8
+# El listado de `/v1/compras` lee de a `LOTE_ESCANEO` filas. Con un filtro que
+# se aplica acá (`alerta`, o un estado que se normaliza al leer) mira como
+# mucho `MAX_ESCANEO_LISTADO` compras por pedido: si no llenó la página, la
+# devuelve con `siguiente` (puede haber más).
+LOTE_ESCANEO = 200
+MAX_ESCANEO_LISTADO = 1000
+# `/v1/resumen` cuenta como mucho estas compras del período (si hay más, lo
+# dice con `completo: false`) y la explicación lee como mucho estos eventos.
+MAX_COMPRAS_RESUMEN = 5000
+MAX_EVENTOS_EXPLICACION = 1000
 # `/v1/filtrar` y `/v1/evaluar` corren en los hilos del proxy (el pool del
 # filtro y el del LLM/fabricante), los mismos que usa todo el tráfico: un
 # integrador con muchas a la vez dejaba sin hilos al filtro de los demás (que
@@ -126,6 +136,11 @@ class NucleoProxy:
     @property
     def _compartidas(self) -> EsperaCompartida | None:
         return self.proxy.esperas_compartidas
+
+    @property
+    def ttl_compra_s(self) -> float:
+        """La vida de una compra de integrador (`GATEWAY_COMPRA_TTL_S`)."""
+        return float(self.proxy.config.compra_ttl_s)
 
     async def _con_barrera(self, coro: Awaitable[Any]) -> Any:
         """Corre un método que escribe y, antes de responder, la barrera
@@ -242,84 +257,128 @@ class NucleoProxy:
         return await self._foto(await self._compra_de(integrador, compra_id))
 
     async def listar_compras(
-        self, integrador: Integrador, *, limite: int, estado: str | None
-    ) -> list[FotoCompra]:
-        """Del almacén (la lista completa), con la instancia de memoria cuando
-        existe (tiene las esperas vivas y puede estar más al día)."""
+        self, integrador: Integrador, filtros: FiltrosListado
+    ) -> PaginaCompras:
+        """Del almacén, la más nueva primero (`creada desc, id desc`), con los
+        filtros de la base (estado, fechas, referencia, cursor) y los de acá
+        (`alerta`; el estado de una fila que se normaliza al leerla). Con la
+        instancia de memoria cuando existe (tiene las esperas vivas). Las
+        fotos de la página, de una vez (`ProxyGuard.fotos_actuales`)."""
+        try:
+            compras, siguiente = await self._escanear(
+                integrador, filtros, maximo=filtros.limite, maximo_escaneo=MAX_ESCANEO_LISTADO,
+            )
+            fotos = await self.proxy.fotos_actuales(compras)
+        except ErrorAlmacen as e:
+            logger.error("No se pudieron listar las compras de %s: %s", integrador.id, e)
+            raise _no_disponible() from None
+        return PaginaCompras(tuple(fotos), siguiente)
+
+    async def _compra_listada(self, fila: dict[str, Any]) -> Compra:
+        """La compra de una fila del listado, sin ponerla en memoria (un
+        listado no desplaza a las compras en curso).
+
+        - Varias instancias: una espera viva de otra instancia se ve
+          esperando; una huérfana se cierra al leerla (`compra_de_fila`).
+        - Una sola: la de memoria si está; si no, la de la fila con la espera
+          cerrada (`Compra.desde_fila`), y la fila se normaliza en segundo
+          plano sin mover `actualizada`."""
+        proxy = self.proxy
         if self._compartidas is not None:
-            return await self._listar_compartidas(integrador, limite=limite, estado=estado)
-        proxy = self.proxy
+            return await proxy.compra_de_fila(fila)
+        compra = proxy.compras.get(fila.get("id")) if isinstance(fila, dict) else None
+        if compra is None:
+            compra = Compra.desde_fila(fila)
+            if compra.estado != fila.get("estado"):
+                proxy.guardar_compra(compra, tocar=False)
+        return compra
+
+    @staticmethod
+    def _entra(compra: Compra, integrador: Integrador, filtros: FiltrosListado) -> bool:
+        if compra.integrador_id != integrador.id:
+            return False
+        if filtros.estado is not None and compra.estado != filtros.estado:
+            return False
+        if filtros.alerta is not None:
+            alertas = explicacion.alertas_de_compra(
+                {"estado": compra.estado, "veredictos": compra.veredictos}, corte=compra.corte,
+            )
+            if filtros.alerta not in alertas:
+                return False
+        return True
+
+    async def _escanear(
+        self, integrador: Integrador, filtros: FiltrosListado, *, maximo: int, maximo_escaneo: int
+    ) -> tuple[list[Compra], tuple[datetime, str] | None]:
+        """Las compras que pasan los filtros, de a páginas del almacén, hasta
+        `maximo` (o hasta mirar `maximo_escaneo`), y dónde sigue el listado
+        (None si no hay más). El cursor es la última compra mirada, haya
+        entrado o no: la próxima página no la vuelve a mirar.
+
+        Una fila que quedó esperando antes de un reinicio se lee con la
+        espera cerrada (`Compra.desde_fila`): también es del estado
+        normalizado aunque la fila todavía no lo diga, así que se pide a la
+        base con los dos estados y se filtra acá."""
+        estado = filtros.estado
+        normalizado = _NORMALIZADA_DESDE.get(estado) if estado is not None else None
+        estados: tuple[str, ...] | None = None
+        if estado is not None:
+            estados = (estado,) if normalizado is None else (estado, normalizado)
+        filtra_aca = filtros.alerta is not None or normalizado is not None
+        lote = LOTE_ESCANEO if filtra_aca else min(LOTE_ESCANEO, maximo + 1)
+        cursor = filtros.cursor
+        elegidas: list[Compra] = []
+        miradas = 0
+        while True:
+            filas = await self.proxy.almacen.listar_compras(
+                integrador.id, limite=lote, estado=estados, desde=filtros.desde,
+                hasta=filtros.hasta, referencia=filtros.referencia, antes_de=cursor,
+            )
+            for i, fila in enumerate(filas):
+                compra = await self._compra_listada(fila)
+                cursor = (compra.creada, compra.id)
+                if not self._entra(compra, integrador, filtros):
+                    continue
+                elegidas.append(compra)
+                if len(elegidas) >= maximo:
+                    hay_mas = i < len(filas) - 1 or len(filas) == lote
+                    return elegidas, cursor if hay_mas else None
+            miradas += len(filas)
+            if len(filas) < lote:
+                return elegidas, None
+            if miradas >= maximo_escaneo:
+                return elegidas, cursor
+
+    async def explicacion_compra(
+        self, integrador: Integrador, compra_id: str
+    ) -> tuple[FotoCompra, list[dict[str, Any]]]:
+        """La foto de la compra (404 si no es del integrador) y sus eventos
+        del historial (saneados al guardarlos; la explicación los vuelve a
+        mirar). Si el almacén falla, 503."""
+        compra = await self._compra_de(integrador, compra_id)
+        foto = await self._foto(compra)
         try:
-            filas = await proxy.almacen.listar_compras(integrador.id, limite=limite, estado=estado)
-            desde = _NORMALIZADA_DESDE.get(estado) if estado is not None else None
-            if desde is not None:
-                # Una fila que quedó esperando antes de un reinicio se lee con
-                # la espera cerrada (`Compra.desde_fila`): también es de este
-                # estado aunque la fila todavía no lo diga.
-                filas = [
-                    *filas,
-                    *await proxy.almacen.listar_compras(
-                        integrador.id, limite=limite, estado=desde
-                    ),
-                ]
-            compras: list[Compra] = []
-            for fila in filas:
-                compra = proxy.compras.get(fila.get("id")) if isinstance(fila, dict) else None
-                if compra is None:
-                    # Sin restaurarla en memoria: un listado no desplaza a las
-                    # compras en curso.
-                    compra = Compra.desde_fila(fila)
-                    if compra.estado != fila.get("estado"):
-                        # La fila, con la espera cerrada; un listado no mueve `actualizada`.
-                        proxy.guardar_compra(compra, tocar=False)
-                if compra.integrador_id != integrador.id:
-                    continue
-                if estado is not None and compra.estado != estado:
-                    continue
-                compras.append(compra)
+            eventos = await self.proxy.eventos_de_compra(compra.id, MAX_EVENTOS_EXPLICACION)
         except ErrorAlmacen as e:
-            logger.error("No se pudieron listar las compras de %s: %s", integrador.id, e)
+            logger.error("No se pudo leer el historial de la compra %s: %s", compra.id, e)
             raise _no_disponible() from None
-        compras.sort(key=lambda c: (c.creada, c.id), reverse=True)  # mismo orden que el almacén
-        return [proxy.foto(c) for c in compras[:limite]]
+        return foto, eventos
 
-    async def _listar_compartidas(
-        self, integrador: Integrador, *, limite: int, estado: str | None
-    ) -> list[FotoCompra]:
-        """El listado con varias instancias: una espera viva de otra instancia
-        se ve esperando (no se cierra); una huérfana se cierra al leerla. Los
-        contextos y las aprobaciones de cada foto salen del almacén."""
-        proxy = self.proxy
+    async def resumen_compras(
+        self, integrador: Integrador, desde: datetime, hasta: datetime
+    ) -> tuple[list[FotoCompra], bool]:
+        """Las compras creadas en [`desde`, `hasta`), hasta
+        `MAX_COMPRAS_RESUMEN`, y si entraron todas."""
+        filtros = FiltrosListado(limite=MAX_COMPRAS_RESUMEN, desde=desde, hasta=hasta)
         try:
-            filas = await proxy.almacen.listar_compras(integrador.id, limite=limite, estado=estado)
-            desde = _NORMALIZADA_DESDE.get(estado) if estado is not None else None
-            if desde is not None:
-                # Una huérfana se lee con la espera cerrada: también es de este estado.
-                filas = [
-                    *filas,
-                    *await proxy.almacen.listar_compras(
-                        integrador.id, limite=limite, estado=desde
-                    ),
-                ]
-            compras: list[Compra] = []
-            for fila in filas:
-                compra = await proxy.compra_de_fila(fila)
-                if compra.integrador_id != integrador.id:
-                    continue
-                if estado is not None and compra.estado != estado:
-                    continue
-                compras.append(compra)
-            compras.sort(key=lambda c: (c.creada, c.id), reverse=True)
-            semaforo = asyncio.Semaphore(_FOTOS_A_LA_VEZ)
-
-            async def foto(compra: Compra) -> FotoCompra:
-                async with semaforo:
-                    return await proxy.foto_actual(compra)
-
-            return list(await asyncio.gather(*(foto(c) for c in compras[:limite])))
+            compras, siguiente = await self._escanear(
+                integrador, filtros, maximo=MAX_COMPRAS_RESUMEN, maximo_escaneo=MAX_COMPRAS_RESUMEN,
+            )
+            fotos = await self.proxy.fotos_actuales(compras)
         except ErrorAlmacen as e:
-            logger.error("No se pudieron listar las compras de %s: %s", integrador.id, e)
+            logger.error("No se pudo armar el resumen de %s: %s", integrador.id, e)
             raise _no_disponible() from None
+        return fotos, siguiente is None
 
     async def responder_porque(
         self, integrador: Integrador, compra_id: str, respuesta: str | None

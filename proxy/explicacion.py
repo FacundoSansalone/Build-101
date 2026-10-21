@@ -156,6 +156,11 @@ def _minus(texto: str) -> str:
     return texto[:1].lower() + texto[1:]
 
 
+def _n(genero: str) -> str:
+    """La "n" del plural del verbo: "coincide" / "coinciden"."""
+    return "n" if genero.endswith("p") else ""
+
+
 def _de(nombre: str) -> str:
     """"de" + el nombre, con la contracción: "del color", "de la RAM"."""
     return "del " + nombre[3:] if nombre.startswith("el ") else "de " + nombre
@@ -403,16 +408,18 @@ def _texto_cumplimiento(c: dict[str, Any], ficha: Any, evidencia: dict[str, Any]
     obs = _valor(c.get("observado"))
     if caso == "cumple":
         if obs and c.get("origen") != "declarado":
-            return f"{_mayus(nombre)} cumple lo que pediste ({obs}, según {fuente})."
-        return f"{_mayus(nombre)} cumple lo que pediste."
+            return f"{_mayus(nombre)} cumple{_n(genero)} lo que pediste ({obs}, según {fuente})."
+        return f"{_mayus(nombre)} cumple{_n(genero)} lo que pediste."
     if caso == "no_cumple":
         if pedido and obs:
-            return f"{_mayus(nombre)} no cumple lo que pediste: pediste {pedido} y {fuente} indica {obs}."
-        return f"{_mayus(nombre)} no cumple lo que pediste, según {fuente}."
+            return (f"{_mayus(nombre)} no cumple{_n(genero)} lo que pediste: pediste {pedido} y "
+                    f"{fuente} indica {obs}.")
+        return f"{_mayus(nombre)} no cumple{_n(genero)} lo que pediste, según {fuente}."
     if caso == "contradicho":
         declarado = _valor(evidencia.get("observado")) if evidencia else None
         declaro = f"el comercio declaró {declarado}" if declarado else "el comercio declaró otra cosa"
-        return (f"{_mayus(nombre)} no es lo que pediste: según {fuente} es {obs or 'otro'} "
+        es = "son" if genero.endswith("p") else "es"
+        return (f"{_mayus(nombre)} no {es} lo que pediste: según {fuente} {es} {obs or 'otro'} "
                 f"({declaro}) y pediste {pedido or 'otra cosa'}.")
     if caso == "solo_declarado":
         return f"No pudimos verificar {nombre}: solo {pronombre} declaró el comercio."
@@ -426,7 +433,8 @@ def _texto_cumplimiento(c: dict[str, Any], ficha: Any, evidencia: dict[str, Any]
                 "comprar más de una no está autorizado.")
     if caso == "preferencia_no_cumple":
         segun = f", según {fuente}" if c.get("origen") != "declarado" else ", según el comercio"
-        return f"{_mayus(nombre)} no cumple tu preferencia ({pedido or 'la tuya'}){segun}: no frena la compra."
+        return (f"{_mayus(nombre)} no cumple{_n(genero)} tu preferencia ({pedido or 'la tuya'})"
+                f"{segun}: no frena la compra.")
     if caso == "preferencia_sin_dato":
         return f"No hay datos {_de(nombre)} para comparar con tu preferencia: no frena la compra."
     if caso == "autorizacion_incompleta":
@@ -445,7 +453,7 @@ def _texto_evidencia(c: dict[str, Any]) -> str:
             return "El producto está en el catálogo público."
         return "El producto no está en el catálogo público: sus datos solo los declaró el comercio."
     if caso == "verificado":
-        return f"{_mayus(nombre)} coincide con {fuente}."
+        return f"{_mayus(nombre)} coincide{_n(genero)} con {fuente}."
     if caso == "contradicho":
         publico = _valor(c.get("esperado"))
         detalle = f" ({publico})" if publico else ""
@@ -738,7 +746,8 @@ def _razon(veredicto: dict[str, Any], ficha: Any, resultado_buscado: str) -> tup
         nombre, _ = _nombre(c["campo"])
         obs, pedido = _valor(c.get("observado")), _pedido(c, ficha)
         if obs and pedido:
-            frase = (f"{nombre} del producto que eligió tu agente es {obs} y pediste {pedido}, "
+            es = "son" if _nombre(c["campo"])[1].endswith("p") else "es"
+            frase = (f"{nombre} del producto que eligió tu agente {es} {obs} y pediste {pedido}, "
                      f"según {_fuente(c.get('origen'))}")
             evidencia = _evidencia_de(veredicto, c) if c["caso"] == "contradicho" else None
             declarado = _valor(evidencia.get("observado")) if evidencia else None

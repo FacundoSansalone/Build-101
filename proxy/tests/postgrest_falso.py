@@ -3,8 +3,11 @@
 Imita lo que usa `EstadoSupabase` (proxy/estado.py) de PostgREST y de las
 tablas de `proxy/sql/003_gateway.sql` + `004_serverless.sql`:
 
-- filtros `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `is`, `in`, `not.<op>` y
-  `or=(…)` (con valores entre comillas), `order`, `limit` y `select`;
+- filtros `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `is`, `in`, `not.<op>`,
+  `or=(…)` y `and=(…)` (anidados, con valores entre comillas), `order`,
+  `limit`, `offset` y `select`;
+- `DELETE` con filtros (y `on delete cascade` de las claves foráneas, como
+  las de 003 y 004);
 - `Prefer`: `return=representation|minimal`, `resolution=merge-duplicates|
   ignore-duplicates` (con `on_conflict`) y `count=exact` (`Content-Range`);
 - claves primarias, índices únicos (también parciales) y claves foráneas, con
@@ -242,18 +245,29 @@ def _condicion(tabla: Tabla, columna: str, expresion: str) -> Callable[[dict[str
     return evaluar
 
 
+def _logica(tabla: Tabla, operador: str, texto: str) -> Callable[[dict[str, Any]], bool]:
+    """`or=(…)` / `and=(…)`, con `and(…)` y `or(…)` anidados adentro."""
+    assert texto.startswith("(") and texto.endswith(")"), texto
+    partes: list[Callable[[dict[str, Any]], bool]] = []
+    for parte in _partir(texto[1:-1]):
+        if parte.startswith(("and(", "or(")):
+            interno, _, resto = parte.partition("(")
+            partes.append(_logica(tabla, interno, "(" + resto))
+        else:
+            columna, _, expresion = parte.partition(".")
+            partes.append(_condicion(tabla, columna, expresion))
+    if operador == "or":
+        return lambda f: any(p(f) for p in partes)
+    return lambda f: all(p(f) for p in partes)
+
+
 def _filtro(tabla: Tabla, params: list[tuple[str, str]]) -> Callable[[dict[str, Any]], bool]:
     condiciones: list[Callable[[dict[str, Any]], bool]] = []
     for clave, valor in params:
         if clave in ("select", "order", "limit", "on_conflict", "offset"):
             continue
-        if clave == "or":
-            assert valor.startswith("(") and valor.endswith(")"), valor
-            alternativas = []
-            for parte in _partir(valor[1:-1]):
-                columna, _, expresion = parte.partition(".")
-                alternativas.append(_condicion(tabla, columna, expresion))
-            condiciones.append(lambda f, alts=alternativas: any(a(f) for a in alts))
+        if clave in ("or", "and"):
+            condiciones.append(_logica(tabla, clave, valor))
         else:
             condiciones.append(_condicion(tabla, clave, valor))
     return lambda fila: all(c(fila) for c in condiciones)
@@ -390,6 +404,23 @@ class BaseFalsa:
                 afectadas.append(hecha)
         return afectadas
 
+    def _delete(self, tabla: Tabla, params: list[tuple[str, str]]) -> list[dict[str, Any]]:
+        """Borra lo que cumple el filtro y, como `on delete cascade`, las filas
+        de otras tablas que apuntaban a las borradas. Sin filtro no borra nada
+        (como `pg-safeupdate` en Supabase)."""
+        if not any(k not in ("select", "order", "limit", "offset") for k, _ in params):
+            raise ErrorPg(400, "21000")
+        coincide = _filtro(tabla, params)
+        borradas = [f for f in tabla.filas if coincide(f)]
+        tabla.filas = [f for f in tabla.filas if not coincide(f)]
+        for otra in self.tablas.values():
+            for col, destino, ref in otra.fks:
+                if destino != tabla.nombre:
+                    continue
+                quedan = {f.get(ref) for f in tabla.filas}
+                otra.filas = [f for f in otra.filas if f.get(col) is None or f.get(col) in quedan]
+        return borradas
+
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.pedidos.append(request)
         if self.interceptar is not None:
@@ -410,12 +441,15 @@ class BaseFalsa:
                 filas = [f for f in tabla.filas if _filtro(tabla, params_lista)(f)]
                 total = len(filas)
                 filas = _ordenar(tabla, filas, params.get("order"))
-                if "limit" in params:
-                    filas = filas[: int(params["limit"])]
+                desde = int(params.get("offset", "0"))
+                hasta = desde + int(params["limit"]) if "limit" in params else None
+                filas = filas[desde:hasta]
                 salida = [_seleccionar(tabla, f, params.get("select")) for f in filas]
                 headers = {}
                 if "count=exact" in prefer:
-                    headers["Content-Range"] = f"0-{len(salida) - 1}/{total}" if salida else f"*/{total}"
+                    headers["Content-Range"] = (
+                        f"{desde}-{desde + len(salida) - 1}/{total}" if salida else f"*/{total}"
+                    )
                 return httpx.Response(200, json=salida, headers=headers)
             if request.method == "POST":
                 # Una sentencia: si falla una fila, no queda ninguna (como la base).
@@ -436,6 +470,11 @@ class BaseFalsa:
                 except ErrorPg:
                     tabla.filas = copia
                     raise
+                if not representacion:
+                    return httpx.Response(204)
+                return httpx.Response(200, json=[_seleccionar(tabla, f, params.get("select")) for f in filas])
+            if request.method == "DELETE":
+                filas = self._delete(tabla, params_lista)
                 if not representacion:
                     return httpx.Response(204)
                 return httpx.Response(200, json=[_seleccionar(tabla, f, params.get("select")) for f in filas])

@@ -26,6 +26,7 @@ from proxy.tipos_gateway import (
     ErrorApi,
     FotoCompra,
     Integrador,
+    PaginaCompras,
     SolicitudCompra,
     SolicitudEvaluar,
     SolicitudFiltrar,
@@ -80,12 +81,18 @@ class NucleoFalso:
     """Implementa `NucleoGateway`: anota cada llamada y devuelve fotos
     armadas a mano. `falla` hace que la próxima llamada lance eso."""
 
+    ttl_compra_s = 24 * 3600.0
+
     def __init__(self) -> None:
         self.llamadas: list[tuple[str, tuple[Any, ...]]] = []
         self.falla: Exception | None = None
         self.foto = _foto()
         self.aprobacion_creada = True
         self.clave: dict[str, Any] | None = {"kid": "guard-key-1", "jwk": {}, "keys": [{}]}
+        self.filtros: Any = None
+        self.siguiente: Any = None
+        self.eventos: list[dict[str, Any]] = []
+        self.completo = True
 
     def _anotar(self, nombre: str, *args: Any) -> None:
         self.llamadas.append((nombre, args))
@@ -109,9 +116,18 @@ class NucleoFalso:
         self._anotar("obtener_compra", integrador, compra_id)
         return self.foto
 
-    async def listar_compras(self, integrador, *, limite, estado):
-        self._anotar("listar_compras", integrador, limite, estado)
-        return [self.foto, self.foto]
+    async def listar_compras(self, integrador, filtros):
+        self._anotar("listar_compras", integrador, filtros.limite, filtros.estado)
+        self.filtros = filtros
+        return PaginaCompras((self.foto, self.foto), self.siguiente)
+
+    async def explicacion_compra(self, integrador, compra_id):
+        self._anotar("explicacion_compra", integrador, compra_id)
+        return self.foto, list(self.eventos)
+
+    async def resumen_compras(self, integrador, desde, hasta):
+        self._anotar("resumen_compras", integrador, desde, hasta)
+        return [self.foto], self.completo
 
     async def responder_porque(self, integrador, compra_id, respuesta):
         self._anotar("responder_porque", integrador, compra_id, respuesta)
@@ -731,7 +747,7 @@ async def test_openapi_lista_todas_las_rutas(cliente, nucleo):
     }
     en_spec = {(m, p) for p, ops in spec["paths"].items() for m in ops}
     assert en_spec == rutas
-    assert len(rutas) == 14
+    assert len(rutas) == 16
 
     publicas = {p for p, ops in spec["paths"].items() for op in ops.values()
                 if op.get("security") == []}

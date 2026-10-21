@@ -718,3 +718,15 @@ def test_resumir_cuenta_por_resultado_alerta_y_moneda():
     }
     assert salida["monto_frenado"] == [{"moneda": "ARS", "total": 1000.0},
                                        {"moneda": "USD", "total": 200.0}]
+
+
+def test_el_plural_concuerda():
+    salida = _texto([
+        ch("evidencia", "ok", "talles", esperado=[40, 41], observado=[40, 41], origen="catalogo_publico"),
+        ch("cumplimiento", "bloquea", "entregas", esperado=[{"cantidad": 10, "fecha": "2026-10-26"}],
+           observado=[{"cantidad": 10, "fecha": "2026-10-30"}], origen="declarado"),
+    ])
+    textos = [c["texto"] for c in salida["chequeos"]]
+    assert "Los talles coinciden con el catálogo público." in textos
+    assert ("Las entregas no cumplen lo que pediste: pediste 10 el 26/10/2026 y lo que declaró "
+            "el comercio indica 10 el 30/10/2026.") in textos

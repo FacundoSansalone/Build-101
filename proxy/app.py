@@ -302,6 +302,8 @@ CAUSAS_CORTE: dict[str, str] = {
     _MOTIVO_CONTEXTO_AJENO: "contexto_ajeno",
     _MOTIVO_SIN_DECISION: "sin_decision",
 }
+# Eventos del historial por página (`listar_eventos`; el almacén acota a 200).
+LIMITE_EVENTOS = 200
 # Señales del filtro que son una detección (las `filtro:*` dicen que no pudo revisar).
 _PREFIJOS_DETECCION = ("heuristica:", "modelo:")
 # El agente del cliente espera hasta 600 s por llamada (DEFAULT_TIMEOUT del
@@ -971,6 +973,43 @@ class ProxyGuard:
         )
         aprobaciones = [aprobacion_desde_fila(f).a_json() for f in filas]
         return compra.foto(contextos=list(contextos), aprobaciones=aprobaciones)
+
+    async def fotos_actuales(self, compras: list[Compra]) -> list[FotoCompra]:
+        """`foto_actual` de varias compras (el listado y el resumen de `/v1`).
+        Con varias instancias, los contextos y las aprobaciones de todas en
+        una consulta por tabla (`compra_id=in.(…)`), no dos por compra."""
+        if not self.varias or not compras:
+            return [self.foto(c) for c in compras]
+        ids = [c.id for c in compras]
+        contextos, aprobaciones = await asyncio.gather(
+            self.almacen.contextos_de_compras(ids), self.almacen.aprobaciones_de_compras(ids)
+        )
+        return [
+            c.foto(
+                contextos=list(contextos.get(c.id, [])),
+                aprobaciones=[aprobacion_desde_fila(f).a_json() for f in aprobaciones.get(c.id, [])],
+            )
+            for c in compras
+        ]
+
+    async def eventos_de_compra(self, compra_id: str, maximo: int) -> list[dict[str, Any]]:
+        """Los eventos del historial de una compra (`gw_eventos`), en orden, de
+        a páginas, hasta `maximo`. Sin historial en el almacén
+        (`historial_activo`), ninguno. `ErrorAlmacen` si falla."""
+        if not self.historial_activo:
+            return []
+        eventos: list[dict[str, Any]] = []
+        desde = 0
+        while len(eventos) < maximo:
+            pagina = await self.almacen.listar_eventos(compra_id, desde, limite=LIMITE_EVENTOS)
+            eventos.extend(pagina)
+            if len(pagina) < LIMITE_EVENTOS:
+                break
+            orden = pagina[-1].get("orden")
+            if not isinstance(orden, int) or isinstance(orden, bool) or orden <= desde:
+                break
+            desde = orden
+        return eventos[:maximo]
 
     def _esperas_de(self, compra: Compra) -> Esperas:
         """Las compras de integrador, con varias instancias, esperan en el
