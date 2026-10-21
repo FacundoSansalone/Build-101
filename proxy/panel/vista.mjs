@@ -22,6 +22,7 @@ export const ICONOS = Object.freeze({
   reloj: ["M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17", "M12 7.5V12l3 2"],
   curso: ["M6 12h.01", "M12 12h.01", "M18 12h.01"],
   guion: ["M7 12h10"],
+  lupa: ["M10.5 4.5a6 6 0 1 0 0 12a6 6 0 1 0 0-12", "M15 15l4.5 4.5"],
   alerta: ["M12 4l9 16H3z", "M12 10v4", "M12 17h.01"],
   info: ["M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17", "M12 11v5", "M12 8h.01"],
   pregunta: [
@@ -121,10 +122,9 @@ export function crearVista(doc) {
       el("p", { clase: "tarjeta-titulo" }, [icono(t.icono), el("span", { texto: t.titulo })]),
       el("p", { clase: "tarjeta-valor", texto: t.valor }),
     ];
+    if (t.detalle) hijos.push(el("p", { clase: "tarjeta-detalle", texto: t.detalle }));
     if (Array.isArray(t.lineas) && t.lineas.length > 1) {
       hijos.push(el("ul", { clase: "tarjeta-lineas" }, t.lineas.slice(1).map((l) => el("li", { texto: l }))));
-    } else if (t.detalle) {
-      hijos.push(el("p", { clase: "tarjeta-detalle", texto: t.detalle }));
     }
     return el("li", { clase: "tarjeta-resumen", atributos: { "data-tono": tono(t.tono), "data-clave": t.clave } }, hijos);
   }

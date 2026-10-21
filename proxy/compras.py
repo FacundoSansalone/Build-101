@@ -170,6 +170,10 @@ class Compra:
     # El último checkout que el proxy frenó sin veredicto del Guard (no lo pudo
     # evaluar): `{"ts", "contexto_id", "cart_id"}`, con ids seguros o None.
     bloqueo_proxy: dict[str, Any] | None = None
+    # La última búsqueda volvió sin ofertas (el comercio la terminó sin nada):
+    # la prende esa búsqueda y la apaga una posterior con ofertas. El panel la
+    # cuenta como `sin_ofertas` (si no hubo checkout) sin leer eventos.
+    sin_ofertas: bool = False
     # -- varias instancias (proxy/esperas.py) ---------------------------------
     # `espera_id`: la espera abierta de la compra (`gw_esperas`), la que va en
     # la fila con `a_fila(espera=True)`. `espera_guardada`: la que esta
@@ -293,6 +297,7 @@ class Compra:
                 "aprobacion_pendiente": copy.deepcopy(self.aprobacion_pendiente),
                 "corte": self.corte,
                 "bloqueo_proxy": copy.deepcopy(self.bloqueo_proxy),
+                "sin_ofertas": self.sin_ofertas,
             },
         }
         if espera:
@@ -499,6 +504,8 @@ class Compra:
             # Una fila de antes (sin corte) o con un valor que no es de estos: sin dato.
             corte=datos.get("corte") if datos.get("corte") in CORTES else None,
             bloqueo_proxy=_bloqueo_proxy(datos.get("bloqueo_proxy")),
+            # Solo `true` marca (una fila de antes no tiene la clave).
+            sin_ofertas=datos.get("sin_ofertas") is True,
             espera_id=espera_id,
             espera_guardada=espera_id,
         )
@@ -536,6 +543,7 @@ class Compra:
             aprobaciones=tuple(copy.deepcopy(aprobaciones)),
             corte=self.corte,
             bloqueo_proxy=copy.deepcopy(self.bloqueo_proxy),
+            sin_ofertas=self.sin_ofertas,
         )
 
     # -- esperas -------------------------------------------------------------

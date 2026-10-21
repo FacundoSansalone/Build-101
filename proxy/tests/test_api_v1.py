@@ -828,6 +828,25 @@ def test_pagina_docs_escapa_todo_el_spec():
     assert pagina.startswith("<!doctype html>")
 
 
+def test_openapi_lista_los_resultados_de_la_explicacion():
+    """El `resultado` del listado, del filtro y del resumen es el de
+    `explicacion.RESULTADOS`, cada uno descripto."""
+    from proxy import explicacion
+
+    spec = openapi.especificacion(URL_PUBLICA)
+    esquemas = spec["components"]["schemas"]
+    resultado = esquemas["Explicacion"]["properties"]["resultado"]
+    assert resultado["enum"] == list(explicacion.RESULTADOS)
+    assert all(f"{r}:" in resultado["description"] for r in explicacion.RESULTADOS)
+    assert set(esquemas["Resumen"]["properties"]["por_resultado"]["properties"]) == set(explicacion.RESULTADOS)
+    (filtro,) = [p for p in spec["paths"]["/v1/compras"]["get"]["parameters"] if p["name"] == "resultado"]
+    assert filtro["schema"]["enum"] == list(explicacion.RESULTADOS)
+    # Lo frenado y lo retenido sin aprobar, cada uno por moneda.
+    resumen = esquemas["Resumen"]["properties"]
+    for clave in ("monto_frenado", "monto_retenido"):
+        assert resumen[clave]["type"] == "array" and resumen[clave]["description"], clave
+
+
 def test_openapi_documenta_solo_lectura_en_los_post():
     """Una clave de solo lectura (`proxy/claves.py`) solo consulta: todo POST de
     `/v1` con clave documenta el 403 `solo_lectura`; las GET y las públicas, no."""

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 
 import { ICONOS, SVG_NS, crearVista } from "../../panel/vista.mjs";
 import {
-  chequeosDe, datosDeCompra, lineaDeTiempo, separarAlertas, tarjetasResumen,
+  RESULTADOS, chequeosDe, datosDeCompra, lineaDeTiempo, separarAlertas, tarjetasResumen,
 } from "../../panel/logica.mjs";
 
 // ---------------------------------------------------------------------------
@@ -165,13 +165,18 @@ test("icono: solo los de la lista, como SVG sin eventos", () => {
   // Un tono que no es de la lista queda neutro.
   assert.equal(v.chip({ texto: "x", tono: "<b>", icono: "check" }).getAttribute("data-tono"), "neutro");
   assert.ok(Object.isFrozen(ICONOS));
+  // Cada resultado tiene un ícono de la lista (no cae en el guion por error).
+  for (const [resultado, info] of Object.entries(RESULTADOS)) {
+    assert.ok(Object.hasOwn(ICONOS, info.icono), resultado);
+  }
 });
 
-test("tarjetaResumen: título con ícono, valor, detalle o más monedas", () => {
+test("tarjetaResumen: título con ícono, valor, detalle y más monedas", () => {
   const tarjetas = tarjetasResumen({
     compras: 42, por_resultado: { aprobada: 30, frenada: 6, retenida: 1, cortada_por_seguridad: 3 },
     intentos_de_estafa: 7,
     monto_frenado: [{ moneda: "ARS", total: 150000 }, { moneda: "USD", total: 2148.5 }],
+    monto_retenido: [{ moneda: "ARS", total: 50000 }],
   }).map((t) => v.tarjetaResumen(t));
   assert.equal(tarjetas.length, 6);
   const [compras, , frenadas, , estafas, monto] = tarjetas;
@@ -180,9 +185,11 @@ test("tarjetaResumen: título con ícono, valor, detalle o más monedas", () => 
   assert.equal(compras.hijos[1].textContent, "42");
   assert.equal(frenadas.hijos[2].textContent, "6 frenadas · 1 retenida");
   assert.equal(estafas.getAttribute("data-tono"), "crit");
-  assert.equal(monto.hijos[1].textContent, "ARS 150.000,00");
-  assert.equal(monto.hijos[2].tagName, "UL");
-  assert.equal(monto.hijos[2].textContent, "USD 2.148,50");
+  assert.equal(monto.hijos[0].textContent, "Frenado o retenido");
+  assert.equal(monto.hijos[1].textContent, "ARS 200.000,00");
+  assert.equal(monto.hijos[2].textContent, "ARS 150.000,00 frenado · ARS 50.000,00 retenido");
+  assert.equal(monto.hijos[3].tagName, "UL");
+  assert.equal(monto.hijos[3].textContent, "USD 2.148,50 frenado");
 });
 
 test("el detalle: línea de tiempo con omitido, chequeos, datos y el bloque de estafa", () => {

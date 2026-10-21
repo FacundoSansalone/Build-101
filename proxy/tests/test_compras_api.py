@@ -219,7 +219,7 @@ async def test_ida_y_vuelta_con_ficha_contexto_y_oportunidad():
         "pedido", "pregunta", "origen", "preguntar_porque", "porque", "intencion_activa",
         "ficha_llm", "ficha", "ficha_resuelta", "contexto_id", "contexto", "oportunidad",
         "vence", "decision", "requisitos_autorizados", "veredictos", "aprobacion_pendiente",
-        "corte", "bloqueo_proxy",
+        "corte", "bloqueo_proxy", "sin_ofertas",
     }
     # La fila es JSON puro: se puede mandar tal cual a PostgREST.
     json.dumps(fila)
@@ -588,6 +588,43 @@ async def test_el_bloqueo_del_proxy_va_y_vuelve(valor, leido):
     vuelta = Compra.desde_fila(fila)
     assert vuelta.bloqueo_proxy == leido
     assert vuelta.foto(contextos=[], aprobaciones=[]).bloqueo_proxy == leido
+
+
+@pytest.mark.parametrize("valor, leido", [
+    (True, True), (False, False), (None, False), ("true", False), (1, False),
+])
+async def test_la_marca_sin_ofertas_va_y_vuelve(valor, leido):
+    """Solo `true` marca la compra: una fila de antes (sin la clave) o con otro
+    valor es sin marca."""
+    compra = crear(RegistroCompras())
+    fila = compra.a_fila()
+    assert fila["datos"]["sin_ofertas"] is False
+    fila["datos"]["sin_ofertas"] = valor
+    vuelta = Compra.desde_fila(fila)
+    assert vuelta.sin_ofertas is leido
+    assert vuelta.foto(contextos=[], aprobaciones=[]).sin_ofertas is leido
+    del fila["datos"]["sin_ofertas"]
+    assert Compra.desde_fila(fila).sin_ofertas is False
+
+
+async def test_la_marca_sin_ofertas_se_fusiona_de_tres_vias():
+    """Con varias instancias: el cambio de este pedido entra sobre lo que
+    escribió otra (la marca y un veredicto no chocan)."""
+    from proxy.compras import fusionar_filas
+
+    compra = crear(RegistroCompras())
+    base = compra.a_fila(espera=True)
+    compra.sin_ofertas = True
+    nuestra = compra.a_fila(espera=True)
+    otra = Compra.desde_fila(base)
+    otra.registrar_veredicto({"status": "aprobado", "cart_id": "cart_1"})
+    suya = otra.a_fila(espera=True)
+    fusion = fusionar_filas(base, nuestra, suya)
+    assert fusion["datos"]["sin_ofertas"] is True
+    assert [v["status"] for v in fusion["datos"]["veredictos"]] == ["aprobado"]
+    # Una búsqueda posterior con ofertas la apaga, aunque otra no la haya tocado.
+    compra.sin_ofertas = False
+    assert fusionar_filas(nuestra, compra.a_fila(espera=True), nuestra)["datos"]["sin_ofertas"] is False
 
 
 def test_el_bloqueo_del_proxy_solo_con_ids_seguros():

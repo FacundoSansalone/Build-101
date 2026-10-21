@@ -15,6 +15,7 @@ I/O, sin entorno y sin reloj (el `ahora` lo pasa quien llama).
 | `aprobada` | el último checkout evaluado llegó a la firma (`aprobado`, `con_avisos`, o `escalar` aprobado por una persona) |
 | `retenida` | el último quedó en `escalar`, sin aprobación usada |
 | `frenada` | el último quedó `bloqueado` (por el Guard, o el proxy no pudo evaluarlo) |
+| `sin_ofertas` | sin checkout y la última búsqueda volvió sin ofertas (la marca `sin_ofertas` de la compra) |
 | `en_curso` | todavía no hubo un checkout y la compra está viva |
 | `sin_compra` | pasó la vida de la compra sin ningún checkout |
 
@@ -52,6 +53,7 @@ from proxy.alertas import (
 
 RESULTADOS: tuple[str, ...] = (
     "aprobada", "frenada", "retenida", "cortada_por_seguridad", "en_curso", "vencida", "sin_compra",
+    "sin_ofertas",
 )
 ETAPAS = frozenset({
     "pedido", "contexto", "busqueda", "ofertas", "seguridad", "intencion", "checkout",
@@ -70,6 +72,8 @@ MAX_EVENTOS = 1000
 _RECIBO_RE = re.compile(r"rcb-[0-9a-f]{8,64}")
 # Un valor técnico (`basketball_shoes`): en los textos va con espacios.
 _ENUM_RE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)+")
+# Una categoría del catálogo en minúsculas ("televisions", "basketball_shoes").
+_SLUG_RE = re.compile(r"[a-z0-9]+(?:[_ ][a-z0-9]+)*")
 _KID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 _COMERCIO_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 
@@ -253,6 +257,16 @@ def _valor(valor: Any) -> str | None:
     return None
 
 
+def _valor_de(campo: Any, valor: Any) -> str | None:
+    """`_valor` del campo. Una categoría del catálogo en minúsculas va como
+    los nombres de la taxonomía ("Televisions", "Basketball Shoes"), igual que
+    en la línea de la categoría del producto."""
+    texto = _valor(valor)
+    if campo == "categoria" and texto and isinstance(valor, str) and _SLUG_RE.fullmatch(valor):
+        return " ".join(p[:1].upper() + p[1:] for p in texto.split(" "))
+    return texto
+
+
 def _categoria(valor: Any) -> str | None:
     """"Laptops": el nombre de la taxonomía de Google (el árbol del motor, es
     nuestro); si no está en el árbol (o no hay árbol), el ID."""
@@ -295,7 +309,7 @@ def _requisito(ficha: Any, campo: Any) -> dict[str, Any] | None:
 
 def _pedido(c: dict[str, Any], ficha: Any) -> str | None:
     """Lo pedido, legible: "al menos 16 GB", "como máximo USD 1.500,00", "27 in"."""
-    valor = _valor(c.get("esperado"))
+    valor = _valor_de(c.get("campo"), c.get("esperado"))
     if valor is None:
         return None
     operador = (_requisito(ficha, c.get("campo")) or {}).get("operador")
@@ -419,7 +433,7 @@ def _texto_cumplimiento(c: dict[str, Any], ficha: Any, evidencia: dict[str, Any]
     pronombre = _PRONOMBRE[genero]
     fuente = _fuente(c.get("origen"))
     pedido = _pedido(c, ficha)
-    obs = _valor(c.get("observado"))
+    obs = _valor_de(c.get("campo"), c.get("observado"))
     if caso == "cumple":
         if obs and c.get("origen") != "declarado":
             return f"{_mayus(nombre)} cumple{_n(genero)} lo que pediste ({obs}, según {fuente})."
@@ -430,7 +444,7 @@ def _texto_cumplimiento(c: dict[str, Any], ficha: Any, evidencia: dict[str, Any]
                     f"{fuente} indica {obs}.")
         return f"{_mayus(nombre)} no cumple{_n(genero)} lo que pediste, según {fuente}."
     if caso == "contradicho":
-        declarado = _valor(evidencia.get("observado")) if evidencia else None
+        declarado = _valor_de(c.get("campo"), evidencia.get("observado")) if evidencia else None
         declaro = f"el comercio declaró {declarado}" if declarado else "el comercio declaró otra cosa"
         es = "son" if genero.endswith("p") else "es"
         return (f"{_mayus(nombre)} no {es} lo que pediste: según {fuente} {es} {obs or 'otro'} "
@@ -469,9 +483,17 @@ def _texto_evidencia(c: dict[str, Any]) -> str:
     if caso == "verificado":
         return f"{_mayus(nombre)} coincide{_n(genero)} con {fuente}."
     if caso == "contradicho":
-        publico = _valor(c.get("esperado"))
-        detalle = f" ({publico})" if publico else ""
-        return f"{_mayus(nombre)}: lo que declaró el comercio no coincide con {fuente}{detalle}."
+        # Como la línea de la categoría: "… no coincide con X: según esa fuente es …".
+        if campo == "categoria_taxonomia":
+            publico = _categoria(c.get("esperado"))
+        else:
+            publico = _valor_de(campo, c.get("esperado"))
+        plural = genero.endswith("p")
+        base = (f"{_mayus(nombre)} que declaró el comercio no coincide{'n' if plural else ''} "
+                f"con {fuente}")
+        if publico:
+            return f"{base}: según esa fuente {'son' if plural else 'es'} {publico}."
+        return base + "."
     if caso == "no_declarado":
         return f"{_mayus(nombre)}: el comercio no {pronombre} informó."
     if caso == "sin_dato":
@@ -578,10 +600,81 @@ def _moneda_de(veredicto: dict[str, Any]) -> str | None:
     return moneda if isinstance(moneda, str) and MONEDA_RE.fullmatch(moneda) else None
 
 
+# La conclusión de un chequeo sobre un campo, para no contar dos veces lo
+# mismo: un dato falso o algo que no se pudo verificar.
+_CONCLUSION = {
+    "contradicho": "contradicho",
+    "solo_declarado": "sin_verificar", "no_declarado": "sin_verificar", "sin_dato": "sin_verificar",
+    "fabricante_sin_atar": "sin_verificar", "categoria_solo_declarada": "sin_verificar",
+}
+# La evidencia de un campo que respalda el cumplimiento de otro: la categoría
+# que declaró el comercio (la del catálogo) y la de la taxonomía.
+_FAMILIA = {"categoria": "categoria_taxonomia"}
+
+
+def _es_cumplimiento(c: dict[str, Any]) -> bool:
+    return c["tipo"] in ("cumplimiento", "mandato") and c["campo"] is not None \
+        and c["origen"] not in (_CHECKOUT, "cart_ap2")
+
+
+def _es_evidencia(c: dict[str, Any]) -> bool:
+    return c["tipo"] == "evidencia" and c["campo"] is not None \
+        and c["origen"] not in (_CHECKOUT, "cart_ap2")
+
+
+def _juntar_evidencias(
+    chequeos: list[dict[str, Any]],
+) -> tuple[set[int], dict[int, str], dict[int, list[str]]]:
+    """Las evidencias que ya explica el cumplimiento de su campo (o, para la
+    categoría, el de la taxonomía): (las que no van en una línea propia, el
+    resultado más grave que toma cada cumplimiento, las otras fuentes que lo
+    contradicen). Cada chequeo, por su `id()`.
+
+    - Del mismo campo, tan o menos grave: va en el texto del cumplimiento.
+    - Más grave, o de la categoría, con la misma conclusión que un
+      cumplimiento que no está bien: va en esa línea, con el resultado más
+      grave y, si es un dato falso según otra fuente, esa fuente.
+    - Si no, en su línea (dice otra cosa)."""
+    cumplimientos: dict[Any, list[dict[str, Any]]] = {}
+    for c in chequeos:
+        if _es_cumplimiento(c):
+            cumplimientos.setdefault(alertas.clave_evidencia(c["campo"]), []).append(c)
+    omitidas: set[int] = set()
+    resultado: dict[int, str] = {}
+    fuentes: dict[int, list[str]] = {}
+    for e in chequeos:
+        if not _es_evidencia(e):
+            continue
+        clave = alertas.clave_evidencia(e["campo"])
+        familia = clave not in cumplimientos and _FAMILIA.get(clave) in cumplimientos
+        if familia:
+            clave = _FAMILIA[clave]
+        if clave not in cumplimientos:
+            continue
+        gravedad = _GRAVEDAD[e["resultado"]]
+        minima = min(_GRAVEDAD[c["resultado"]] for c in cumplimientos[clave])
+        if gravedad >= minima and (not familia or e["resultado"] == "ok"):
+            omitidas.add(id(e))
+            continue
+        conclusion = _CONCLUSION.get(e["caso"])
+        iguales = [c for c in cumplimientos[clave] if conclusion is not None
+                   and c["resultado"] != "ok" and _CONCLUSION.get(c["caso"]) == conclusion]
+        if not iguales:
+            continue
+        omitidas.add(id(e))
+        for c in iguales:
+            if gravedad < _GRAVEDAD[resultado.get(id(c), c["resultado"])]:
+                resultado[id(c)] = e["resultado"]
+            if conclusion == "contradicho" and e["origen"] != c["origen"] \
+                    and _independiente(e["origen"]):
+                fuentes.setdefault(id(c), []).append(_fuente(e["origen"]))
+    return omitidas, resultado, fuentes
+
+
 def explicar_chequeos(veredicto: dict[str, Any], ficha: Any = None) -> list[dict[str, Any]]:
     """`[{"tema", "resultado", "texto"}]` de un veredicto, del más grave al
-    menos. La evidencia de un campo que tiene su chequeo de cumplimiento va en
-    ese texto (salvo que sea más grave); los del checkout firmado, si están
+    menos. La evidencia que repite lo que explica el cumplimiento de su campo
+    va en esa línea (`_juntar_evidencias`); los del checkout firmado, si están
     todos bien, en uno solo."""
     chequeos = _chequeos_de(veredicto)
     moneda = _moneda_de(veredicto)
@@ -590,12 +683,7 @@ def explicar_chequeos(veredicto: dict[str, Any], ficha: Any = None) -> list[dict
         for c in chequeos
         if c["tipo"] == "evidencia" and c["campo"] is not None and c["origen"] != "cart_ap2"
     }
-    con_cumplimiento = {
-        alertas.clave_evidencia(c["campo"]): _GRAVEDAD[c["resultado"]]
-        for c in chequeos
-        if c["tipo"] in ("cumplimiento", "mandato") and c["campo"] is not None
-        and c["origen"] not in (_CHECKOUT, "cart_ap2")
-    }
+    omitidas, mas_grave, otras_fuentes = _juntar_evidencias(chequeos)
     checkout = [c for c in chequeos if c["origen"] == _CHECKOUT]
     salida: list[dict[str, Any]] = []
     vistos: set[str] = set()
@@ -606,15 +694,15 @@ def explicar_chequeos(veredicto: dict[str, Any], ficha: Any = None) -> list[dict
             salida.append({"tema": tema, "resultado": resultado, "texto": texto})
 
     for c in chequeos:
-        if c["origen"] == _CHECKOUT:
+        if c["origen"] == _CHECKOUT or id(c) in omitidas:
             continue
         clave = alertas.clave_evidencia(c["campo"])
-        if c["tipo"] == "evidencia" and c["origen"] != "cart_ap2" and clave in con_cumplimiento \
-                and _GRAVEDAD[c["resultado"]] >= con_cumplimiento[clave]:
-            continue  # va en el texto del cumplimiento
         evidencia = evidencias.get(clave) if c["tipo"] in ("cumplimiento", "mandato") else None
-        sumar(_tema(c), c["resultado"],
-              texto_chequeo(c, ficha=ficha, moneda=moneda, evidencia=evidencia))
+        texto = texto_chequeo(c, ficha=ficha, moneda=moneda, evidencia=evidencia)
+        fuentes = otras_fuentes.get(id(c))
+        if fuentes:
+            texto += f" Tampoco coincide con {_y(list(dict.fromkeys(fuentes)))}."
+        sumar(_tema(c), mas_grave.get(id(c), c["resultado"]), texto)
     if checkout and all(c["resultado"] == "ok" for c in checkout):
         sumar("checkout", "ok", "El checkout firmado coincide con lo que evaluamos.")
     else:
@@ -674,9 +762,11 @@ def _aprobado_por_persona(vista: dict[str, Any], veredicto: dict[str, Any]) -> b
 
 
 def resultado_de(vista: dict[str, Any], *, ahora: datetime, ttl_s: float,
-                 corte: str | None = None, bloqueo_proxy: Any = None) -> str:
+                 corte: str | None = None, bloqueo_proxy: Any = None,
+                 sin_ofertas: bool = False) -> str:
     """El resultado de la compra (tabla del módulo). `ttl_s`: la vida de una
-    compra (`GATEWAY_COMPRA_TTL_S`)."""
+    compra (`GATEWAY_COMPRA_TTL_S`). `sin_ofertas`: la marca de la compra (la
+    última búsqueda volvió sin ofertas)."""
     estado = vista.get("estado")
     if estado == "bloqueada":
         return "cortada_por_seguridad"
@@ -690,6 +780,8 @@ def resultado_de(vista: dict[str, Any], *, ahora: datetime, ttl_s: float,
         if status == "escalar":
             return "aprobada" if _aprobado_por_persona(vista, ultimo) else "retenida"
         return "frenada"
+    if sin_ofertas is True:
+        return "sin_ofertas"
     creada = _fecha_hora(vista.get("creada"))
     if creada is not None and (ahora - creada).total_seconds() > ttl_s:
         return "sin_compra"
@@ -709,13 +801,14 @@ def alertas_de_compra(vista: dict[str, Any], *, corte: str | None = None) -> lis
 
 
 def resumen_de_compra(vista: dict[str, Any], *, ahora: datetime, ttl_s: float,
-                      corte: str | None = None, bloqueo_proxy: Any = None) -> dict[str, Any]:
+                      corte: str | None = None, bloqueo_proxy: Any = None,
+                      sin_ofertas: bool = False) -> dict[str, Any]:
     """Lo que suma cada compra del listado: `resultado`, `alertas` e
     `intento_de_estafa` (sin leer los eventos)."""
     lista = alertas_de_compra(vista, corte=corte)
     return {
         "resultado": resultado_de(vista, ahora=ahora, ttl_s=ttl_s, corte=corte,
-                                  bloqueo_proxy=bloqueo_proxy),
+                                  bloqueo_proxy=bloqueo_proxy, sin_ofertas=sin_ofertas),
         "alertas": lista,
         "intento_de_estafa": es_intento_de_estafa(lista),
     }
@@ -761,13 +854,13 @@ def _razon(veredicto: dict[str, Any], ficha: Any, resultado_buscado: str) -> tup
     moneda = _moneda_de(veredicto)
     if c["caso"] in ("contradicho", "no_cumple") and c["tipo"] == "cumplimiento"             and c["campo"] != "categoria_taxonomia":
         nombre, _ = _nombre(c["campo"])
-        obs, pedido = _valor(c.get("observado")), _pedido(c, ficha)
+        obs, pedido = _valor_de(c["campo"], c.get("observado")), _pedido(c, ficha)
         if obs and pedido:
             es = "son" if _nombre(c["campo"])[1].endswith("p") else "es"
             frase = (f"{nombre} del producto que eligió tu agente {es} {obs} y pediste {pedido}, "
                      f"según {_fuente(c.get('origen'))}")
             evidencia = _evidencia_de(veredicto, c) if c["caso"] == "contradicho" else None
-            declarado = _valor(evidencia.get("observado")) if evidencia else None
+            declarado = _valor_de(c["campo"], evidencia.get("observado")) if evidencia else None
             if declarado:
                 frase += f" (el comercio había declarado {declarado})"
             return frase + ".", True
@@ -862,7 +955,10 @@ def _resumen(resultado: str, vista: dict[str, Any], ultimo: dict[str, Any] | Non
                 "no se compró nada.")
     if resultado == "en_curso":
         return _resumen_en_curso(vista)
+    if resultado == "sin_ofertas":
+        return "El comercio no tuvo ofertas para tu pedido: no hubo compra."
     if resultado == "sin_compra":
+        # Una compra de antes de guardar la marca `sin_ofertas`: lo dicen los eventos.
         base = "La compra terminó sin que tu agente pidiera un checkout"
         return f"{base}: el comercio no tuvo ofertas para tu pedido." if _sin_ofertas(eventos) else base + "."
     assert ultimo is not None
@@ -897,7 +993,10 @@ def _nota_de_estafa(alertas_compra: list[str], ultimo: dict[str, Any] | None,
 
 
 def _eventos(eventos: Iterable[Any]) -> list[dict[str, Any]]:
-    """Los eventos del historial que se pueden leer, en orden de tiempo."""
+    """Los eventos del historial que se pueden leer, en el orden en que se
+    guardaron (`orden`: la identidad de `gw_eventos` o el de inserción en
+    memoria). No el `ts`: dos eventos del mismo momento, o de dos instancias
+    con relojes distintos, no se dan vuelta. El `ts` es para mostrar."""
     salida = []
     for e in eventos:
         if not isinstance(e, dict) or not isinstance(e.get("datos"), dict):
@@ -907,7 +1006,7 @@ def _eventos(eventos: Iterable[Any]) -> list[dict[str, Any]]:
             continue
         orden = e.get("orden") if isinstance(e.get("orden"), int) else 0
         salida.append({"ts": ts, "orden": orden, "tipo": e["tipo"], "datos": e["datos"]})
-    salida.sort(key=lambda e: (e["ts"], e["orden"]))
+    salida.sort(key=lambda e: e["orden"])
     return salida
 
 
@@ -985,17 +1084,19 @@ def _cambios(datos: dict[str, Any]) -> str:
         if campo not in ("precio", "moneda", "categoria", "uso", "talle", "marca", "comercio",
                          "cantidad", "entregas"):
             continue
-        nombre, _ = _nombre(campo)
-        pedido = _valor(alertas.valor_saneado(cambio.get("pedido"), confiable=True)[0])
-        ofrecido = _valor(alertas.valor_saneado(cambio.get("ofrecido"), confiable=False)[0])
+        nombre, genero = _nombre(campo)
+        pedido = _valor_de(campo, alertas.valor_saneado(cambio.get("pedido"), confiable=True)[0])
+        ofrecido = _valor_de(campo, alertas.valor_saneado(cambio.get("ofrecido"), confiable=False)[0])
         if pedido and ofrecido:
-            partes.append(f"{nombre} pasa de {pedido} a {ofrecido}")
+            partes.append(f"{nombre} pasa{_n(genero)} de {pedido} a {ofrecido}")
         else:
-            partes.append(f"cambia {nombre}")
+            partes.append(f"cambia{_n(genero)} {nombre}")
     return _y(partes[:5])
 
 
-def _texto_evento(evento: dict[str, Any]) -> tuple[str, str] | None:
+def _texto_evento(evento: dict[str, Any], *, hubo_ofertas: bool = False) -> tuple[str, str] | None:
+    """`hubo_ofertas`: la búsqueda de este reenvío trajo ofertas (lo sabe
+    `linea_de_tiempo`)."""
     tipo, datos = evento["tipo"], evento["datos"]
     if tipo == "pedido_detectado":
         return "contexto", "Te preguntamos para qué es la compra."
@@ -1006,7 +1107,9 @@ def _texto_evento(evento: dict[str, Any]) -> tuple[str, str] | None:
         if isinstance(respuesta, str) and respuesta.strip():
             limpio = "".join(c for c in respuesta if c.isprintable())[:LARGO_PORQUE].strip()
             limpio = limpio.replace("«", "\"").replace("»", "\"")
-            return "contexto", f"Nos contaste para qué es: «{limpio}»."
+            # Si la cita ya cierra la frase ("…variar.", "¿…?", "…"), no lleva otro punto.
+            punto = "" if limpio.endswith((".", "?", "!", "…")) else "."
+            return "contexto", f"Nos contaste para qué es: «{limpio}»{punto}"
         return "contexto", "Elegiste no contar para qué es la compra: seguimos con tu pedido literal."
     if tipo == "busqueda_enviada":
         return "busqueda", "Tu agente buscó productos en el comercio."
@@ -1051,7 +1154,9 @@ def _texto_evento(evento: dict[str, Any]) -> tuple[str, str] | None:
                 return "resultado", "Con la aprobación, le pasamos el checkout a tu agente para que lo firme."
             return "resultado", "Le pasamos el checkout a tu agente para que lo firme."
         if metodo == "find_products":
-            return "ofertas", "Le pasamos las ofertas a tu agente."
+            if hubo_ofertas:
+                return "ofertas", "Le pasamos las ofertas a tu agente."
+            return "ofertas", "Le pasamos la respuesta a tu agente."
         return None
     if tipo == "bloqueado":
         return _texto_bloqueado(datos)
@@ -1060,36 +1165,52 @@ def _texto_evento(evento: dict[str, Any]) -> tuple[str, str] | None:
 
 def linea_de_tiempo(vista: dict[str, Any], eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """`[{"ts", "etapa", "texto"}]`: la creación, cada evento del historial
-    que se puede contar y las aprobaciones de una persona, en orden."""
-    linea: list[tuple[datetime, int, str, str]] = []
+    que se puede contar (en el orden de `_eventos`) y las aprobaciones de una
+    persona (no son eventos: van antes del primer evento posterior a su
+    momento)."""
+    linea: list[tuple[datetime, str, str]] = []
     creada = _fecha_hora(vista.get("creada"))
     if creada is not None:
         tope = _tope(vista.get("ficha"))
         texto = f"Creaste la compra con un tope de {tope}." if tope else "Creaste la compra."
-        linea.append((creada, -2, "pedido", texto))
+        linea.append((creada, "pedido", texto))
         if len(eventos) >= MAX_EVENTOS:
-            linea.append((creada, -1, "omitido",
+            linea.append((creada, "omitido",
                           "Hay pasos anteriores que no mostramos: mostramos los últimos "
                           f"{_cantidad(MAX_EVENTOS)}."))
+    aprobaciones = sorted(
+        momento
+        for aprobacion in vista.get("aprobaciones") or [] if isinstance(aprobacion, dict)
+        for momento in [_fecha_hora(aprobacion.get("creada"))] if momento is not None
+    )
+    texto_aprobacion = "Una persona de tu equipo aprobó el checkout retenido."
+    # ¿La búsqueda en curso trajo ofertas? Lo dice su `ofertas_recibidas`; sin
+    # él (una búsqueda sin ofertas que cuenten, o el historial ya no guarda más
+    # búsquedas) el reenvío dice "la respuesta".
+    hubo_ofertas = False
     for evento in eventos:
-        contado = _texto_evento(evento)
-        if contado is not None:
-            linea.append((evento["ts"], evento["orden"], *contado))
-    for aprobacion in vista.get("aprobaciones") or []:
-        if isinstance(aprobacion, dict):
-            momento = _fecha_hora(aprobacion.get("creada"))
-            if momento is not None:
-                linea.append((momento, 0, "aprobacion",
-                              "Una persona de tu equipo aprobó el checkout retenido."))
-    linea.sort(key=lambda e: (e[0], e[1]))
+        tipo = evento["tipo"]
+        if tipo == "busqueda_enviada":
+            hubo_ofertas = False
+        elif tipo == "ofertas_recibidas":
+            hubo_ofertas = evento["datos"].get("ofertas") != 0
+        contado = _texto_evento(evento, hubo_ofertas=hubo_ofertas)
+        if tipo == "reenviado" and evento["datos"].get("metodo") == "find_products":
+            hubo_ofertas = False
+        if contado is None:
+            continue
+        while aprobaciones and aprobaciones[0] <= evento["ts"]:
+            linea.append((aprobaciones.pop(0), "aprobacion", texto_aprobacion))
+        linea.append((evento["ts"], *contado))
+    linea.extend((momento, "aprobacion", texto_aprobacion) for momento in aprobaciones)
     if len(linea) > MAX_LINEA:
         final = MAX_LINEA - LINEA_PRINCIPIO - 1
         omitidas = len(linea) - LINEA_PRINCIPIO - final
-        marca = (linea[LINEA_PRINCIPIO][0], 0, "omitido",
+        marca = (linea[LINEA_PRINCIPIO][0], "omitido",
                  f"Omitimos {_cantidad(omitidas)} pasos del medio de la compra.")
         linea = [*linea[:LINEA_PRINCIPIO], marca, *linea[-final:]]
     return [{"ts": ts.isoformat(), "etapa": etapa, "texto": texto}
-            for ts, _, etapa, texto in linea]
+            for ts, etapa, texto in linea]
 
 
 # -- la explicación ---------------------------------------------------------------------
@@ -1113,11 +1234,12 @@ def _recibo(ultimo: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def explicar(vista: dict[str, Any], eventos: Iterable[Any], *, ahora: datetime, ttl_s: float,
-             corte: str | None = None, bloqueo_proxy: Any = None) -> dict[str, Any]:
+             corte: str | None = None, bloqueo_proxy: Any = None,
+             sin_ofertas: bool = False) -> dict[str, Any]:
     """La explicación de la compra (`GET /v1/compras/{id}/explicacion`)."""
     lista_eventos = _eventos(eventos)
     resultado = resultado_de(vista, ahora=ahora, ttl_s=ttl_s, corte=corte,
-                             bloqueo_proxy=bloqueo_proxy)
+                             bloqueo_proxy=bloqueo_proxy, sin_ofertas=sin_ofertas)
     lista = alertas_de_compra(vista, corte=corte)
     ultimo = _ultimo(vista, bloqueo_proxy)
     resumen = _resumen(resultado, vista, ultimo, corte, lista_eventos)
@@ -1153,12 +1275,14 @@ def explicar(vista: dict[str, Any], eventos: Iterable[Any], *, ahora: datetime, 
 
 def resumir(entradas: Iterable[dict[str, Any]], *, desde: datetime, hasta: datetime) -> dict[str, Any]:
     """`GET /v1/resumen`: cuántas compras por resultado y por alerta, cuántos
-    intentos de estafa y el monto frenado por moneda. Cada entrada es la de
-    `resumen_de_compra` con `monto` y `moneda` (`monto_de_compra`)."""
+    intentos de estafa y, por moneda, el monto frenado (las `frenada`) y el
+    retenido (las `retenida`: un `escalar` que aprobó una persona es
+    `aprobada` y no cuenta). Cada entrada es la de `resumen_de_compra` con
+    `monto` y `moneda` (`monto_de_compra`)."""
     por_resultado = {r: 0 for r in RESULTADOS}
     por_alerta = {a: 0 for a in ALERTAS}
     estafas = 0
-    frenado: dict[str, float] = {}
+    montos: dict[str, dict[str, float]] = {"frenada": {}, "retenida": {}}
     total = 0
     for entrada in entradas:
         total += 1
@@ -1170,9 +1294,10 @@ def resumir(entradas: Iterable[dict[str, Any]], *, desde: datetime, hasta: datet
         if entrada.get("intento_de_estafa") is True:
             estafas += 1
         monto, moneda = _numero(entrada.get("monto")), entrada.get("moneda")
-        if resultado == "frenada" and monto is not None and isinstance(moneda, str) \
+        if resultado in montos and monto is not None and isinstance(moneda, str) \
                 and MONEDA_RE.fullmatch(moneda):
-            frenado[moneda] = frenado.get(moneda, 0.0) + float(monto)
+            suma = montos[resultado]
+            suma[moneda] = suma.get(moneda, 0.0) + float(monto)
     return {
         "desde": desde.isoformat(),
         "hasta": hasta.isoformat(),
@@ -1180,8 +1305,13 @@ def resumir(entradas: Iterable[dict[str, Any]], *, desde: datetime, hasta: datet
         "por_resultado": por_resultado,
         "intentos_de_estafa": estafas,
         "por_alerta": por_alerta,
-        "monto_frenado": [{"moneda": m, "total": round(t, 2)} for m, t in sorted(frenado.items())],
+        "monto_frenado": _por_moneda(montos["frenada"]),
+        "monto_retenido": _por_moneda(montos["retenida"]),
     }
+
+
+def _por_moneda(sumas: dict[str, float]) -> list[dict[str, Any]]:
+    return [{"moneda": m, "total": round(t, 2)} for m, t in sorted(sumas.items())]
 
 
 def ventana_por_defecto(ahora: datetime, dias: int = 30) -> tuple[datetime, datetime]:

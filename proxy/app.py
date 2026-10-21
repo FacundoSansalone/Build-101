@@ -34,7 +34,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -757,6 +757,9 @@ class ProxyGuard:
         # (compra, tipo) de los eventos acotados que ya llegaron a su tope en el
         # historial: no se vuelven a contar (`_guardar_evento_acotado`).
         self._historial_lleno: OrderedDict[tuple[str, str], bool] = OrderedDict()
+        # Candado y escrituras en vuelo del historial por compra
+        # (`_historial_en_orden`): las filas entran en el orden en que se emitieron.
+        self._orden_historial: dict[str, list[Any]] = {}
         self.en_fondo = TareasEnFondo(
             al_fallar=lambda mensaje: self._emitir(
                 "error", {"mensaje": mensaje}, guard_activo=self.guard_activo
@@ -863,9 +866,31 @@ class ProxyGuard:
         if fila["tipo"] in TIPOS_ACOTADOS:
             if (compra.id, fila["tipo"]) in self._historial_lleno:
                 return
-            self.en_fondo.programar(self._guardar_evento_acotado(fila), "evento del historial")
-            return
-        self.en_fondo.programar(self.almacen.guardar_evento(fila), "evento del historial")
+            escribir = functools.partial(self._guardar_evento_acotado, fila)
+        else:
+            escribir = functools.partial(self.almacen.guardar_evento, fila)
+        self.en_fondo.programar(self._historial_en_orden(compra.id, escribir), "evento del historial")
+
+    async def _historial_en_orden(
+        self, compra_id: str, escribir: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Una fila del historial de la compra, después de las que se emitieron
+        antes: `orden` (la identidad de `gw_eventos`) es el orden de la línea
+        de tiempo, y un evento acotado cuenta en el almacén antes de guardarse
+        (una ida más). Las tareas arrancan en el orden en que se programaron y
+        el candado atiende en orden de llegada. Entre instancias, cada una
+        guarda lo suyo en orden."""
+        par = self._orden_historial.get(compra_id)
+        if par is None:
+            par = self._orden_historial[compra_id] = [asyncio.Lock(), 0]
+        par[1] += 1
+        try:
+            async with par[0]:
+                await escribir()
+        finally:
+            par[1] -= 1
+            if par[1] == 0:
+                self._orden_historial.pop(compra_id, None)
 
     async def _guardar_evento_acotado(self, fila: dict[str, Any]) -> None:
         """Un evento de los que se repiten con cada búsqueda, solo si la compra
@@ -2636,6 +2661,7 @@ class ProxyGuard:
                     "ofertas",
                     decisiva=self.varias,
                 )
+        self._marcar_sin_ofertas(llamada, contexto_id, False)
         logger.info(
             "← ofertas: contexto=%s escenario=%s carts=%s",
             contexto_id,
@@ -2667,6 +2693,7 @@ class ProxyGuard:
         if previas is not None and previas.comercio_id not in (None, comercio_id):
             return
         logger.info("← sin resultados: contexto=%s", contexto_id)
+        self._marcar_sin_ofertas(llamada, contexto_id, True)
         self._emitir(
             "ofertas_recibidas",
             {"carts": [], "offer_details": []},
@@ -2675,6 +2702,20 @@ class ProxyGuard:
             escenario=respuesta.escenario or pedido.escenario,
             llamada=llamada,
         )
+
+    def _marcar_sin_ofertas(self, llamada: Llamada, contexto_id: Any, valor: bool) -> None:
+        """La marca `Compra.sin_ofertas` de la última búsqueda (la prende una
+        sin ofertas, la apaga una con ofertas). Como el `corte`: el tráfico
+        anónimo no toca una compra de integrador."""
+        compra = llamada.compra or (
+            self.compras.de_contexto(contexto_id) if isinstance(contexto_id, str) else None
+        )
+        if compra is None or compra.sin_ofertas is valor:
+            return
+        if compra.origen == "api" and not llamada.de_integrador:
+            return
+        compra.sin_ofertas = valor
+        self.guardar_compra(compra)
 
     async def _contexto_respuesta_ok(self, llamada: Llamada, result: Any) -> bool:
         """El `contextId` que trae la respuesta (JSON o cada evento SSE).

@@ -183,6 +183,7 @@ test("infoResultado: texto, tono e ícono para cada resultado de la API", () => 
     aprobada: ["Aprobada", "ok"], frenada: ["Frenada", "crit"], retenida: ["Retenida", "aviso"],
     cortada_por_seguridad: ["Cortada por seguridad", "crit"], vencida: ["Vencida", "neutro"],
     en_curso: ["En curso", "info"], sin_compra: ["Sin compra", "neutro"],
+    sin_ofertas: ["Sin ofertas", "neutro"],
   };
   assert.deepEqual(Object.keys(RESULTADOS).sort(), Object.keys(esperados).sort());
   const iconos = new Set();
@@ -346,10 +347,14 @@ test("combinarCompras: sin repetir, en orden y solo con ids válidos", () => {
 
 const RESUMEN = {
   desde: "2026-10-01T00:00:00+00:00", hasta: "2026-11-01T00:00:00+00:00", compras: 42,
-  por_resultado: { aprobada: 30, frenada: 6, retenida: 1, cortada_por_seguridad: 3, en_curso: 2, vencida: 0, sin_compra: 0 },
+  por_resultado: {
+    aprobada: 30, frenada: 6, retenida: 1, cortada_por_seguridad: 3, en_curso: 2, vencida: 0, sin_compra: 0,
+    sin_ofertas: 0,
+  },
   intentos_de_estafa: 7,
   por_alerta: { manipulacion: 3, dato_falso: 2, precio_distinto: 2, checkout_alterado: 0, no_cumple: 3, sin_verificar: 1 },
   monto_frenado: [{ moneda: "ARS", total: 150000 }, { moneda: "USD", total: 2148.5 }],
+  monto_retenido: [{ moneda: "USD", total: 349.25 }],
   completo: true,
 };
 
@@ -364,14 +369,29 @@ test("tarjetasResumen: compras, aprobadas, frenadas o retenidas, cortadas, estaf
     ["monto", "ARS 150.000,00", "neutro"],
   ]);
   assert.equal(tarjetas[2].detalle, "6 frenadas · 1 retenida");
-  assert.deepEqual(tarjetas[5].lineas, ["ARS 150.000,00", "USD 2.148,50"]);
+  // Lo frenado más lo retenido sin aprobar, por moneda, con el desglose.
+  const monto = tarjetas[5];
+  assert.equal(monto.titulo, "Frenado o retenido");
+  assert.equal(monto.detalle, "ARS 150.000,00 frenado");
+  assert.deepEqual(monto.lineas, [
+    "ARS 150.000,00", "USD 2.497,75 (USD 2.148,50 frenado · USD 349,25 retenido)",
+  ]);
+  const solo = tarjetasResumen({ ...RESUMEN, monto_frenado: [{ moneda: "USD", total: 100 }],
+    monto_retenido: [{ moneda: "USD", total: 0.1 }, { moneda: "<b>", total: 5 }] })[5];
+  assert.equal(solo.valor, "USD 100,10");
+  assert.equal(solo.detalle, "USD 100,00 frenado · USD 0,10 retenido");
+  assert.deepEqual(solo.lineas, ["USD 100,10"]);
+  const retenido = tarjetasResumen({ ...RESUMEN, monto_frenado: [], monto_retenido: [{ moneda: "EUR", total: 7 }] })[5];
+  assert.equal(retenido.valor, "EUR 7,00");
+  assert.equal(retenido.detalle, "EUR 7,00 retenido");
   assert.ok(tarjetas.every((t) => t.titulo && t.icono));
   const vacio = tarjetasResumen({ ...RESUMEN, compras: 0, intentos_de_estafa: 0, monto_frenado: [],
-    por_resultado: {} });
+    monto_retenido: [], por_resultado: {} });
   assert.equal(vacio.find((t) => t.clave === "estafas").tono, "ok");
   assert.equal(vacio.find((t) => t.clave === "aprobadas").valor, "0");
   assert.deepEqual(vacio.find((t) => t.clave === "monto").lineas, []);
   assert.equal(vacio.find((t) => t.clave === "monto").valor, "Nada");
+  assert.equal(vacio.find((t) => t.clave === "monto").detalle, "");
   const roto = tarjetasResumen({ compras: -1, intentos_de_estafa: "7", monto_frenado: [{ moneda: "X", total: 1 }] });
   assert.equal(roto.find((t) => t.clave === "compras").valor, "—");
   assert.equal(roto.find((t) => t.clave === "estafas").valor, "—");

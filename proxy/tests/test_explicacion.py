@@ -110,7 +110,7 @@ APROBACION_USADA = {
 
 def test_los_resultados_posibles():
     assert set(RESULTADOS) == {"aprobada", "frenada", "retenida", "cortada_por_seguridad",
-                               "en_curso", "vencida", "sin_compra"}
+                               "en_curso", "vencida", "sin_compra", "sin_ofertas"}
 
 
 @pytest.mark.parametrize("status, resultado", [
@@ -164,6 +164,24 @@ def test_sin_checkout_todavia_en_curso(estado):
 
 def test_vencida():
     assert _resultado(vista("vencida")) == "vencida"
+
+
+def test_sin_ofertas_si_la_ultima_busqueda_volvio_vacia_y_no_hay_checkout():
+    """La marca de la compra (`Compra.sin_ofertas`): el listado la usa sin leer
+    eventos. Con o sin la vida de la compra pasada (se sabe por qué no hubo
+    compra)."""
+    assert _resultado(vista(), sin_ofertas=True) == "sin_ofertas"
+    vieja = vista("negociando", creada=AHORA - timedelta(days=2))
+    assert _resultado(vieja, sin_ofertas=True) == "sin_ofertas"
+    assert _resultado(vista(), sin_ofertas=False) == "en_curso"
+    # Un checkout (veredicto o bloqueo del proxy), un corte o el vencimiento mandan.
+    con = vista(veredictos=[veredicto("aprobado", MANDATO_OK)])
+    assert _resultado(con, sin_ofertas=True) == "aprobada"
+    bloqueo = {"ts": (CREADA + timedelta(minutes=4)).isoformat(), "contexto_id": "ctx-1",
+               "cart_id": "cart_2"}
+    assert _resultado(vista(), sin_ofertas=True, bloqueo_proxy=bloqueo) == "frenada"
+    assert _resultado(vista("bloqueada"), sin_ofertas=True) == "cortada_por_seguridad"
+    assert _resultado(vista("vencida"), sin_ofertas=True) == "vencida"
 
 
 def test_pasada_su_vida_sin_checkout_es_sin_compra():
@@ -324,6 +342,16 @@ def test_vencida_y_sin_compra():
     assert "no tuvo ofertas" in salida["resumen"]
 
 
+def test_sin_ofertas_lo_dice_en_el_resumen():
+    vacia = [_fila("ofertas_recibidas", {"carts": [], "offer_details": []}, minutos=1)]
+    salida = _explicar(vista(), vacia, sin_ofertas=True)
+    assert salida["resultado"] == "sin_ofertas"
+    assert salida["resumen"] == "El comercio no tuvo ofertas para tu pedido: no hubo compra."
+    assert salida["chequeos"] == [] and salida["recibo"] is None and salida["monto"] is None
+    fila = resumen_de_compra(vista(), ahora=AHORA, ttl_s=TTL, sin_ofertas=True)
+    assert fila == {"resultado": "sin_ofertas", "alertas": [], "intento_de_estafa": False}
+
+
 def test_aprobada_por_una_persona():
     salida = _explicar(vista(veredictos=[veredicto("escalar", MANDATO_OK)],
                              aprobaciones=[APROBACION_USADA]))
@@ -392,7 +420,16 @@ CASOS: list[tuple[Chequeo, str]] = [
     (ch("evidencia", "aviso", "sku", observado=INY, origen="declarado"),
      "El producto no está en el catálogo público: sus datos solo los declaró el comercio."),
     (ch("evidencia", "escalar", "titulo", esperado="Apex Urban", observado=INY, origen="catalogo_publico"),
-     "El título: lo que declaró el comercio no coincide con el catálogo público (Apex Urban)."),
+     "El título que declaró el comercio no coincide con el catálogo público: según esa fuente es "
+     "Apex Urban."),
+    (ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+     "La categoría que declaró el comercio no coincide con el catálogo público: según esa fuente es "
+     "Televisions."),
+    (ch("evidencia", "escalar", "talles", esperado=[40, 41], observado=[38], origen="catalogo_publico"),
+     "Los talles que declaró el comercio no coinciden con el catálogo público: según esa fuente son "
+     "40 y 41."),
+    (ch("evidencia", "escalar", "marca", origen="fabricante"),
+     "La marca que declaró el comercio no coincide con el fabricante."),
     (ch("evidencia", "ok", "marca", esperado="Dell", observado="Dell", origen="catalogo_publico"),
      "La marca coincide con el catálogo público."),
     (ch("integridad", "bloquea", "checkout_hash", origen="checkout_firmado"),
@@ -497,6 +534,72 @@ def test_categorias_con_el_nombre_del_arbol():
     solo = _texto([ch("cumplimiento", "aviso", "categoria_taxonomia", esperado="278",
                       observado="328", origen="declarado")], status="con_avisos")
     assert any("solo la declaró el comercio" in c["texto"] for c in solo["chequeos"])
+
+
+def test_la_categoria_contradicha_va_en_una_sola_linea():
+    """El caso real del comercio que dice que una tele es un monitor: el
+    cumplimiento de la taxonomía ya lo explica, así que la evidencia de la
+    categoría (la del catálogo, en minúsculas) y la de la taxonomía, con la
+    misma conclusión, no se repiten."""
+    from guard.categorias import ARBOL
+
+    if ARBOL is None:
+        pytest.skip("sin el árbol de la taxonomía")
+    salida = _texto([
+        ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="305", observado="404",
+           origen="catalogo_publico"),
+        ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+        ch("evidencia", "escalar", "categoria_taxonomia", esperado="404", observado="305",
+           origen="catalogo_publico"),
+        ch("evidencia", "ok", "marca", esperado="Kivo", origen="catalogo_publico"),
+    ], status="escalar")
+    categoria = [c for c in salida["chequeos"] if c["tema"] in ("categoria", "categoria_taxonomia")]
+    assert categoria == [{
+        "tema": "categoria_taxonomia", "resultado": "escalar",
+        "texto": ("El comercio declaró una categoría que no coincide con el catálogo público: "
+                  "según esa fuente es Televisions y pediste Computer Monitors."),
+    }]
+    assert "La marca coincide con el catálogo público." in [c["texto"] for c in salida["chequeos"]]
+
+
+def test_la_evidencia_que_repite_la_conclusion_se_junta_con_el_mas_grave():
+    """Una evidencia más grave que el cumplimiento del mismo campo, con la
+    misma conclusión, va en esa línea con el resultado más grave; si la
+    fuente es otra, la suma. Con otra conclusión, cada una en su línea."""
+    from guard.categorias import ARBOL
+
+    if ARBOL is None:
+        pytest.skip("sin el árbol de la taxonomía")
+    solo = _texto([
+        ch("cumplimiento", "aviso", "categoria_taxonomia", esperado="278", observado="328",
+           origen="declarado"),
+        ch("evidencia", "aviso", "categoria", observado="laptops", origen="declarado"),
+    ], status="con_avisos")
+    textos = [c for c in solo["chequeos"] if c["tema"] in ("categoria", "categoria_taxonomia")]
+    assert [c["resultado"] for c in textos] == ["aviso"]
+    assert textos[0]["texto"].startswith("La categoría del producto está dentro de la que pediste")
+    # El fabricante contradice la taxonomía y el catálogo, la categoría: una línea, con las dos fuentes.
+    dos = _texto([
+        ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="305", observado="404",
+           origen="fabricante"),
+        ch("evidencia", "escalar", "categoria_taxonomia", esperado="404", observado="305",
+           origen="fabricante"),
+        ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+    ], status="escalar")
+    (linea,) = [c for c in dos["chequeos"] if c["tema"] in ("categoria", "categoria_taxonomia")]
+    assert linea["resultado"] == "escalar"
+    assert linea["texto"] == ("El comercio declaró una categoría que no coincide con el fabricante: "
+                              "según esa fuente es Televisions y pediste Computer Monitors. "
+                              "Tampoco coincide con el catálogo público.")
+    # Otra conclusión (la taxonomía es de otra rama, sin mentira; la categoría declarada
+    # contradice al catálogo): las dos líneas.
+    distintas = _texto([
+        ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="305", observado="404",
+           origen="catalogo_publico"),
+        ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+    ], status="escalar")
+    temas = [c["tema"] for c in distintas["chequeos"]]
+    assert "categoria" in temas and "categoria_taxonomia" in temas
 
 
 def test_los_chequeos_van_del_mas_grave_al_menos():
@@ -730,21 +833,30 @@ def test_resumir_cuenta_por_resultado_alerta_y_moneda():
          "intento_de_estafa": True, "monto": None, "moneda": None},
         {"resultado": "aprobada", "alertas": [], "intento_de_estafa": False,
          "monto": 5000, "moneda": "USD"},
+        {"resultado": "retenida", "alertas": ["sin_verificar"], "intento_de_estafa": False,
+         "monto": 50.25, "moneda": "USD"},
+        {"resultado": "retenida", "alertas": [], "intento_de_estafa": False,
+         "monto": 10, "moneda": "EUR"},
+        {"resultado": "retenida", "alertas": [], "intento_de_estafa": False,
+         "monto": 7, "moneda": "<b>"},
     ]
     salida = resumir(entradas, desde=CREADA, hasta=AHORA)
     assert salida["desde"] == CREADA.isoformat() and salida["hasta"] == AHORA.isoformat()
-    assert salida["compras"] == 6
+    assert salida["compras"] == 9
     assert salida["por_resultado"] == {
-        "aprobada": 1, "frenada": 4, "retenida": 0, "cortada_por_seguridad": 1,
-        "en_curso": 0, "vencida": 0, "sin_compra": 0,
+        "aprobada": 1, "frenada": 4, "retenida": 3, "cortada_por_seguridad": 1,
+        "en_curso": 0, "vencida": 0, "sin_compra": 0, "sin_ofertas": 0,
     }
     assert salida["intentos_de_estafa"] == 2
     assert salida["por_alerta"] == {
         "manipulacion": 1, "dato_falso": 1, "precio_distinto": 0, "checkout_alterado": 0,
-        "no_cumple": 1, "sin_verificar": 0,
+        "no_cumple": 1, "sin_verificar": 1,
     }
     assert salida["monto_frenado"] == [{"moneda": "ARS", "total": 1000.0},
                                        {"moneda": "USD", "total": 200.0}]
+    # Lo retenido (sin aprobar: una retenida que aprobó una persona es aprobada), aparte.
+    assert salida["monto_retenido"] == [{"moneda": "EUR", "total": 10.0},
+                                        {"moneda": "USD", "total": 50.25}]
 
 
 def test_el_plural_concuerda():
@@ -767,6 +879,99 @@ def test_un_atributo_que_no_se_pudo_comparar_no_acusa():
     assert salida["alertas"] == ["sin_verificar"] and salida["intento_de_estafa"] is False
     assert ("No pudimos comparar la RAM con el fabricante: lo que declaró el comercio no se puede "
             "comparar (otra unidad o un valor ambiguo).") in [c["texto"] for c in salida["chequeos"]]
+
+
+def test_la_linea_de_tiempo_va_en_el_orden_del_historial():
+    """El orden es el de `orden` (la identidad de `gw_eventos`, o el de
+    inserción en memoria), no el del `ts`: dos eventos con el mismo momento (o
+    con relojes de dos instancias) no se dan vuelta. El `ts` es para mostrar."""
+    mismo = 2
+    eventos = [
+        _fila("reenviado", {"metodo": "find_products"}, minutos=mismo, orden=12),
+        _fila("busqueda_enviada", {"catalog_search": "x"}, minutos=mismo, orden=10),
+        _fila("ofertas_recibidas", {"carts": [{"cart_id": "cart_1", "item_label": "x",
+                                               "amount": 1.0, "currency": "USD"}] * 4,
+                                    "offer_details": []}, minutos=mismo, orden=11),
+        # Un reloj atrasado (otra instancia): igual va después.
+        _fila("checkout_pedido", {"cart_id": "cart_1"}, minutos=1, orden=13),
+    ]
+    linea = _explicar(vista(), eventos)["linea_de_tiempo"]
+    assert [e["texto"] for e in linea] == [
+        "Creaste la compra con un tope de USD 1.500,00.",
+        "Tu agente buscó productos en el comercio.",
+        "El comercio mandó 4 ofertas.",
+        "Le pasamos las ofertas a tu agente.",
+        "Tu agente pidió el checkout de un carrito.",
+    ]
+    assert linea[-1]["ts"] == (CREADA + timedelta(minutes=1)).isoformat()
+
+
+def test_los_cambios_de_una_propuesta_concuerdan_en_numero():
+    entregas = _fila("oportunidad", {"vence": "2026-10-21T12:09:00+00:00", "oportunidad": {
+        "id": "op-1", "cart_id": "cart_1", "cambios": [
+            {"campo": "entregas", "pedido": [{"cantidad": 20, "fecha": "2026-10-26"}],
+             "ofrecido": [{"cantidad": 10, "fecha": "2026-10-26"}, {"cantidad": 10, "fecha": "2026-10-28"}]},
+            {"campo": "cantidad", "pedido": 20, "ofrecido": 25},
+        ]}}, minutos=2)
+    sin_valores = _fila("oportunidad", {"vence": "2026-10-21T12:09:00+00:00", "oportunidad": {
+        "id": "op-2", "cart_id": "cart_1", "cambios": [{"campo": "entregas"}, {"campo": "marca"}],
+    }}, minutos=3)
+    textos = [e["texto"] for e in _explicar(vista(), [entregas, sin_valores])["linea_de_tiempo"]
+              if e["etapa"] == "intencion"]
+    assert textos[0] == (
+        "Te propusimos una alternativa que no cumple el pedido literal pero sí la necesidad: las "
+        "entregas pasan de 20 el 26/10/2026 a 10 el 26/10/2026 y 10 el 28/10/2026 y la cantidad "
+        "pasa de 20 a 25.")
+    assert textos[1].endswith(": cambian las entregas y cambia la marca.")
+
+
+@pytest.mark.parametrize("respuesta, texto", [
+    ("Para la oficina nueva", "Nos contaste para qué es: «Para la oficina nueva»."),
+    ("Las fechas pueden variar.", "Nos contaste para qué es: «Las fechas pueden variar.»"),
+    ("¿Sirve para diseño?", "Nos contaste para qué es: «¿Sirve para diseño?»"),
+    ("¡Es urgente!", "Nos contaste para qué es: «¡Es urgente!»"),
+    ("Ya veremos...", "Nos contaste para qué es: «Ya veremos...»"),
+])
+def test_la_cita_del_porque_no_suma_otro_punto(respuesta, texto):
+    contexto = _fila("contexto_registrado", {"turno": 0, "respuesta": respuesta, "omitido": False,
+                                             "vencido": False}, minutos=1)
+    textos = [e["texto"] for e in _explicar(vista(), [contexto])["linea_de_tiempo"]]
+    assert texto in textos
+
+
+def test_el_reenvio_de_una_busqueda_dice_ofertas_solo_si_las_hubo():
+    """"Le pasamos las ofertas" solo si esa búsqueda trajo ofertas; sin
+    ofertas (o sin saberlo: el historial ya no guarda más búsquedas), "la
+    respuesta"."""
+    def ofertas(n: int, orden: int) -> dict[str, Any]:
+        carts = [{"cart_id": f"cart_{i}", "item_label": "x", "amount": 1.0, "currency": "USD"}
+                 for i in range(n)]
+        return _fila("ofertas_recibidas", {"carts": carts, "offer_details": []}, minutos=1,
+                     orden=orden)
+
+    def reenviado(orden: int) -> dict[str, Any]:
+        return _fila("reenviado", {"metodo": "find_products"}, minutos=1, orden=orden)
+
+    def busqueda(orden: int) -> dict[str, Any]:
+        return _fila("busqueda_enviada", {"catalog_search": "x"}, minutos=1, orden=orden)
+
+    eventos = [busqueda(1), ofertas(0, 2), reenviado(3),
+               busqueda(4), ofertas(4, 5), reenviado(6),
+               reenviado(7)]
+    textos = [e["texto"] for e in _explicar(vista(), eventos)["linea_de_tiempo"]
+              if e["texto"].startswith("Le pasamos")]
+    assert textos == ["Le pasamos la respuesta a tu agente.", "Le pasamos las ofertas a tu agente.",
+                      "Le pasamos la respuesta a tu agente."]
+
+
+def test_la_aprobacion_de_una_persona_va_en_su_momento_entre_los_eventos():
+    eventos = [
+        _fila("bloqueado", {"status": "escalar", "requiere_aprobacion": True}, minutos=4, orden=1),
+        _fila("reenviado", {"metodo": "create_checkout", "aprobacion_humana": True}, minutos=8,
+              orden=2),
+    ]
+    linea = _explicar(vista(aprobaciones=[APROBACION_USADA]), eventos)["linea_de_tiempo"]
+    assert [e["etapa"] for e in linea] == ["pedido", "resultado", "aprobacion", "resultado"]
 
 
 def test_la_linea_de_tiempo_conserva_el_principio_y_el_final():
@@ -809,8 +1014,9 @@ def test_los_valores_tecnicos_salen_legibles():
            observado="888888", origen="catalogo_publico"),
     ])
     textos = [c["texto"] for c in salida["chequeos"]]
-    assert ("La categoría no cumple lo que pediste: pediste basketball shoes y el catálogo "
-            "público indica lifestyle sneakers.") in textos
+    # Las categorías del catálogo, como los nombres de la taxonomía ("Computer Monitors").
+    assert ("La categoría no cumple lo que pediste: pediste Basketball Shoes y el catálogo "
+            "público indica Lifestyle Sneakers.") in textos
     assert "lifestyle_sneakers" not in salida["resumen"]
-    assert "lifestyle sneakers" in salida["resumen"]
+    assert "Lifestyle Sneakers" in salida["resumen"]
     assert any("999999" in t for t in textos)

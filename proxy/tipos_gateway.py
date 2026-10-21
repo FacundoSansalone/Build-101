@@ -187,6 +187,8 @@ class FotoCompra:
     corte: str | None = None
     # El último checkout que el proxy frenó sin veredicto (`Compra.bloqueo_proxy`).
     bloqueo_proxy: dict[str, Any] | None = None
+    # La última búsqueda volvió sin ofertas (`Compra.sin_ofertas`).
+    sin_ofertas: bool = False
 
 
 @dataclass(frozen=True)
