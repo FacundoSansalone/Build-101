@@ -248,7 +248,9 @@ def test_el_html_no_tiene_scripts_ni_estilos_en_linea():
     assert not re.search(r"\sstyle\s*=", html, re.I)
     assert not re.search(r"\son[a-z]+\s*=", html, re.I)
     for ref in re.findall(r"""(?:src|href)="([^"]+)\"""", html):
-        assert ref.startswith(("/consola/", "/v1/", "#", "data:image/svg+xml,")), ref
+        assert ref.startswith(("/consola/", "/v1/", "#", "data:image/svg+xml,")) or ref == "/panel", ref
+    # El link al panel del cliente (y el panel tiene uno a la consola).
+    assert '<a href="/panel">Panel</a>' in html
     assert '<html lang="es">' in html
     # El campo de la clave: password y sin name (un formulario nunca la manda).
     (campo,) = re.findall(r"<input id=\"clave\"[^>]*>", html, re.S)
