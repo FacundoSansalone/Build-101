@@ -768,3 +768,32 @@ def test_generar_secretos_clave_lectura_con_registro_invalido(tmp_path, capsys):
     assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "acme"]) == 2
     assert sorted(p.name for p in carpeta.iterdir()) == ["GATEWAY_CLAVES_JSON.json"]
     capsys.readouterr()
+
+
+# ===========================================================================
+# docs
+# ===========================================================================
+
+
+def test_el_ejemplo_del_readme_trae_una_clave_completa_y_una_de_lectura():
+    """El JSON de proxy/README.md ("Integradores") carga y muestra los dos tipos."""
+    from proxy.tests.test_despliegue_vercel import RAIZ
+
+    readme = (RAIZ / "proxy" / "README.md").read_text(encoding="utf-8")
+    seccion = readme.split("### Integradores (`GATEWAY_CLAVES_ARCHIVO`)", 1)[1]
+    bloque = seccion.split("```json", 1)[1].split("```", 1)[0]
+    texto = bloque.replace("<64 hex>", "0" * 64).replace("<otros 64 hex>", "1" * 64)
+    registro = RegistroIntegradores.desde_dict(
+        json.loads(texto), {"WEBHOOK_SECRETO_ACME": SECRETO_WEBHOOK}
+    )
+    assert sorted(g.permisos is not None for g in registro._claves.values()) == [False, True]
+
+
+def test_la_tabla_de_integracion_coincide_con_la_lista_blanca():
+    """docs/INTEGRACION.md §4 lista exactamente lo que puede una clave de lectura."""
+    from proxy.tests.test_despliegue_vercel import RAIZ
+
+    doc = (RAIZ / "docs" / "INTEGRACION.md").read_text(encoding="utf-8")
+    seccion = doc.split("### Claves de solo lectura", 1)[1].split("\n## ", 1)[0]
+    permitidas = set(re.findall(r"^\| `(GET) (/v1/[^`]+)` \| Sí", seccion, re.MULTILINE))
+    assert permitidas == set(RUTAS_LECTURA)

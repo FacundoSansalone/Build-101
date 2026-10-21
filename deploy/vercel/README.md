@@ -22,7 +22,7 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 | [`.vercelignore`](../../.vercelignore) | Lo que **no** sube `vercel deploy`: lista blanca en la raíz (solo el motor) y lista negra adentro (secretos, simulación, tests). Lo verifica `proxy/tests/test_despliegue_vercel.py` |
 | `env.ejemplo` | Todas las variables, obligatorias, opcionales y **prohibidas** |
 | `comercios.ejemplo.json` | Formato de `GATEWAY_COMERCIOS_JSON` con la simulación detrás del túnel |
-| `generar_secretos.py` | Clave del recibo, clave de integrador y los registros JSON, cada uno en su archivo. No imprime secretos |
+| `generar_secretos.py` | Clave del recibo, clave de integrador (y, con `--clave-lectura`, una de solo lectura para el panel) y los registros JSON, cada uno en su archivo. No imprime secretos |
 | `verificar_supabase.py` | Solo lectura: ¿están las tablas y columnas de las migraciones 003 y 004? |
 | `tunel_router.py` | Un solo puerto (:8090) para la simulación: `/a2a/*` al comercio, el resto al catálogo |
 | `tunel_demo.sh` | Un comando para la demo contra Vercel: enrutador + túnel sin cuenta (`TUNEL=auto`: cloudflared rápido si hay salida al puerto 7844; si no, pinggy por SSH en el 443, que dura 60 min: a los 55 (`TUNEL_RENOVAR_S`) el script abre otro, apunta Vercel al nuevo y recién después corta el viejo; si pinggy no da dos túneles a la vez, espera a que se corte y queda una ventana de 1-2 min sin túnel). Reescribe `GATEWAY_COMERCIOS_JSON` con la URL nueva y redespliega; si `vercel env add` o el deploy fallan, muestra el error y corta. Ctrl+C corta todo |
@@ -156,6 +156,39 @@ archivos y el `kid` público de la clave del integrador):
 
 No pisa nada salvo `--forzar`: si cambia la clave del recibo, los integradores
 tienen que volver a bajar `/v1/public-key`.
+
+**Clave de solo lectura (para el panel).** El panel web corre en el navegador
+con una clave pegada por el usuario: tiene que ser una de **solo lectura**
+(GET en `/v1`; no sirve para comprar, contestar, aprobar ni para A2A; ver
+[`docs/INTEGRACION.md` §4](../../docs/INTEGRACION.md#claves-de-solo-lectura)).
+Para un integrador que ya está en `GATEWAY_CLAVES_JSON.json`:
+
+```sh
+$PY deploy/vercel/generar_secretos.py --clave-lectura demo
+```
+
+| Archivo | Qué cambia |
+|---|---|
+| `clave_lectura_demo.txt` | Nuevo: la clave `psg_…` de lectura, para el usuario del panel. **No** va a Vercel |
+| `GATEWAY_CLAVES_JSON.json` | Suma la entrada `{"kid", "sha256", "creada", "activa": true, "permisos": ["lectura"]}` a las `claves` del integrador; lo demás queda igual |
+| `vercel.env` | La línea `GATEWAY_CLAVES_JSON=` con el registro nuevo (si el archivo está) |
+
+No imprime la clave (solo el `kid`). Si `clave_lectura_<id>.txt` ya existe no
+toca nada; con `--forzar` suma **otra** clave de lectura y la anterior sigue
+activa hasta que le pongas `"activa": false`. `--clave-lectura` va solo: no
+se combina con `--dominio`, `--webhook-url`, `--comercio` ni `--nombre`.
+
+Las claves se leen al arrancar, así que **hasta redesplegar la clave nueva no
+vale**. Estos dos comandos cambian producción: corrélos vos (si los corre un
+agente, que te pida confirmación antes):
+
+```sh
+npx vercel env add GATEWAY_CLAVES_JSON production --force < .temp-db/vercel/GATEWAY_CLAVES_JSON.json
+npx vercel deploy --prod
+```
+
+Para darla de baja, `"activa": false` en esa entrada (o sacarla) y los mismos
+dos comandos.
 
 ### 4. Variables en Vercel
 
