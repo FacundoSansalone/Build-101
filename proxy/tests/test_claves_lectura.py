@@ -629,3 +629,142 @@ def test_cli_nueva_lectura_imprime_una_clave_de_lectura(capsys):
     assert clave not in salida.err and "lectura" in salida.err
     registro = RegistroIntegradores.desde_dict(_acme_con(objeto), {})
     assert registro.autenticar_clave(clave).solo_lectura is True
+
+
+# ===========================================================================
+# deploy/vercel/generar_secretos.py --clave-lectura
+# ===========================================================================
+
+
+def _gs():
+    from proxy.tests.test_despliegue_vercel import _script
+
+    return _script("generar_secretos")
+
+
+def _base(carpeta, *extra: str) -> None:
+    """Lo que ya generó el operador: el integrador acme y su clave completa."""
+    assert _gs().main(["--carpeta", str(carpeta), "--integrador", "acme", "--sin-recibo", *extra]) == 0
+
+
+def test_generar_secretos_clave_lectura_agrega_la_entrada(tmp_path, capsys):
+    gs, carpeta = _gs(), tmp_path / "vercel"
+    _base(carpeta)
+    leer = lambda nombre: (carpeta / nombre).read_text(encoding="utf-8")  # noqa: E731
+    antes = json.loads(leer("GATEWAY_CLAVES_JSON.json"))
+    clave_completa = leer("clave_integrador_acme.txt")
+    capsys.readouterr()
+
+    assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "acme"]) == 0
+    salida = capsys.readouterr()
+
+    clave_lectura = leer("clave_lectura_acme.txt")
+    assert clave_lectura.startswith("psg_") and "\n" not in clave_lectura
+    despues = json.loads(leer("GATEWAY_CLAVES_JSON.json"))
+    # Solo se sumó una clave al integrador: lo demás queda igual.
+    (acme,) = despues["integradores"]
+    nueva = acme["claves"][-1]
+    assert acme["claves"][:-1] == antes["integradores"][0]["claves"]
+    assert {k: v for k, v in acme.items() if k != "claves"} == {
+        k: v for k, v in antes["integradores"][0].items() if k != "claves"
+    }
+    assert nueva["permisos"] == ["lectura"] and nueva["activa"] is True
+    assert nueva["sha256"] == hash_clave(clave_lectura)
+    # El JSON sigue en una línea (es el valor de la variable de Vercel).
+    assert "\n" not in leer("GATEWAY_CLAVES_JSON.json")
+
+    registro = RegistroIntegradores.desde_dict(despues, {})
+    assert registro.autenticar_clave(clave_lectura).solo_lectura is True
+    assert registro.autenticar_clave(clave_completa).solo_lectura is False
+    # vercel.env queda coherente (lo usa local_multi.py --env).
+    entorno = _script_local_multi().leer_env(carpeta / "vercel.env")
+    assert json.loads(entorno["GATEWAY_CLAVES_JSON"]) == despues
+    assert clave_lectura not in leer("vercel.env")  # la clave es del cliente
+
+    impreso = salida.out + salida.err
+    for secreto in (clave_lectura, clave_lectura.split("_", 2)[2], clave_completa):
+        assert secreto not in impreso
+    assert "clave_lectura_acme.txt" in impreso
+    assert "GATEWAY_CLAVES_JSON" in impreso and "vercel deploy" in impreso
+
+
+def _script_local_multi():
+    from proxy.tests.test_despliegue_vercel import _script
+
+    return _script("local_multi")
+
+
+def test_generar_secretos_clave_lectura_con_webhook_y_otro_integrador(tmp_path, capsys):
+    """El registro puede traer webhooks (su secreto no está en el entorno del
+    script) y varios integradores: se toca solo el pedido."""
+    gs, carpeta = _gs(), tmp_path / "vercel"
+    _base(carpeta, "--webhook-url", "https://acme.example/hook")
+    ruta = carpeta / "GATEWAY_CLAVES_JSON.json"
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    otro = {"id": "otro", "claves": [], "comercios": ["merchant_1"]}
+    datos["integradores"].append(otro)
+    ruta.write_text(json.dumps(datos), encoding="utf-8")
+
+    assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "otro"]) == 0
+    despues = json.loads(ruta.read_text(encoding="utf-8"))
+    assert despues["integradores"][0] == datos["integradores"][0]
+    (nueva,) = despues["integradores"][1]["claves"]
+    assert nueva["permisos"] == ["lectura"]
+    assert (carpeta / "clave_lectura_otro.txt").exists()
+    capsys.readouterr()
+
+
+def test_generar_secretos_clave_lectura_no_pisa_sin_forzar(tmp_path, capsys):
+    gs, carpeta = _gs(), tmp_path / "vercel"
+    _base(carpeta)
+    assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "acme"]) == 0
+    json_antes = (carpeta / "GATEWAY_CLAVES_JSON.json").read_bytes()
+    clave_antes = (carpeta / "clave_lectura_acme.txt").read_bytes()
+    assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "acme"]) == 1
+    assert (carpeta / "GATEWAY_CLAVES_JSON.json").read_bytes() == json_antes
+    assert (carpeta / "clave_lectura_acme.txt").read_bytes() == clave_antes
+    # Con --forzar: otra clave de lectura (la anterior sigue en el JSON hasta
+    # que el operador la dé de baja).
+    assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "acme", "--forzar"]) == 0
+    datos = json.loads((carpeta / "GATEWAY_CLAVES_JSON.json").read_text(encoding="utf-8"))
+    lecturas = [c for c in datos["integradores"][0]["claves"] if c.get("permisos") == ["lectura"]]
+    assert len(lecturas) == 2
+    assert (carpeta / "clave_lectura_acme.txt").read_bytes() != clave_antes
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    ("args", "codigo"),
+    [
+        (["--clave-lectura", "nadie"], 2),                       # el integrador no está
+        (["--clave-lectura", "No Vale"], 2),                     # id inválido
+        (["--clave-lectura", "acme", "--dominio", "x.ngrok-free.app"], 2),
+        (["--clave-lectura", "acme", "--webhook-url", "https://a.example/h"], 2),
+        (["--clave-lectura", "acme", "--comercio", "tienda_b"], 2),
+    ],
+    ids=["integrador_inexistente", "id_invalido", "con_dominio", "con_webhook", "con_comercio"],
+)
+def test_generar_secretos_clave_lectura_rechaza_sin_tocar_nada(tmp_path, capsys, args, codigo):
+    gs, carpeta = _gs(), tmp_path / "vercel"
+    _base(carpeta)
+    antes = {p.name: p.read_bytes() for p in carpeta.iterdir()}
+    assert gs.main(["--carpeta", str(carpeta), *args]) == codigo
+    assert {p.name: p.read_bytes() for p in carpeta.iterdir()} == antes
+    capsys.readouterr()
+
+
+def test_generar_secretos_clave_lectura_sin_registro_no_crea_nada(tmp_path, capsys):
+    gs, carpeta = _gs(), tmp_path / "vercel"
+    carpeta.mkdir()
+    assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "acme"]) == 2
+    assert list(carpeta.iterdir()) == []
+    assert "GATEWAY_CLAVES_JSON.json" in capsys.readouterr().err
+
+
+def test_generar_secretos_clave_lectura_con_registro_invalido(tmp_path, capsys):
+    gs, carpeta = _gs(), tmp_path / "vercel"
+    carpeta.mkdir()
+    (carpeta / "GATEWAY_CLAVES_JSON.json").write_text("{no es json", encoding="utf-8")
+    assert gs.main(["--carpeta", str(carpeta), "--clave-lectura", "acme"]) == 2
+    assert sorted(p.name for p in carpeta.iterdir()) == ["GATEWAY_CLAVES_JSON.json"]
+    capsys.readouterr()
