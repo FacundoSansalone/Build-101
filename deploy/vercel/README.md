@@ -4,7 +4,8 @@ En Vercel corre **solo el motor**: el gateway (`/v1` y `/a2a/m/{comercio}`)
 con el filtro, la intención y el Guard, y el estado en Supabase. La
 simulación (`world/`: el Merchant Agent, el catálogo y el resto de los
 agentes; `dashboard/`) sigue en tu máquina y el motor le habla por **un
-túnel**. Los agentes de compras son externos: hablan con el motor como
+túnel**, o queda fija en Railway, siempre prendida
+([`deploy/railway/`](../railway/README.md), [abajo](#comercio-fijo-en-railway)). Los agentes de compras son externos: hablan con el motor como
 integradores (clave `psg_…` y `X-Compra-Id`, ver
 [`docs/INTEGRACION.md`](../../docs/INTEGRACION.md)).
 
@@ -24,7 +25,8 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 | `comercios.ejemplo.json` | Formato de `GATEWAY_COMERCIOS_JSON` con la simulación detrás del túnel |
 | `generar_secretos.py` | Clave del recibo, clave de integrador (y, con `--clave-lectura`, una de solo lectura para el panel) y los registros JSON, cada uno en su archivo. No imprime secretos |
 | `verificar_supabase.py` | Solo lectura: ¿están las tablas y columnas de las migraciones 003 y 004? |
-| `tunel_router.py` | Un solo puerto (:8090) para la simulación: `/a2a/*` al comercio, el resto al catálogo |
+| `tunel_router.py` | Un solo puerto (:8090, o `PORT`) para la simulación: `/a2a/*` al comercio, el resto al catálogo. En Railway, además, `--resto` (lo que no lleva el prefijo, al panel) y `--salud` (`/salud`) |
+| `apuntar_vercel.sh` | Apunta el motor a la simulación en otro dominio: `generar_secretos.py --apuntar` (mismo prefijo), `vercel env add GATEWAY_COMERCIOS_JSON --force` y `vercel deploy --prod`; si un paso falla, muestra el error y corta. Lo usan `tunel_demo.sh` y `deploy/railway/apuntar_vercel.sh` |
 | `tunel_demo.sh` | Un comando para la demo contra Vercel: enrutador + túnel sin cuenta (`TUNEL=auto`: cloudflared rápido si hay salida al puerto 7844; si no, pinggy por SSH en el 443, que dura 60 min: a los 55 (`TUNEL_RENOVAR_S`) el script abre otro, apunta Vercel al nuevo y recién después corta el viejo; si pinggy no da dos túneles a la vez, espera a que se corte y queda una ventana de 1-2 min sin túnel). Reescribe `GATEWAY_COMERCIOS_JSON` con la URL nueva y redespliega; si `vercel env add` o el deploy fallan, muestra el error y corta. Ctrl+C corta todo |
 | `aplicar_migraciones.py` | 003, 004 y 005 por la API de administración de Supabase, con `SUPABASE_ACCESS_TOKEN` |
 | `local_multi.py` | Vercel en tu máquina: N instancias de `index:app` y un balanceador por pedido en :8040 |
@@ -273,9 +275,10 @@ ngrok http 8090 --url https://<tu-dominio>.ngrok-free.app     # en otra terminal
   kaiai-sim sim.<tu-dominio>`, `cloudflared tunnel run --url
   http://127.0.0.1:8090 kaiai-sim`). El túnel rápido
   (`cloudflared tunnel --url http://127.0.0.1:8090`) da una URL
-  `trycloudflare.com` nueva cada vez: hay que regenerar
-  `GATEWAY_COMERCIOS_JSON` (`generar_secretos.py --sin-recibo
-  --sin-integrador --dominio … --forzar`), cargarla de nuevo y redeployar.
+  `trycloudflare.com` nueva cada vez: hay que reescribir
+  `GATEWAY_COMERCIOS_JSON` con el mismo prefijo, cargarla de nuevo y
+  redeployar (`bash deploy/vercel/apuntar_vercel.sh https://<la-url>` hace
+  las tres cosas; `tunel_demo.sh` lo llama solo).
   Cloudflare corta las respuestas que tardan más de 100 s (524): un
   `create_checkout` lento del comercio del sample puede caer ahí.
 - El **prefijo** hace que el enrutador solo atienda
@@ -283,6 +286,27 @@ ngrok http 8090 --url https://<tu-dominio>.ngrok-free.app     # en otra terminal
   comercio llama a un LLM en cada checkout. El registro de comercios ya lo
   lleva.
 - El registro exige `https` fuera de loopback: el túnel termina el TLS.
+
+#### Comercio fijo en Railway
+
+La alternativa al túnel: la simulación entera en un servicio de Railway,
+siempre prendida, con un dominio fijo (`<servicio>.up.railway.app`). El
+mismo `tunel_router.py` es la única puerta del contenedor, con el **mismo
+prefijo** (`TUNEL_PREFIJO` en Railway es el de
+`.temp-db/vercel/TUNEL_PREFIJO.txt`), y lo que no lleva el prefijo va al
+panel de `/demo`, con contraseña. Paso a paso en
+[`deploy/railway/README.md`](../railway/README.md). Una vez desplegado:
+
+```sh
+bash deploy/railway/apuntar_vercel.sh <servicio>.up.railway.app
+```
+
+Comprueba que `/salud` y el catálogo con el prefijo responden, y después
+reescribe `GATEWAY_COMERCIOS_JSON` con ese dominio
+(`generar_secretos.py --apuntar`, que conserva el prefijo: `--dominio`
+generaría otro), la carga y redespliega producción. Como el dominio no
+cambia, se hace una vez; si después usás `tunel_demo.sh`, el motor queda
+apuntando al túnel hasta que vuelvas a correr `apuntar_vercel.sh`.
 
 ### 6. Deploy
 

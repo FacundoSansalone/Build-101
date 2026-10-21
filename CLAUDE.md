@@ -639,6 +639,45 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     y el panel en el navegador con la clave de lectura: resultados y alertas
     correctos, firma verificada, consola sin errores.
 
+- **Demo siempre prendida en Railway (2026-10-21, rama `deploy/railway`, a
+  revisar entre los tres).** El comercio simulado ya no depende de una
+  máquina con `tunel_demo.sh`. Guía: `deploy/railway/README.md`.
+  - **Un servicio, un contenedor** (`deploy/railway/Dockerfile`, contexto la
+    raíz): `start_all.sh general` adentro, todo por `127.0.0.1`. La única
+    puerta en `$PORT` es `tunel_router.py`: `/<TUNEL_PREFIJO>/a2a/*` al
+    comercio, `/<TUNEL_PREFIJO>/…` al catálogo, `/salud` (healthcheck, no
+    dice qué falta) y el resto al panel, que pide `DASHBOARD_ACCESS_TOKEN`.
+    ADK, el proxy, los otros agentes y el panel (`DASHBOARD_SOLO_LOOPBACK=1`)
+    quedan en loopback. El gateway (:8030) no se abre: es del motor de Vercel.
+  - **Enrutador:** `--resto` solo con prefijo y solo por opción (con una
+    variable olvidada, `tunel_demo.sh` publicaría el panel local sin
+    contraseña); al panel le llega el `Host` público y lo chequea contra
+    `DASHBOARD_PUBLIC_ORIGINS`. Si el cliente corta, suelta el upstream (el
+    SSE del panel no termina nunca). Sin `--resto`, igual que antes.
+  - **`arrancar.sh`:** valida `GOOGLE_API_KEY`, `DASHBOARD_ACCESS_TOKEN` (16
+    o más), `TUNEL_PREFIJO` (el de `.temp-db/vercel/TUNEL_PREFIJO.txt`) y
+    `DASHBOARD_PUBLIC_ORIGINS` (https) sin mostrarlas; abre el enrutador recién
+    con el panel y ADK arriba y el panel contestando 401 sin contraseña. Si un
+    proceso muere, el contenedor sale con error (`ON_FAILURE`).
+  - **`railway.json`** (en `deploy/railway/`: la ruta se fija en el panel de
+    Railway, Settings → Config-as-code): Dockerfile, `/salud` con 600 s,
+    siempre prendido y **una réplica** en `us-east4-eqdc4a` (el estado vive
+    en memoria).
+  - **`.dockerignore`** en la raíz con lista blanca (semántica de Docker,
+    emulada en `proxy/tests/test_despliegue_railway.py`): nunca entran
+    `.env*`, `.temp-db/`, `.logs/`, `results/`, venvs, `.vercel/`, `.git` ni
+    claves (salvo los certificados públicos del sample). El gráfico del
+    benchmark queda vacío en Railway.
+  - **Apuntar el motor:** `generar_secretos.py --apuntar <dominio>` reescribe
+    `GATEWAY_COMERCIOS_JSON` con el mismo prefijo (`--dominio` genera otro);
+    `deploy/vercel/apuntar_vercel.sh` suma `vercel env add` y el redeploy (lo
+    usan `tunel_demo.sh` y `deploy/railway/apuntar_vercel.sh`, que antes
+    comprueba `/salud` y el catálogo con el prefijo).
+  - **Probado sin Docker** (Docker Desktop no corría): `arrancar.sh` de punta
+    a punta en Windows (rutas, contraseña, `Host`/`Origin` de `/api/*`, SSE,
+    caída de un proceso y `SIGTERM`), ~1 GB de RAM quieta. La imagen no se
+    construyó todavía.
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh
