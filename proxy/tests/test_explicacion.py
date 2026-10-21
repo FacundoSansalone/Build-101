@@ -192,7 +192,7 @@ def test_alertas_de_todos_los_veredictos_y_el_corte():
 
 @pytest.mark.parametrize("corte, alertas, estafa", [
     ("manipulacion", ["manipulacion"], True),
-    (None, ["manipulacion"], True),
+    (None, [], False),
     ("sin_revisar", [], False),
 ])
 def test_el_corte_del_filtro(corte, alertas, estafa):
@@ -760,3 +760,13 @@ def test_con_el_maximo_de_eventos_avisa_que_hay_anteriores():
     linea = _explicar(vista(), eventos)["linea_de_tiempo"]
     assert linea[0]["etapa"] == "pedido" and linea[1]["etapa"] == "omitido"
     assert "anteriores" in linea[1]["texto"]
+
+
+def test_una_compra_cortada_de_antes_sin_corte_no_acusa():
+    """Una fila `bloqueada` de antes de guardar el `corte` no se sabe por qué se
+    cortó: sin alerta de estafa y con un texto neutro."""
+    salida = _explicar(vista("bloqueada"), corte=None)
+    assert salida["resultado"] == "cortada_por_seguridad"
+    assert salida["alertas"] == [] and salida["intento_de_estafa"] is False
+    assert salida["resumen"] == ("El filtro de seguridad cortó la conversación con el comercio "
+                                 "y no se compró nada.")

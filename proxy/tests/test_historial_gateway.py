@@ -233,3 +233,35 @@ async def test_las_busquedas_de_una_compra_tienen_tope_en_el_historial(config_gw
     tipos = [f["tipo"] for f in await almacen.listar_eventos(compra_id)]
     assert tipos.count("busqueda_enviada") == 3 and tipos.count("ofertas_recibidas") == 3
     assert tipos.count("reenviado") >= 6 and "veredicto" in tipos
+
+
+@pytest.mark.parametrize("primero, segundo, queda", [
+    ("detecta", "falla", "manipulacion"),
+    ("falla", "detecta", "manipulacion"),
+    ("falla", "falla", "sin_revisar"),
+])
+async def test_el_corte_de_la_compra_solo_sube(config_gw, primero, segundo, queda):
+    """Si dos respuestas del comercio cortan la misma compra (dos búsquedas a la
+    vez), una detección no se pisa con un "no pude revisar"."""
+    from proxy import a2a
+    from proxy.app import Llamada
+
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], almacen=EstadoMemoria())
+    async with cliente_publico(mundo.app) as c:
+        compra_id = (await crear_compra(c))["compra_id"]
+    compra = mundo.proxy.compras.get(compra_id)
+    integrador = mundo.integradores.get("acme")
+    resultados = iter([primero, segundo])
+
+    def filtro(objetivo: Any) -> ResultadoFiltro:
+        if next(resultados) == "falla":
+            raise RuntimeError("el modelo no respondió")
+        return ResultadoFiltro(pasa=False, senales=["heuristica:instruccion_ia"])
+
+    mundo.proxy.filtro = filtro
+    for _ in range(2):
+        llamada = Llamada(pedido=a2a.Pedido(), guard_activo=True, compra=compra,
+                          integrador=integrador)
+        assert await mundo.proxy._filtrar({"kind": "task"}, llamada) is not None
+    assert compra.estado == "bloqueada" and compra.corte == queda
+    await mundo.esperar_fondo()

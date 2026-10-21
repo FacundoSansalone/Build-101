@@ -3153,7 +3153,7 @@ class ProxyGuard:
             # comercio puede contestar con el contexto de una ajena).
             if compra is not None and (compra.origen != "api" or llamada.de_integrador):
                 compra.estado = "bloqueada"
-                compra.corte = _corte_de(*corte)
+                compra.corte = _corte_mayor(compra.corte, _corte_de(*corte))
                 compra.resuelta.set()
                 self.guardar_compra(compra)
         return corte
@@ -4392,6 +4392,14 @@ def _corte_de(motivo: str, senales: list[str]) -> Literal["manipulacion", "sin_r
     if textos and not any(s.startswith(_PREFIJOS_DETECCION) for s in textos):
         return "sin_revisar"
     return "manipulacion"
+
+
+def _corte_mayor(
+    actual: str | None, nuevo: Literal["manipulacion", "sin_revisar"]
+) -> Literal["manipulacion", "sin_revisar"]:
+    """El `corte` solo sube: una detección no se pisa con un "no pude
+    revisar" de otra respuesta de la misma compra."""
+    return "manipulacion" if "manipulacion" in (actual, nuevo) else nuevo
 
 
 def _compra_id_valido(body: dict[str, Any]) -> bool:

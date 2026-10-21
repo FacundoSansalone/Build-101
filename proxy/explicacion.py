@@ -19,9 +19,9 @@ I/O, sin entorno y sin reloj (el `ahora` lo pasa quien llama).
 | `sin_compra` | pasó la vida de la compra sin ningún checkout |
 
 **Alertas de la compra:** las de todos sus veredictos y `manipulacion` si el
-filtro la cortó por lo que detectó (`corte="manipulacion"`, o una compra de
-antes sin `corte`); un corte porque el filtro no pudo revisar
-(`corte="sin_revisar"`) no acusa a nadie.
+filtro la cortó por lo que detectó (`corte="manipulacion"`). Un corte porque
+el filtro no pudo revisar (`corte="sin_revisar"`) o una compra de antes sin
+`corte` (no se sabe por qué) no acusan a nadie.
 
 **Textos:** plantillas nuestras con valores ya saneados (números, montos,
 monedas, fechas, unidades y textos cortos de fuentes que el comercio no
@@ -694,7 +694,7 @@ def alertas_de_compra(vista: dict[str, Any], *, corte: str | None = None) -> lis
     for veredicto in _veredictos(vista):
         if isinstance(veredicto.get("alertas"), list):
             todas.extend(veredicto["alertas"])
-    if vista.get("estado") == "bloqueada" and corte != "sin_revisar":
+    if vista.get("estado") == "bloqueada" and corte == "manipulacion":
         todas.append("manipulacion")
     return ordenar_alertas(todas)
 
@@ -840,11 +840,14 @@ def _resumen(resultado: str, vista: dict[str, Any], ultimo: dict[str, Any] | Non
              corte: str | None, eventos: list[dict[str, Any]]) -> str:
     ficha = vista.get("ficha")
     if resultado == "cortada_por_seguridad":
+        if corte == "manipulacion":
+            return ("El comercio intentó manipular a tu agente con instrucciones ocultas en sus "
+                    "respuestas: cortamos la conversación y no se compró nada.")
         if corte == "sin_revisar":
             return ("No pudimos revisar a tiempo una respuesta del comercio: por seguridad "
                     "cortamos la conversación y no se compró nada.")
-        return ("El comercio intentó manipular a tu agente con instrucciones ocultas en sus "
-                "respuestas: cortamos la conversación y no se compró nada.")
+        # Una compra de antes de guardar el `corte`: no se sabe por qué.
+        return "El filtro de seguridad cortó la conversación con el comercio y no se compró nada."
     if resultado == "vencida":
         return ("Te propusimos una alternativa y nadie la decidió a tiempo: sin tu autorización "
                 "no se compró nada.")

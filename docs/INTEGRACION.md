@@ -572,7 +572,7 @@ true si hay alguna de las cuatro primeras):
 
 | Qué pasó | `alerta` | ¿Intento de estafa? |
 |---|---|---|
-| El filtro detectó manipulación y cortó la conversación (si no pudo revisar la respuesta y cortó por las dudas, no hay alerta) | `manipulacion` | Sí |
+| El filtro detectó manipulación y cortó la conversación (si no pudo revisar la respuesta y cortó por las dudas, o es una compra cortada de antes del historial, no hay alerta) | `manipulacion` | Sí |
 | Un dato que declaró el comercio contradice el catálogo público, el fabricante o tus datos | `dato_falso` | Sí |
 | El precio (o la moneda) que se cobra no coincide con el publicado | `precio_distinto` | Sí |
 | El checkout firmado no coincide con lo evaluado (hash, carrito, total, moneda o comercio) o no se puede leer | `checkout_alterado` | Sí |
