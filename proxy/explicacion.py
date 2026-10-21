@@ -580,10 +580,81 @@ def _moneda_de(veredicto: dict[str, Any]) -> str | None:
     return moneda if isinstance(moneda, str) and MONEDA_RE.fullmatch(moneda) else None
 
 
+# La conclusión de un chequeo sobre un campo, para no contar dos veces lo
+# mismo: un dato falso o algo que no se pudo verificar.
+_CONCLUSION = {
+    "contradicho": "contradicho",
+    "solo_declarado": "sin_verificar", "no_declarado": "sin_verificar", "sin_dato": "sin_verificar",
+    "fabricante_sin_atar": "sin_verificar", "categoria_solo_declarada": "sin_verificar",
+}
+# La evidencia de un campo que respalda el cumplimiento de otro: la categoría
+# que declaró el comercio (la del catálogo) y la de la taxonomía.
+_FAMILIA = {"categoria": "categoria_taxonomia"}
+
+
+def _es_cumplimiento(c: dict[str, Any]) -> bool:
+    return c["tipo"] in ("cumplimiento", "mandato") and c["campo"] is not None \
+        and c["origen"] not in (_CHECKOUT, "cart_ap2")
+
+
+def _es_evidencia(c: dict[str, Any]) -> bool:
+    return c["tipo"] == "evidencia" and c["campo"] is not None \
+        and c["origen"] not in (_CHECKOUT, "cart_ap2")
+
+
+def _juntar_evidencias(
+    chequeos: list[dict[str, Any]],
+) -> tuple[set[int], dict[int, str], dict[int, list[str]]]:
+    """Las evidencias que ya explica el cumplimiento de su campo (o, para la
+    categoría, el de la taxonomía): (las que no van en una línea propia, el
+    resultado más grave que toma cada cumplimiento, las otras fuentes que lo
+    contradicen). Cada chequeo, por su `id()`.
+
+    - Del mismo campo, tan o menos grave: va en el texto del cumplimiento.
+    - Más grave, o de la categoría, con la misma conclusión que un
+      cumplimiento que no está bien: va en esa línea, con el resultado más
+      grave y, si es un dato falso según otra fuente, esa fuente.
+    - Si no, en su línea (dice otra cosa)."""
+    cumplimientos: dict[Any, list[dict[str, Any]]] = {}
+    for c in chequeos:
+        if _es_cumplimiento(c):
+            cumplimientos.setdefault(alertas.clave_evidencia(c["campo"]), []).append(c)
+    omitidas: set[int] = set()
+    resultado: dict[int, str] = {}
+    fuentes: dict[int, list[str]] = {}
+    for e in chequeos:
+        if not _es_evidencia(e):
+            continue
+        clave = alertas.clave_evidencia(e["campo"])
+        familia = clave not in cumplimientos and _FAMILIA.get(clave) in cumplimientos
+        if familia:
+            clave = _FAMILIA[clave]
+        if clave not in cumplimientos:
+            continue
+        gravedad = _GRAVEDAD[e["resultado"]]
+        minima = min(_GRAVEDAD[c["resultado"]] for c in cumplimientos[clave])
+        if gravedad >= minima and (not familia or e["resultado"] == "ok"):
+            omitidas.add(id(e))
+            continue
+        conclusion = _CONCLUSION.get(e["caso"])
+        iguales = [c for c in cumplimientos[clave] if conclusion is not None
+                   and c["resultado"] != "ok" and _CONCLUSION.get(c["caso"]) == conclusion]
+        if not iguales:
+            continue
+        omitidas.add(id(e))
+        for c in iguales:
+            if gravedad < _GRAVEDAD[resultado.get(id(c), c["resultado"])]:
+                resultado[id(c)] = e["resultado"]
+            if conclusion == "contradicho" and e["origen"] != c["origen"] \
+                    and _independiente(e["origen"]):
+                fuentes.setdefault(id(c), []).append(_fuente(e["origen"]))
+    return omitidas, resultado, fuentes
+
+
 def explicar_chequeos(veredicto: dict[str, Any], ficha: Any = None) -> list[dict[str, Any]]:
     """`[{"tema", "resultado", "texto"}]` de un veredicto, del más grave al
-    menos. La evidencia de un campo que tiene su chequeo de cumplimiento va en
-    ese texto (salvo que sea más grave); los del checkout firmado, si están
+    menos. La evidencia que repite lo que explica el cumplimiento de su campo
+    va en esa línea (`_juntar_evidencias`); los del checkout firmado, si están
     todos bien, en uno solo."""
     chequeos = _chequeos_de(veredicto)
     moneda = _moneda_de(veredicto)
@@ -592,12 +663,7 @@ def explicar_chequeos(veredicto: dict[str, Any], ficha: Any = None) -> list[dict
         for c in chequeos
         if c["tipo"] == "evidencia" and c["campo"] is not None and c["origen"] != "cart_ap2"
     }
-    con_cumplimiento = {
-        alertas.clave_evidencia(c["campo"]): _GRAVEDAD[c["resultado"]]
-        for c in chequeos
-        if c["tipo"] in ("cumplimiento", "mandato") and c["campo"] is not None
-        and c["origen"] not in (_CHECKOUT, "cart_ap2")
-    }
+    omitidas, mas_grave, otras_fuentes = _juntar_evidencias(chequeos)
     checkout = [c for c in chequeos if c["origen"] == _CHECKOUT]
     salida: list[dict[str, Any]] = []
     vistos: set[str] = set()
@@ -608,15 +674,15 @@ def explicar_chequeos(veredicto: dict[str, Any], ficha: Any = None) -> list[dict
             salida.append({"tema": tema, "resultado": resultado, "texto": texto})
 
     for c in chequeos:
-        if c["origen"] == _CHECKOUT:
+        if c["origen"] == _CHECKOUT or id(c) in omitidas:
             continue
         clave = alertas.clave_evidencia(c["campo"])
-        if c["tipo"] == "evidencia" and c["origen"] != "cart_ap2" and clave in con_cumplimiento \
-                and _GRAVEDAD[c["resultado"]] >= con_cumplimiento[clave]:
-            continue  # va en el texto del cumplimiento
         evidencia = evidencias.get(clave) if c["tipo"] in ("cumplimiento", "mandato") else None
-        sumar(_tema(c), c["resultado"],
-              texto_chequeo(c, ficha=ficha, moneda=moneda, evidencia=evidencia))
+        texto = texto_chequeo(c, ficha=ficha, moneda=moneda, evidencia=evidencia)
+        fuentes = otras_fuentes.get(id(c))
+        if fuentes:
+            texto += f" Tampoco coincide con {_y(list(dict.fromkeys(fuentes)))}."
+        sumar(_tema(c), mas_grave.get(id(c), c["resultado"]), texto)
     if checkout and all(c["resultado"] == "ok" for c in checkout):
         sumar("checkout", "ok", "El checkout firmado coincide con lo que evaluamos.")
     else:

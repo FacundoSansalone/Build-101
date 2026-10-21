@@ -527,6 +527,72 @@ def test_categorias_con_el_nombre_del_arbol():
     assert any("solo la declaró el comercio" in c["texto"] for c in solo["chequeos"])
 
 
+def test_la_categoria_contradicha_va_en_una_sola_linea():
+    """El caso real del comercio que dice que una tele es un monitor: el
+    cumplimiento de la taxonomía ya lo explica, así que la evidencia de la
+    categoría (la del catálogo, en minúsculas) y la de la taxonomía, con la
+    misma conclusión, no se repiten."""
+    from guard.categorias import ARBOL
+
+    if ARBOL is None:
+        pytest.skip("sin el árbol de la taxonomía")
+    salida = _texto([
+        ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="305", observado="404",
+           origen="catalogo_publico"),
+        ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+        ch("evidencia", "escalar", "categoria_taxonomia", esperado="404", observado="305",
+           origen="catalogo_publico"),
+        ch("evidencia", "ok", "marca", esperado="Kivo", origen="catalogo_publico"),
+    ], status="escalar")
+    categoria = [c for c in salida["chequeos"] if c["tema"] in ("categoria", "categoria_taxonomia")]
+    assert categoria == [{
+        "tema": "categoria_taxonomia", "resultado": "escalar",
+        "texto": ("El comercio declaró una categoría que no coincide con el catálogo público: "
+                  "según esa fuente es Televisions y pediste Computer Monitors."),
+    }]
+    assert "La marca coincide con el catálogo público." in [c["texto"] for c in salida["chequeos"]]
+
+
+def test_la_evidencia_que_repite_la_conclusion_se_junta_con_el_mas_grave():
+    """Una evidencia más grave que el cumplimiento del mismo campo, con la
+    misma conclusión, va en esa línea con el resultado más grave; si la
+    fuente es otra, la suma. Con otra conclusión, cada una en su línea."""
+    from guard.categorias import ARBOL
+
+    if ARBOL is None:
+        pytest.skip("sin el árbol de la taxonomía")
+    solo = _texto([
+        ch("cumplimiento", "aviso", "categoria_taxonomia", esperado="278", observado="328",
+           origen="declarado"),
+        ch("evidencia", "aviso", "categoria", observado="laptops", origen="declarado"),
+    ], status="con_avisos")
+    textos = [c for c in solo["chequeos"] if c["tema"] in ("categoria", "categoria_taxonomia")]
+    assert [c["resultado"] for c in textos] == ["aviso"]
+    assert textos[0]["texto"].startswith("La categoría del producto está dentro de la que pediste")
+    # El fabricante contradice la taxonomía y el catálogo, la categoría: una línea, con las dos fuentes.
+    dos = _texto([
+        ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="305", observado="404",
+           origen="fabricante"),
+        ch("evidencia", "escalar", "categoria_taxonomia", esperado="404", observado="305",
+           origen="fabricante"),
+        ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+    ], status="escalar")
+    (linea,) = [c for c in dos["chequeos"] if c["tema"] in ("categoria", "categoria_taxonomia")]
+    assert linea["resultado"] == "escalar"
+    assert linea["texto"] == ("El comercio declaró una categoría que no coincide con el fabricante: "
+                              "según esa fuente es Televisions y pediste Computer Monitors. "
+                              "Tampoco coincide con el catálogo público.")
+    # Otra conclusión (la taxonomía es de otra rama, sin mentira; la categoría declarada
+    # contradice al catálogo): las dos líneas.
+    distintas = _texto([
+        ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="305", observado="404",
+           origen="catalogo_publico"),
+        ch("evidencia", "escalar", "categoria", esperado="televisions", origen="catalogo_publico"),
+    ], status="escalar")
+    temas = [c["tema"] for c in distintas["chequeos"]]
+    assert "categoria" in temas and "categoria_taxonomia" in temas
+
+
 def test_los_chequeos_van_del_mas_grave_al_menos():
     salida = _texto([
         ch("evidencia", "ok", "marca", esperado="Dell", observado="Dell", origen="catalogo_publico"),
