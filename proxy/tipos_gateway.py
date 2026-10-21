@@ -165,6 +165,8 @@ class FotoCompra:
     # Con estado `bloqueada`: "manipulacion" (el filtro la detectó) o
     # "sin_revisar" (no pudo revisar y cortó); None en una fila de antes.
     corte: str | None = None
+    # El último checkout que el proxy frenó sin veredicto (`Compra.bloqueo_proxy`).
+    bloqueo_proxy: dict[str, Any] | None = None
 
 
 # -- entregas de webhooks ----------------------------------------------------

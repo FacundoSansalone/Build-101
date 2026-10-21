@@ -483,3 +483,14 @@ def test_el_modulo_no_importa_el_guard_al_cargarse():
     fuente = Path(alertas.__file__).read_text(encoding="utf-8")
     cabecera = fuente.split("\ndef ", 1)[0]
     assert "import guard" not in cabecera and "from guard" not in cabecera
+
+
+def test_todo_caso_que_devuelve_caso_de_esta_en_casos():
+    """`CASOS` (que `proxy/explicacion.py` explica uno por uno) tiene cada
+    código que puede devolver `caso_de`."""
+    import re
+
+    fuente = Path(alertas.__file__).read_text(encoding="utf-8")
+    cuerpo = fuente[fuente.index("def _caso_checkout"):fuente.index("def _chequeos(")]
+    devueltos = set(re.findall(r'"([a-z_]+)"', " ".join(re.findall(r"return [^\n]+", cuerpo))))
+    assert devueltos - {"ok", "bloquea"} <= alertas.CASOS

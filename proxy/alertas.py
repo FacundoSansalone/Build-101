@@ -87,6 +87,16 @@ ALERTA_POR_CASO: dict[str, str] = {
     "elegido_desconocido": "sin_verificar",
 }
 
+# Todos los `caso` que puede dar `caso_de` (cada uno tiene su texto en
+# `proxy/explicacion.py`).
+CASOS = frozenset({
+    *ALERTA_POR_CASO,
+    "cumple", "verificado", "no_declarado", "preferencia_no_cumple", "preferencia_sin_dato",
+    "categoria_solo_declarada", "autorizacion_incompleta", "checkout_coincide",
+    "checkout_vencido", "checkout_futuro", "monto_ok", "monto_requiere_aprobacion",
+    "comercio_aprobado", "eleccion_ok", "eleccion_mejorable", "carrito_ambiguo",
+})
+
 # -- valores conocidos -------------------------------------------------------
 
 TIPOS = frozenset({"cumplimiento", "evidencia", "integridad", "politica", "mandato"})

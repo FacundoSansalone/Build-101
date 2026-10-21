@@ -182,3 +182,31 @@ async def test_si_el_historial_falla_la_compra_sigue(config_gw):
         resp = await checkout(c, compra_id, contexto, "cart_1")
         assert resp.json()["result"]["status"]["state"] == "completed"
     await mundo.esperar_fondo()
+
+
+async def test_un_checkout_que_el_proxy_no_pudo_evaluar_queda_en_la_compra(config_gw):
+    """Sin veredicto del Guard (el checkout es de otro cart), la compra guarda
+    el bloqueo del proxy: el panel la cuenta como frenada sin leer eventos."""
+    from proxy.tests.ayudantes import solo_en_checkout
+
+    def otro_cart(respuesta: dict[str, Any], pedido: dict[str, Any]) -> dict[str, Any]:
+        for artefacto in respuesta["result"].get("artifacts") or []:
+            for parte in artefacto.get("parts") or []:
+                checkout_ap2 = (parte.get("data") or {}).get("ap2.checkout")
+                if isinstance(checkout_ap2, dict):
+                    checkout_ap2["cart_id"] = "cart_3"
+        return respuesta
+
+    almacen = EstadoMemoria()
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], almacen=almacen)
+    mundo.merchant.manipular = solo_en_checkout(otro_cart)
+    compra_id = await _compra_con_checkout(mundo)
+    compra = mundo.proxy.compras.get(compra_id)
+    assert compra.veredictos == []
+    assert compra.bloqueo_proxy["cart_id"] == "cart_1"
+    assert compra.bloqueo_proxy["contexto_id"] == compra.contexto_id
+    fila = await almacen.cargar_compra(compra_id)
+    assert fila["datos"]["bloqueo_proxy"] == compra.bloqueo_proxy
+    (bloqueado,) = [f for f in await almacen.listar_eventos(compra_id) if f["tipo"] == "bloqueado"]
+    assert bloqueado["datos"]["sin_veredicto"] is True
+    assert bloqueado["datos"]["motivo"].startswith("No se pudo evaluar el checkout:")

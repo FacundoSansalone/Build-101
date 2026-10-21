@@ -91,6 +91,7 @@ from proxy.compras import (
     CompraDesconocida,
     EstadoInvalido,
     RegistroCompras,
+    bloqueo_del_proxy,
     fusionar_filas,
     misma_fila,
 )
@@ -3985,8 +3986,13 @@ class ProxyGuard:
             datos["compra_id"] = compra.id
             if decision.veredicto is None:
                 # Bloqueo del proxy (no del Guard): sale como `compra.bloqueada`.
-                # Uno del Guard ya salió como `compra.veredicto`.
+                # Uno del Guard ya salió como `compra.veredicto`. La compra lo
+                # guarda (el panel lo cuenta como frenada sin leer eventos).
                 datos["sin_veredicto"] = True
+                compra.bloqueo_proxy = bloqueo_del_proxy(
+                    decision.contexto_id, decision.cart_id, datetime.now(timezone.utc)
+                )
+                self.guardar_compra(compra)
             if decision.requiere_aprobacion and decision.contexto_id and decision.cart_id:
                 # Antes del evento: el webhook `compra.requiere_aprobacion`
                 # lleva la foto con lo que hay que aprobar (solo lo firmado).
