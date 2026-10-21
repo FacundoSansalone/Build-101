@@ -362,9 +362,11 @@ def gateway(request, config) -> Gateway:
         kwargs = {"demo": None, "almacen": EstadoSupabase(
             "https://base.supabase.test", "clave-de-prueba", transport=BaseFalsa().transporte()
         )}
+    # Con la consola y el panel prendidos, como en Vercel: sus rutas también
+    # se clasifican (`test_cada_ruta_de_la_app_esta_clasificada`).
     mundo = armar_gateway(
         config, evaluador_espia()[0], merchant=merchant, integradores=registro_con_lectura(),
-        **kwargs,
+        consola=True, panel=True, **kwargs,
     )
     return Gateway(mundo.app, base, merchant, nombre)
 
@@ -512,6 +514,74 @@ async def test_cada_ruta_de_v1_de_la_app_sigue_la_lista_blanca(gateway):
     # Las 4 GET de hoy (compras, una compra, comercios, entregas) y, como
     # mínimo, los 7 POST y los HEAD.
     assert probadas["permitidas"] >= 4 and probadas["prohibidas"] >= 11, probadas
+
+
+async def test_cada_ruta_de_la_app_esta_clasificada(gateway):
+    """Todas las rutas reales de la app, no solo las de `/v1`, caen en una
+    clase conocida: una ruta nueva sin clasificar rompe este test. Las
+    estáticas de la consola y del panel del cliente son iguales con la clave
+    de lectura, sin clave o con la completa (la página es pública; los datos
+    los pide el navegador a `/v1` con la clave)."""
+    from proxy import consola, panel
+    from proxy.config import RUTA_PURGA
+
+    estaticas = consola.RUTAS_ABIERTAS | panel.RUTAS_ABIERTAS
+    publico = gateway.base == BASE_PUBLICA or gateway.nombre.startswith("vercel")
+    sin_clasificar: list[str] = []
+    vistas: set[str] = set()
+    async with (_cliente(gateway, CLAVE_LECTURA) as lectura, _cliente(gateway, None) as anonimo,
+                _cliente(gateway, CLAVE_ACME) as completa):
+        for ruta in gateway.app.routes:
+            patron = getattr(ruta, "path", "")
+            if patron in estaticas:
+                for metodo in sorted(getattr(ruta, "methods", None) or ()):
+                    respuestas = [await c.request(metodo, patron) for c in (lectura, anonimo, completa)]
+                    codigos = {r.status_code for r in respuestas}
+                    assert len(codigos) == 1 and codigos <= {200, 307}, (gateway.nombre, metodo, patron, codigos)
+                    assert len({r.content for r in respuestas}) == 1, (gateway.nombre, metodo, patron)
+                    assert all(
+                        r.headers["content-security-policy"].startswith("default-src 'none'")
+                        for r in respuestas
+                    ), patron
+                vistas.add(patron)
+            elif patron == "/v1" or patron.startswith("/v1/"):
+                continue  # test_cada_ruta_de_v1_de_la_app_sigue_la_lista_blanca
+            elif patron.startswith("/a2a/"):
+                continue  # test_lectura_no_sirve_para_el_trafico_a2a
+            elif patron.startswith("/guard/"):
+                # La API de control: en el público no existe; en el local la
+                # protege ControlLocal (test_control.py).
+                if publico:
+                    r = await lectura.get(patron)
+                    assert r.status_code == 404, (gateway.nombre, patron)
+            elif patron == RUTA_PURGA:
+                continue  # solo con su secreto (test_retencion.py)
+            else:
+                sin_clasificar.append(patron)
+    assert sin_clasificar == [], (gateway.nombre, sin_clasificar)
+    assert vistas == estaticas, (gateway.nombre, sorted(estaticas - vistas))
+    assert {"/panel", "/panel/app.js", "/consola"} <= vistas
+
+
+async def test_el_panel_distingue_la_clave_con_un_head_sin_efectos(gateway):
+    """El panel avisa si entraron con la clave completa sin probar nada que
+    cambie algo: `HEAD /v1/comercios` (un método seguro) es 403 `solo_lectura`
+    con la de lectura (docs/INTEGRACION.md §4: "también `HEAD`") y 200 con la
+    completa. Si esto cambia, el aviso del panel (`tipoDeClave` en
+    proxy/panel/logica.mjs) deja de ser cierto."""
+    async with _cliente(gateway, CLAVE_ACME) as completa, _cliente(gateway, CLAVE_LECTURA) as lectura:
+        compra = (await crear_compra(completa))["compra_id"]
+        antes = (await completa.get(f"/v1/compras/{compra}")).json()
+        r_lectura = await lectura.head("/v1/comercios")
+        r_completa = await completa.head("/v1/comercios")
+        despues = (await completa.get(f"/v1/compras/{compra}")).json()
+        ids = await _ids_de_compras(completa)
+    _es_solo_lectura(r_lectura, gateway.nombre)
+    assert r_completa.status_code == 200, (gateway.nombre, r_completa.status_code)
+    assert "insufficient_scope" not in r_completa.headers.get("www-authenticate", "")
+    # Sin efectos: ni compras nuevas, ni cambios, ni nada al comercio.
+    assert ids == [compra] and despues == antes
+    assert gateway.merchant.recibidos == []
 
 
 def test_la_lista_blanca_es_solo_get_en_v1():

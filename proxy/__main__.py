@@ -9,7 +9,8 @@ escucha además en `[::1]`: el Shopping Agent habla con `localhost`, que en
 Windows prueba primero IPv6.
 
 Con `GATEWAY_CONSOLA=1` sirve además la consola web (`/consola`, ver
-`proxy/consola/`) en los dos oyentes; sin la variable, la demo queda igual.
+`proxy/consola/`) en los dos oyentes, y con `GATEWAY_PANEL=1` el panel del
+cliente (`/panel`, ver `proxy/panel/`); sin las variables, la demo queda igual.
 
 Los cargadores que arman cosas desde el entorno (intención, filtro,
 fabricante, integradores, comercios, clave del recibo) viven en
@@ -74,6 +75,7 @@ __all__ = [
     "cargar_gateway",
     "cargar_integradores",
     "consola_del_entorno",
+    "panel_del_entorno",
     "exigir_filtro",
     "exigir_filtro_gateway",
     "json_de_variable",
@@ -209,6 +211,14 @@ def consola_del_entorno(env: dict[str, str] | None = None) -> bool:
     return _bool(valor, "GATEWAY_CONSOLA") if valor else False
 
 
+def panel_del_entorno(env: dict[str, str] | None = None) -> bool:
+    """`GATEWAY_PANEL`: el panel del cliente (`/panel`). Sin la variable o
+    vacía, apagado; un valor que no es true/false no arranca (ValueError)."""
+    env = dict(os.environ) if env is None else env
+    valor = (env.get("GATEWAY_PANEL") or "").strip()
+    return _bool(valor, "GATEWAY_PANEL") if valor else False
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -217,6 +227,7 @@ def main() -> None:
     try:
         config = Config.desde_entorno()
         consola = consola_del_entorno()
+        panel = panel_del_entorno()
     except ValueError as e:
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
     integradores, comercios, almacen = cargar_gateway(config)
@@ -251,7 +262,7 @@ def main() -> None:
             config, evaluador=evaluador, persistencia=persistencia, agente=agente, filtro=filtro,
             filtro_modo=filtro_modo, fabricante=fabricante, integradores=integradores,
             comercios=comercios, almacen=almacen, demo=FuentesDemo(),
-            clave_recibo=clave_recibo, consola=consola,
+            clave_recibo=clave_recibo, consola=consola, panel=panel,
         )
     except EvaluadorNoDisponible as e:  # fail-closed: sin Guard real no arranca
         raise SystemExit(f"El proxy del Guard no arranca: {e}") from e
@@ -297,6 +308,14 @@ def main() -> None:
             config.host,
             config.port,
             f" y {config.gateway_public_url}/consola" if gateway
+            else " (sin claves de API activas: /v1 da 401)",
+        )
+    if panel:
+        logger.info(
+            "Panel del cliente: http://%s:%d/panel%s",
+            config.host,
+            config.port,
+            f" y {config.gateway_public_url}/panel" if gateway
             else " (sin claves de API activas: /v1 da 401)",
         )
     # Un solo servidor sobre los sockets: el local (127.0.0.1 y [::1]) y, con
