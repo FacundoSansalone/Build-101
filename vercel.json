@@ -5,5 +5,8 @@
       "maxDuration": 300,
       "excludeFiles": "{proxy/sql/**,proxy/demo_local.py,proxy/subir_benchmark.py,guard/benchmark_hook.py,filtro/casos.py,filtro/evaluar.py,intencion/evaluar_*.py,**/tests/**,**/__pycache__/**,**/*.md,**/*.pem}"
     }
-  }
+  },
+  "crons": [
+    { "path": "/interno/purgar", "schedule": "0 7 * * *" }
+  ]
 }

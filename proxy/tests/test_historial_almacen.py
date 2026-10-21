@@ -253,3 +253,43 @@ async def test_purgar_con_una_fecha_rara_no_borra_nada(almacen):
     with pytest.raises(ErrorAlmacen):
         await almacen.purgar("hace mucho")
     assert await almacen.cargar_compra(cmp(1)) is not None
+
+
+# -- esquema: 005_historial.sql ----------------------------------------------------------
+
+
+def test_005_es_aditiva_idempotente_y_solo_indices():
+    import re
+
+    from proxy.tests.test_estado_supabase import SQL, _normal, _sin_comentarios, columnas_sql
+
+    crudo = (SQL / "005_historial.sql").read_text(encoding="utf-8")
+    texto = _normal(crudo)
+    for prohibido in ("drop ", "truncate", "delete from", "alter ", "rename", "create table",
+                      "insert ", "update "):
+        assert prohibido not in texto, prohibido
+    assert "003_gateway.sql" in crudo and "004_serverless.sql" in crudo
+    sentencias = [s.strip() for s in _sin_comentarios(crudo).split(";") if s.strip()]
+    tablas = columnas_sql("003_gateway.sql", "004_serverless.sql")
+    indexadas: dict[str, set[str]] = {}
+    for sentencia in sentencias:
+        m = re.fullmatch(
+            r"create index if not exists \w+\s+on public\.(\w+) \(([^)]*)\)(\s+where [^;]+)?",
+            re.sub(r"\s+", " ", sentencia),
+        )
+        assert m is not None, sentencia
+        columnas = [c.split()[0] for c in m.group(2).split(",")]
+        assert set(columnas) <= tablas[m.group(1)], sentencia
+        indexadas.setdefault(m.group(1), set()).add(columnas[0] if len(columnas) == 1 else ",".join(columnas))
+    # La purga tiene un índice por la fecha de cada tabla.
+    for tabla, (columna, _) in EstadoSupabase._PURGA.items():
+        assert columna in indexadas[tabla], tabla
+    # El listado: por integrador, `creada desc, id desc`.
+    assert "integrador_id,creada,id" in indexadas["gw_compras"]
+
+
+def test_aplicar_migraciones_aplica_005_despues_de_004():
+    from proxy.tests.test_despliegue_vercel import _script
+
+    migraciones = _script("aplicar_migraciones").MIGRACIONES
+    assert migraciones == ("003_gateway.sql", "004_serverless.sql", "005_historial.sql")

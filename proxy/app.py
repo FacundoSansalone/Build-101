@@ -95,7 +95,7 @@ from proxy.compras import (
     fusionar_filas,
     misma_fila,
 )
-from proxy.config import Config, hoy_en, zona_horaria
+from proxy.config import RUTA_PURGA, Config, hoy_en, zona_horaria
 from proxy.consola import RUTAS_ABIERTAS as RUTAS_CONSOLA
 from proxy.consola import rutas_consola
 from proxy.esperas import Apertura, EsperaCompartida, EsperaLocal, Esperas
@@ -128,6 +128,7 @@ from proxy.fuentes import (
 from proxy.pedido_usuario import LARGO_MAXIMO as LARGO_MAXIMO_PEDIDO
 from proxy.pedido_usuario import PedidoDelUsuario, pedido_para_intake
 from proxy.persistencia import Persistencia
+from proxy.retencion import ruta_purga
 from proxy.seguridad import HEADER_TOKEN, ControlLocal, escribir_token, generar_token
 from proxy.sin_estado import en_hilo
 from proxy.tipos_gateway import (
@@ -4767,6 +4768,14 @@ def create_app(
     )
     if consola:
         rutas += rutas_consola()
+    abiertas: set[str] = set(RUTAS_CONSOLA) if consola else set()
+    if config.purga_secreto is not None:
+        # La purga de la retención (Vercel Cron): fuera de `/v1` (ninguna
+        # clave de API la usa) y solo con su secreto (`proxy/retencion.py`).
+        rutas.append(ruta_purga(
+            almacen, secreto=config.purga_secreto, retencion_dias=config.retencion_dias,
+        ))
+        abiertas.add(RUTA_PURGA)
     # El más externo: decide el oyente, autentica y cierra el público a /a2a
     # y /v1 (en el local, /guard/* sigue con ControlLocal). Sin la API de
     # control (serverless) no hay oyente local: todo es del público.
@@ -4774,7 +4783,7 @@ def create_app(
         Middleware(
             AutenticacionGateway, registro=integradores, puertos_publicos=puertos_publicos,
             todo_publico=not rutas_control,
-            rutas_abiertas=RUTAS_CONSOLA if consola else (),
+            rutas_abiertas=frozenset(abiertas),
         ),
     ]
     if rutas_control:

@@ -28,7 +28,10 @@ memoria ni disco compartidos (diseño 2.2 del plan de Vercel):
   15 ≤ 300. Se pueden bajar por entorno; subirlos por encima del tope no
   arranca. Los cuerpos, hasta 4 MB (Vercel corta en 4,5 MB);
 - el latido de un pedido A2A retenido cada 15 s (`GATEWAY_LATIDO_S`, hasta
-  30 s; apagado no arranca): Vercel corta una conexión sin bytes a los 60 s.
+  30 s; apagado no arranca): Vercel corta una conexión sin bytes a los 60 s;
+- la retención de las tablas `gw_*` (`GATEWAY_RETENCION_DIAS`, 90 días, hasta
+  365) y la purga por Vercel Cron (`/interno/purgar`, con `CRON_SECRET` o
+  `GATEWAY_PURGA_SECRETO`; sin secreto la ruta no existe).
 
 Fail-closed: si falta algo o algo no sirve, la app es una mínima que
 responde 503 `{"error": "motor_no_configurado"}` a todo (también a
@@ -97,6 +100,10 @@ MAX_CUERPO_BYTES = 4_000_000  # Vercel corta pedidos y respuestas en 4,5 MB
 # bajar por entorno (GATEWAY_LATIDO_S), no apagar ni subir de esto.
 LATIDO_S = 15.0
 MAX_LATIDO_S = 30.0
+# La retención de las tablas `gw_*` (`proxy/retencion.py`): en la base del
+# plan gratuito de Supabase, como mucho un año. La purga la dispara el cron
+# de `vercel.json` con `CRON_SECRET` (o `GATEWAY_PURGA_SECRETO`).
+MAX_RETENCION_DIAS = 365
 
 # Variable → (campo de Config, tope en Vercel). Sin la variable, el tope; con
 # ella, su valor si no lo supera (si lo supera, no arranca).
@@ -107,6 +114,7 @@ TOPES: dict[str, tuple[str, float]] = {
     "GATEWAY_MAX_CUERPO_BYTES": ("max_cuerpo_v1", MAX_CUERPO_BYTES),
     "GATEWAY_MAX_CUERPO_A2A_BYTES": ("max_cuerpo_a2a", MAX_CUERPO_BYTES),
     "PROXY_MAX_RESPUESTA_BYTES": ("max_respuesta_bytes", MAX_CUERPO_BYTES),
+    "GATEWAY_RETENCION_DIAS": ("retencion_dias", MAX_RETENCION_DIAS),
 }
 
 # Prendidas, no arranca: son para tests o la demo local.
@@ -431,7 +439,7 @@ def _armar(
     logger.info(
         "Motor KaiAI (serverless) | integradores: %d | comercios: %s | filtro: %s | "
         "intención: %s | fabricante: %s | almacén: %s | recibo: kid %s | presupuesto %g s, "
-        "porqué %g s, decisión %g s, barrera %g s, latido %g s",
+        "porqué %g s, decisión %g s, barrera %g s, latido %g s | retención %d días (purga: %s)",
         len(integradores.todos()),
         ", ".join(c.id for c in comercios.todos()),
         filtro_modo or "sí",
@@ -444,6 +452,8 @@ def _armar(
         config.espera_decision_s,
         config.barrera_s,
         config.latido_s,
+        config.retencion_dias,
+        "sí" if config.purga_secreto else "sin secreto",
     )
     return app
 

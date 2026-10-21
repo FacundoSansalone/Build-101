@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import logging
 import math
@@ -38,6 +39,16 @@ GRACIA_ESPERA_S = 30.0
 BARRERA_S = 10.0
 INSTANCIAS = ("una", "varias")
 PERFILES_WEBHOOKS = ("fondo", "en_linea")
+# Retención de las tablas `gw_*` (`proxy/retencion.py`): lo más viejo que
+# esto se borra con la purga. Tiene que pasar la vida de una compra.
+RETENCION_DIAS = 90
+RETENCION_MINIMA_DIAS = 7
+RETENCION_MAXIMA_DIAS = 3650
+# La ruta de la purga (Vercel Cron) y su secreto (`GATEWAY_PURGA_SECRETO`, o
+# `CRON_SECRET`, el que Vercel manda en el `Authorization` de cada cron).
+RUTA_PURGA = "/interno/purgar"
+LARGO_MINIMO_SECRETO_PURGA = 32
+LARGO_MAXIMO_SECRETO_PURGA = 512
 
 
 def _bool(valor: str, nombre: str) -> bool:
@@ -157,11 +168,17 @@ class Config:
     # bytes a los 60 s. None (el default, y "0" u "off") = apagado: como
     # siempre, la respuesta sale entera y con su status.
     latido_s: float | None = None
+    # -- historial (panel del cliente) -----------------------------------------
+    # Días que se guardan las tablas `gw_*` (GATEWAY_RETENCION_DIAS) y el
+    # secreto de la purga (sin él, la ruta de la purga no existe).
+    retencion_dias: int = RETENCION_DIAS
+    purga_secreto: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         # Fail-closed también con `dataclasses.replace` (el arranque de Vercel
         # fuerza estos campos así): un valor fuera de rango no arma la config.
         _validar_varias(self)
+        _validar_retencion(self)
 
     @property
     def varias_instancias(self) -> bool:
@@ -310,6 +327,10 @@ class Config:
                 env.get("GATEWAY_WEBHOOKS_PERFIL"), PERFILES_WEBHOOKS, "GATEWAY_WEBHOOKS_PERFIL"
             ),
             latido_s=_latido(env.get("GATEWAY_LATIDO_S")),
+            retencion_dias=_entero_positivo(
+                env.get("GATEWAY_RETENCION_DIAS"), base.retencion_dias, "GATEWAY_RETENCION_DIAS"
+            ),
+            purga_secreto=_secreto_purga(env),
         )
 
 
@@ -404,6 +425,57 @@ def _validar_varias(config: Config) -> None:
     _chequear_rango(config.barrera_s, "barrera_s", *_RANGO_BARRERA)
     if config.latido_s is not None:
         _chequear_rango(config.latido_s, "latido_s", *_RANGO_LATIDO)
+
+
+def _validar_retencion(config: Config) -> None:
+    """La retención entre los topes y más larga que la vida de una compra
+    (si no, la purga borraría compras vivas); el secreto, bien formado."""
+    dias = config.retencion_dias
+    if (
+        not isinstance(dias, int) or isinstance(dias, bool)
+        or not RETENCION_MINIMA_DIAS <= dias <= RETENCION_MAXIMA_DIAS
+    ):
+        raise ValueError(
+            f"GATEWAY_RETENCION_DIAS tiene que estar entre {RETENCION_MINIMA_DIAS} y "
+            f"{RETENCION_MAXIMA_DIAS} días, no {dias!r}"
+        )
+    if dias * 86400 <= config.compra_ttl_s:
+        raise ValueError(
+            "GATEWAY_RETENCION_DIAS tiene que ser más larga que la vida de una compra "
+            "(GATEWAY_COMPRA_TTL_S)"
+        )
+    if config.purga_secreto is not None:
+        _chequear_secreto_purga(config.purga_secreto, "el secreto de la purga")
+
+
+def _chequear_secreto_purga(secreto: Any, nombre: str) -> str:
+    """Largo y sin espacios ni caracteres de control (va en un header). El
+    mensaje nombra la variable, nunca el valor."""
+    if not isinstance(secreto, str) or not (
+        LARGO_MINIMO_SECRETO_PURGA <= len(secreto) <= LARGO_MAXIMO_SECRETO_PURGA
+    ):
+        raise ValueError(
+            f"{nombre} tiene que tener de {LARGO_MINIMO_SECRETO_PURGA} a "
+            f"{LARGO_MAXIMO_SECRETO_PURGA} caracteres"
+        )
+    if not secreto.isascii() or not secreto.isprintable() or any(c.isspace() for c in secreto):
+        raise ValueError(f"{nombre} tiene que ser ASCII imprimible y sin espacios")
+    return secreto
+
+
+def _secreto_purga(env: Mapping[str, str]) -> str | None:
+    """`GATEWAY_PURGA_SECRETO` o, si no está, `CRON_SECRET` (el de Vercel
+    Cron). Con las dos, tienen que ser iguales: si no, el cron no podría
+    purgar y nadie se enteraría."""
+    propio = (env.get("GATEWAY_PURGA_SECRETO") or "").strip()
+    cron = (env.get("CRON_SECRET") or "").strip()
+    if propio and cron and not hmac.compare_digest(propio.encode(), cron.encode()):
+        raise ValueError("GATEWAY_PURGA_SECRETO y CRON_SECRET tienen que ser iguales (o una sola)")
+    if propio:
+        return _chequear_secreto_purga(propio, "GATEWAY_PURGA_SECRETO")
+    if cron:
+        return _chequear_secreto_purga(cron, "CRON_SECRET")
+    return None
 
 
 def _jsonl_privado(principal: Path, pedido: Path | None) -> Path:
