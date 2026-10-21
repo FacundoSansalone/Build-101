@@ -162,6 +162,9 @@ class FotoCompra:
     aprobacion_pendiente: dict[str, Any] | None
     veredictos: tuple[dict[str, Any], ...]    # vista_veredicto(...) en orden
     aprobaciones: tuple[dict[str, Any], ...]  # Aprobacion.a_json()
+    # Con estado `bloqueada`: "manipulacion" (el filtro la detectó) o
+    # "sin_revisar" (no pudo revisar y cortó); None en una fila de antes.
+    corte: str | None = None
 
 
 # -- entregas de webhooks ----------------------------------------------------

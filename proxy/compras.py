@@ -61,6 +61,11 @@ EstadoCompra = Literal[
     "vencida",
 ]
 Decision = Literal["aceptar", "rechazar"]
+# Por qué una compra quedó `bloqueada` (la cortó el filtro de seguridad): el
+# filtro detectó manipulación, o no pudo revisar la respuesta (falló, venció
+# o la marcó sin revisar, `filtro:*`) y se cortó por las dudas (fail-closed).
+CorteSeguridad = Literal["manipulacion", "sin_revisar"]
+CORTES = frozenset(get_args(CorteSeguridad))
 
 MAX_COMPRAS = 200
 LARGO_MAXIMO_RESPUESTA = 1000
@@ -161,6 +166,7 @@ class Compra:
     actualizada: datetime | None = None
     veredictos: list[dict[str, Any]] = field(default_factory=list)  # vista_veredicto
     aprobacion_pendiente: dict[str, Any] | None = None
+    corte: CorteSeguridad | None = None  # con estado `bloqueada` (panel del cliente)
     # -- varias instancias (proxy/esperas.py) ---------------------------------
     # `espera_id`: la espera abierta de la compra (`gw_esperas`), la que va en
     # la fila con `a_fila(espera=True)`. `espera_guardada`: la que esta
@@ -282,6 +288,7 @@ class Compra:
                 else None,
                 "veredictos": copy.deepcopy(self.veredictos),
                 "aprobacion_pendiente": copy.deepcopy(self.aprobacion_pendiente),
+                "corte": self.corte,
             },
         }
         if espera:
@@ -485,6 +492,8 @@ class Compra:
             actualizada=_fecha(fila["actualizada"]) if fila.get("actualizada") else None,
             veredictos=copy.deepcopy(veredictos[-MAX_VEREDICTOS_POR_COMPRA:]),
             aprobacion_pendiente=copy.deepcopy(pendiente),
+            # Una fila de antes (sin corte) o con un valor que no es de estos: sin dato.
+            corte=datos.get("corte") if datos.get("corte") in CORTES else None,
             espera_id=espera_id,
             espera_guardada=espera_id,
         )
@@ -520,6 +529,7 @@ class Compra:
             aprobacion_pendiente=copy.deepcopy(self.aprobacion_pendiente),
             veredictos=tuple(copy.deepcopy(self.veredictos)),
             aprobaciones=tuple(copy.deepcopy(aprobaciones)),
+            corte=self.corte,
         )
 
     # -- esperas -------------------------------------------------------------

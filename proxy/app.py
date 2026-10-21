@@ -65,7 +65,7 @@ from contracts import (
     Turno,
     Veredicto,
 )
-from proxy import a2a, vistas
+from proxy import a2a, historial, vistas
 from proxy.api_v1 import rutas_v1
 from proxy.aprobaciones import (
     Aprobacion,
@@ -290,6 +290,19 @@ _MOTIVO_YA_BLOQUEADA = (
 _MOTIVO_CONTEXTO_AJENO = (
     "La respuesta del proveedor usa el contexto de otra compra: no se reenvía."
 )
+_MOTIVO_SIN_DECISION = "El usuario no respondió la consulta: la alternativa no se autorizó."
+# La causa de cada corte de la etapa 2 (va en el evento `bloqueado` y al
+# historial, `proxy/historial.py`): un motivo fijo cada una.
+CAUSAS_CORTE: dict[str, str] = {
+    _MOTIVO_FILTRO: "filtro",
+    _MOTIVO_FILTRO_FALLO: "filtro_fallo",
+    _MOTIVO_FILTRO_ILEGIBLE: "ilegible",
+    _MOTIVO_YA_BLOQUEADA: "ya_bloqueada",
+    _MOTIVO_CONTEXTO_AJENO: "contexto_ajeno",
+    _MOTIVO_SIN_DECISION: "sin_decision",
+}
+# Señales del filtro que son una detección (las `filtro:*` dicen que no pudo revisar).
+_PREFIJOS_DETECCION = ("heuristica:", "modelo:")
 # El agente del cliente espera hasta 600 s por llamada (DEFAULT_TIMEOUT del
 # sample) y las dos esperas caen en la misma: presupuesto con margen. El
 # presupuesto es `Config.presupuesto_llamada_s` (570 s en la demo local; en
@@ -797,10 +810,53 @@ class ProxyGuard:
         )
         if privado:
             _recordar(self._eventos_privados, evento.id, True, _MAX_MARCAS_PRIVADAS)
+            self._guardar_en_historial(evento, contexto_id, llamada)
         if self.persistencia is not None:
             self.persistencia.guardar_evento(evento)  # solo los `veredicto`
         self._notificar_webhook(evento, llamada)
         return evento
+
+    @property
+    def historial_activo(self) -> bool:
+        """¿Los eventos de las compras de integrador van al almacén
+        (`gw_eventos`, el historial del panel)? Con varias instancias (004
+        aplicada) o con el almacén en memoria. Con Supabase y una sola
+        instancia la base puede tener solo 003, sin esa tabla (como con la
+        columna `espera_id`): no se escribe."""
+        return self.varias or self.almacen.nombre == "memoria"
+
+    def _guardar_en_historial(
+        self, evento: Evento, contexto_id: str | None, llamada: Llamada | None
+    ) -> None:
+        """La proyección saneada del evento (`proxy/historial.py`) al
+        almacén, en segundo plano y sin decidir nada: si no se guarda, la
+        compra sigue (falta una línea en el historial). Nunca lanza."""
+        if not self.historial_activo:
+            return
+        try:
+            compra = self._compra_del_evento(evento, contexto_id, llamada)
+            if compra is None or not compra.integrador_id:
+                return
+            fila = historial.fila_historial(
+                evento, integrador_id=compra.integrador_id, compra_id=compra.id
+            )
+        except Exception:  # noqa: BLE001 - el historial nunca rompe el flujo
+            logger.exception("No se pudo armar el historial del evento %s", evento.tipo)
+            return
+        if fila is not None:
+            self.en_fondo.programar(self.almacen.guardar_evento(fila), "evento del historial")
+
+    def _compra_del_evento(
+        self, evento: Evento, contexto_id: str | None, llamada: Llamada | None
+    ) -> Compra | None:
+        """La compra de integrador de un evento: la que nombra (`compra_id`)
+        o la de la llamada o del contexto."""
+        compra_id = evento.datos.get("compra_id") if isinstance(evento.datos, dict) else None
+        propia = self._compra_api(llamada, contexto_id)
+        if isinstance(compra_id, str) and (propia is None or propia.id != compra_id):
+            otra = self.compras.get(compra_id)
+            return otra if otra is not None and otra.origen == "api" else None
+        return propia
 
     def _es_de_integrador_evento(
         self, datos: Any, contexto_id: str | None, llamada: Llamada | None
@@ -3041,6 +3097,7 @@ class ProxyGuard:
             # comercio puede contestar con el contexto de una ajena).
             if compra is not None and (compra.origen != "api" or llamada.de_integrador):
                 compra.estado = "bloqueada"
+                compra.corte = _corte_de(*corte)
                 compra.resuelta.set()
                 self.guardar_compra(compra)
         return corte
@@ -3249,9 +3306,7 @@ class ProxyGuard:
         """La respuesta cortada para cada acción de la etapa 2 que no pasa."""
         if accion == "vencida":
             return self._cortar(
-                llamada, result,
-                "El usuario no respondió la consulta: la alternativa no se autorizó.",
-                etapa="intencion", texto=_TEXTO_PAUSA,
+                llamada, result, _MOTIVO_SIN_DECISION, etapa="intencion", texto=_TEXTO_PAUSA,
             )
         if accion == "bloqueada":
             return self._cortar(llamada, result, _MOTIVO_YA_BLOQUEADA, etapa="seguridad")
@@ -3300,6 +3355,7 @@ class ProxyGuard:
             "status": "bloqueado",
             "requiere_aprobacion": False,
             "etapa": etapa,
+            "causa": CAUSAS_CORTE.get(motivo),
         }
         if llamada.compra is not None:
             datos["compra_id"] = llamada.compra.id
@@ -4263,6 +4319,18 @@ class ProxyGuard:
                 {"error": "guard.recibo no expone la clave"}, status_code=404
             )
         return JSONResponse(datos)
+
+
+def _corte_de(motivo: str, senales: list[str]) -> Literal["manipulacion", "sin_revisar"]:
+    """Por qué cortó el filtro (`Compra.corte`): una detección (heurísticas o
+    modelo; también un filtro que no dice por qué) o una respuesta que no pudo
+    revisar (falló, venció o solo trae señales `filtro:*`)."""
+    if motivo != _MOTIVO_FILTRO:
+        return "sin_revisar"
+    textos = [s for s in senales if isinstance(s, str)]
+    if textos and not any(s.startswith(_PREFIJOS_DETECCION) for s in textos):
+        return "sin_revisar"
+    return "manipulacion"
 
 
 def _compra_id_valido(body: dict[str, Any]) -> bool:
