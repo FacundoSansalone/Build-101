@@ -907,7 +907,10 @@ def _nota_de_estafa(alertas_compra: list[str], ultimo: dict[str, Any] | None,
 
 
 def _eventos(eventos: Iterable[Any]) -> list[dict[str, Any]]:
-    """Los eventos del historial que se pueden leer, en orden de tiempo."""
+    """Los eventos del historial que se pueden leer, en el orden en que se
+    guardaron (`orden`: la identidad de `gw_eventos` o el de inserción en
+    memoria). No el `ts`: dos eventos del mismo momento, o de dos instancias
+    con relojes distintos, no se dan vuelta. El `ts` es para mostrar."""
     salida = []
     for e in eventos:
         if not isinstance(e, dict) or not isinstance(e.get("datos"), dict):
@@ -917,7 +920,7 @@ def _eventos(eventos: Iterable[Any]) -> list[dict[str, Any]]:
             continue
         orden = e.get("orden") if isinstance(e.get("orden"), int) else 0
         salida.append({"ts": ts, "orden": orden, "tipo": e["tipo"], "datos": e["datos"]})
-    salida.sort(key=lambda e: (e["ts"], e["orden"]))
+    salida.sort(key=lambda e: e["orden"])
     return salida
 
 
@@ -1070,36 +1073,41 @@ def _texto_evento(evento: dict[str, Any]) -> tuple[str, str] | None:
 
 def linea_de_tiempo(vista: dict[str, Any], eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """`[{"ts", "etapa", "texto"}]`: la creación, cada evento del historial
-    que se puede contar y las aprobaciones de una persona, en orden."""
-    linea: list[tuple[datetime, int, str, str]] = []
+    que se puede contar (en el orden de `_eventos`) y las aprobaciones de una
+    persona (no son eventos: van antes del primer evento posterior a su
+    momento)."""
+    linea: list[tuple[datetime, str, str]] = []
     creada = _fecha_hora(vista.get("creada"))
     if creada is not None:
         tope = _tope(vista.get("ficha"))
         texto = f"Creaste la compra con un tope de {tope}." if tope else "Creaste la compra."
-        linea.append((creada, -2, "pedido", texto))
+        linea.append((creada, "pedido", texto))
         if len(eventos) >= MAX_EVENTOS:
-            linea.append((creada, -1, "omitido",
+            linea.append((creada, "omitido",
                           "Hay pasos anteriores que no mostramos: mostramos los últimos "
                           f"{_cantidad(MAX_EVENTOS)}."))
+    aprobaciones = sorted(
+        momento
+        for aprobacion in vista.get("aprobaciones") or [] if isinstance(aprobacion, dict)
+        for momento in [_fecha_hora(aprobacion.get("creada"))] if momento is not None
+    )
+    texto_aprobacion = "Una persona de tu equipo aprobó el checkout retenido."
     for evento in eventos:
         contado = _texto_evento(evento)
-        if contado is not None:
-            linea.append((evento["ts"], evento["orden"], *contado))
-    for aprobacion in vista.get("aprobaciones") or []:
-        if isinstance(aprobacion, dict):
-            momento = _fecha_hora(aprobacion.get("creada"))
-            if momento is not None:
-                linea.append((momento, 0, "aprobacion",
-                              "Una persona de tu equipo aprobó el checkout retenido."))
-    linea.sort(key=lambda e: (e[0], e[1]))
+        if contado is None:
+            continue
+        while aprobaciones and aprobaciones[0] <= evento["ts"]:
+            linea.append((aprobaciones.pop(0), "aprobacion", texto_aprobacion))
+        linea.append((evento["ts"], *contado))
+    linea.extend((momento, "aprobacion", texto_aprobacion) for momento in aprobaciones)
     if len(linea) > MAX_LINEA:
         final = MAX_LINEA - LINEA_PRINCIPIO - 1
         omitidas = len(linea) - LINEA_PRINCIPIO - final
-        marca = (linea[LINEA_PRINCIPIO][0], 0, "omitido",
+        marca = (linea[LINEA_PRINCIPIO][0], "omitido",
                  f"Omitimos {_cantidad(omitidas)} pasos del medio de la compra.")
         linea = [*linea[:LINEA_PRINCIPIO], marca, *linea[-final:]]
     return [{"ts": ts.isoformat(), "etapa": etapa, "texto": texto}
-            for ts, _, etapa, texto in linea]
+            for ts, etapa, texto in linea]
 
 
 # -- la explicación ---------------------------------------------------------------------

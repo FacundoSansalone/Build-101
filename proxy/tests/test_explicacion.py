@@ -797,6 +797,41 @@ def test_un_atributo_que_no_se_pudo_comparar_no_acusa():
             "comparar (otra unidad o un valor ambiguo).") in [c["texto"] for c in salida["chequeos"]]
 
 
+def test_la_linea_de_tiempo_va_en_el_orden_del_historial():
+    """El orden es el de `orden` (la identidad de `gw_eventos`, o el de
+    inserción en memoria), no el del `ts`: dos eventos con el mismo momento (o
+    con relojes de dos instancias) no se dan vuelta. El `ts` es para mostrar."""
+    mismo = 2
+    eventos = [
+        _fila("reenviado", {"metodo": "find_products"}, minutos=mismo, orden=12),
+        _fila("busqueda_enviada", {"catalog_search": "x"}, minutos=mismo, orden=10),
+        _fila("ofertas_recibidas", {"carts": [{"cart_id": "cart_1", "item_label": "x",
+                                               "amount": 1.0, "currency": "USD"}] * 4,
+                                    "offer_details": []}, minutos=mismo, orden=11),
+        # Un reloj atrasado (otra instancia): igual va después.
+        _fila("checkout_pedido", {"cart_id": "cart_1"}, minutos=1, orden=13),
+    ]
+    linea = _explicar(vista(), eventos)["linea_de_tiempo"]
+    assert [e["texto"] for e in linea] == [
+        "Creaste la compra con un tope de USD 1.500,00.",
+        "Tu agente buscó productos en el comercio.",
+        "El comercio mandó 4 ofertas.",
+        "Le pasamos las ofertas a tu agente.",
+        "Tu agente pidió el checkout de un carrito.",
+    ]
+    assert linea[-1]["ts"] == (CREADA + timedelta(minutes=1)).isoformat()
+
+
+def test_la_aprobacion_de_una_persona_va_en_su_momento_entre_los_eventos():
+    eventos = [
+        _fila("bloqueado", {"status": "escalar", "requiere_aprobacion": True}, minutos=4, orden=1),
+        _fila("reenviado", {"metodo": "create_checkout", "aprobacion_humana": True}, minutos=8,
+              orden=2),
+    ]
+    linea = _explicar(vista(aprobaciones=[APROBACION_USADA]), eventos)["linea_de_tiempo"]
+    assert [e["etapa"] for e in linea] == ["pedido", "resultado", "aprobacion", "resultado"]
+
+
 def test_la_linea_de_tiempo_conserva_el_principio_y_el_final():
     eventos = [_fila("reenviado", {"metodo": "find_products"}, minutos=1 + i / 100, orden=i)
                for i in range(400)]
