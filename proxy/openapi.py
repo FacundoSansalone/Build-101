@@ -45,6 +45,12 @@ _CHEQUEO = {
         "resultado": {"type": "string", "enum": ["ok", "aviso", "escalar", "bloquea"]},
     },
 }
+_ALERTAS = ["manipulacion", "dato_falso", "precio_distinto", "checkout_alterado", "no_cumple", "sin_verificar"]
+_ALERTA = {
+    "type": "string", "enum": _ALERTAS,
+    "description": "`manipulacion`, `dato_falso`, `precio_distinto` y `checkout_alterado` son "
+    "intento de estafa; `no_cumple` y `sin_verificar`, no.",
+}
 
 ESQUEMAS: dict[str, dict[str, Any]] = {
     "Error": {
@@ -158,6 +164,28 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
             "contexto_id": _nullable(_ID_SEGURO),
             "ts": _FECHA,
             "evaluador": {"type": "string"},
+            "chequeos_detalle": {"type": "array", "items": _ref("ChequeoDetalle")},
+            "alertas": {"type": "array", "items": _ALERTA},
+            "monto": _nullable({"type": "number", "description": "El total del cart evaluado."}),
+            "moneda": _nullable(_MONEDA),
+        },
+    },
+    "ChequeoDetalle": {
+        "type": "object",
+        "description": "Un chequeo del Guard, saneado: sin el `detalle` del Guard y sin texto "
+        "del comercio. `esperado` y `observado` traen números, booleanos, fechas, monedas, "
+        "cronogramas y `{valor, unidad}`; un texto solo si es de una fuente que el comercio "
+        "no controla (catálogo público, fabricante, tu ficha) y es corto. Lo que no se "
+        "muestra sale `null` con `omitido: true`.",
+        "properties": {
+            "tipo": _nullable({"type": "string", "enum": ["cumplimiento", "evidencia", "integridad", "politica", "mandato"]}),
+            "resultado": {"type": "string", "enum": ["ok", "aviso", "escalar", "bloquea"]},
+            "caso": _nullable({"type": "string", "examples": ["cumple", "no_cumple", "contradicho", "precio_distinto", "solo_declarado"]}),
+            "campo": _nullable({"type": "string", "examples": ["precio", "marca", "atributo:memoria_ram", "checkout_hash"]}),
+            "origen": _nullable({"type": "string"}),
+            "esperado": {},
+            "observado": {},
+            "omitido": {"type": "boolean"},
         },
     },
     "VistaOportunidad": {

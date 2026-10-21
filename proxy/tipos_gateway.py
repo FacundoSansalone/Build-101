@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from contracts import STATUS_LLEGAN_A_FIRMA, Ficha, OfertasVistas, Oportunidad, Veredicto
-from proxy import a2a
+from proxy import a2a, alertas
 
 # -- headers y prefijos ------------------------------------------------------
 HEADER_COMPRA = "X-Compra-Id"
@@ -297,8 +297,15 @@ class NucleoGateway(Protocol):
 def vista_veredicto(
     veredicto: Veredicto, *, contexto_id: str | None, ts: datetime, evaluador: str
 ) -> dict[str, Any]:
+    """La vista reducida del veredicto que guarda la compra (y que devuelven
+    `/v1/compras/{id}`, `/v1/evaluar` y los webhooks).
+
+    Además de `chequeos` (solo `tipo` y `resultado`), lleva lo explicable
+    (`proxy/alertas.py`, aditivo): `chequeos_detalle` saneados, las `alertas`
+    y el `monto`/`moneda` del cart evaluado."""
     base = a2a.veredicto_para_agente(veredicto.model_dump(mode="json"))
     recibo = veredicto.recibo
+    monto, moneda = alertas.monto_evaluado(veredicto.chequeos)
     return {
         "status": base["status"],
         "motivo": base["motivo"],
@@ -311,4 +318,8 @@ def vista_veredicto(
         "contexto_id": contexto_id if es_id(ID_SEGURO_RE, contexto_id) else None,
         "ts": ts.isoformat(),
         "evaluador": evaluador,
+        "chequeos_detalle": alertas.chequeos_detalle(veredicto.chequeos),
+        "alertas": alertas.alertas_de(veredicto.chequeos),
+        "monto": monto,
+        "moneda": moneda,
     }
