@@ -365,3 +365,197 @@ def test_main_rechaza_opciones_invalidas_sin_arrancar(capsys):
     tr = _router()
     assert tr.main(["--resto", "http://127.0.0.1:8020"]) == 2
     assert "prefijo" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# generar_secretos.py --apuntar (el dominio nuevo con el prefijo de siempre)
+# ---------------------------------------------------------------------------
+
+
+def _carpeta_secretos(tmp_path: Path, *, con_env: bool = True) -> Path:
+    carpeta = tmp_path / "vercel"
+    carpeta.mkdir()
+    (carpeta / "TUNEL_PREFIJO.txt").write_text(PREFIJO, encoding="utf-8")
+    if con_env:
+        (carpeta / "vercel.env").write_text(
+            "# secreto\nGUARD_SIGNING_KID=guard-key-1\nGATEWAY_COMERCIOS_JSON={\"viejo\":1}\n", encoding="utf-8")
+    return carpeta
+
+
+def test_apuntar_reescribe_los_comercios_con_el_prefijo_que_ya_estaba(tmp_path, capsys):
+    from proxy.comercios import RegistroComercios
+
+    gs = _script("deploy/vercel/generar_secretos.py")
+    carpeta = _carpeta_secretos(tmp_path)
+    assert gs.main(["--carpeta", str(carpeta), "--apuntar", f"https://{PUBLICO.upper()}/"]) == 0
+    salida = capsys.readouterr()
+    assert PREFIJO not in salida.out + salida.err
+    assert (carpeta / "TUNEL_PREFIJO.txt").read_text(encoding="utf-8") == PREFIJO  # no cambia
+    datos = json.loads((carpeta / "GATEWAY_COMERCIOS_JSON.json").read_text(encoding="utf-8"))
+    comercio = RegistroComercios.desde_dict(datos).get("merchant_1")
+    assert comercio.a2a_url == f"https://{PUBLICO}/{PREFIJO}/a2a/merchant_agent"
+    assert comercio.catalogo_url == f"https://{PUBLICO}/{PREFIJO}"
+    entorno = _script("deploy/vercel/local_multi.py").leer_env(carpeta / "vercel.env")
+    assert json.loads(entorno["GATEWAY_COMERCIOS_JSON"]) == datos
+    assert entorno["GUARD_SIGNING_KID"] == "guard-key-1"  # lo demás, igual
+    assert sorted(p.name for p in carpeta.iterdir()) == [
+        "GATEWAY_COMERCIOS_JSON.json", "TUNEL_PREFIJO.txt", "vercel.env"]
+
+
+def test_apuntar_sin_vercel_env_solo_escribe_el_registro(tmp_path):
+    gs = _script("deploy/vercel/generar_secretos.py")
+    carpeta = _carpeta_secretos(tmp_path, con_env=False)
+    assert gs.main(["--carpeta", str(carpeta), "--apuntar", PUBLICO]) == 0
+    assert not (carpeta / "vercel.env").exists()
+
+
+@pytest.mark.parametrize("argv", [
+    ["--apuntar", "https://demo.up.railway.app/ruta"],
+    ["--apuntar", "no es un dominio"],
+    ["--apuntar", PUBLICO, "--dominio", "otro.ngrok-free.app"],
+    ["--apuntar", PUBLICO, "--sin-prefijo"],
+    ["--apuntar", PUBLICO, "--clave-lectura", "demo"],
+])
+def test_apuntar_rechaza_lo_que_no_sirve(tmp_path, argv, capsys):
+    gs = _script("deploy/vercel/generar_secretos.py")
+    carpeta = _carpeta_secretos(tmp_path)
+    assert gs.main(["--carpeta", str(carpeta), *argv]) == 2
+    assert not (carpeta / "GATEWAY_COMERCIOS_JSON.json").exists()
+    assert PREFIJO not in capsys.readouterr().err
+
+
+def test_apuntar_sin_prefijo_generado_avisa(tmp_path, capsys):
+    gs = _script("deploy/vercel/generar_secretos.py")
+    carpeta = tmp_path / "vacia"
+    carpeta.mkdir()
+    assert gs.main(["--carpeta", str(carpeta), "--apuntar", PUBLICO]) == 2
+    assert "TUNEL_PREFIJO.txt" in capsys.readouterr().err
+    assert not list(carpeta.iterdir())
+
+
+# ---------------------------------------------------------------------------
+# los scripts de bash
+# ---------------------------------------------------------------------------
+
+
+def _bash() -> str | None:
+    """Un bash que funcione. En Windows, primero el de Git (el `bash` del PATH
+    puede ser el de WSL, que no entiende rutas C:/…)."""
+    candidatos = []
+    git = shutil.which("git")
+    if git and os.name == "nt":  # ...\Git\cmd\git.exe -> ...\Git\bin\bash.exe
+        candidatos.append(str(Path(git).resolve().parents[1] / "bin" / "bash.exe"))
+    candidatos.append(shutil.which("bash"))
+    for bash in candidatos:
+        if not bash or not Path(bash).exists():
+            continue
+        try:
+            if subprocess.run([bash, "-c", "tr --version >/dev/null && exit 0"],
+                              capture_output=True, timeout=20).returncode == 0:
+                return bash
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return None
+
+
+@pytest.fixture
+def bash() -> str:
+    encontrado = _bash()
+    if encontrado is None:
+        pytest.skip("no hay un bash que funcione en esta máquina")
+    return encontrado
+
+
+@pytest.mark.parametrize("script", ["vercel/apuntar_vercel.sh", "vercel/tunel_demo.sh", "start_all.sh"])
+def test_los_scripts_son_bash_valido_y_con_lf(bash, script):
+    ruta = DEPLOY / script
+    assert b"\r" not in ruta.read_bytes()
+    subprocess.run([bash, "-n", str(ruta)], check=True, timeout=30)
+
+
+def _correr(bash: str, script: str, *args: str, entorno: dict[str, str],
+            timeout: float = 60) -> subprocess.CompletedProcess[str]:
+    base = {k: v for k, v in os.environ.items()
+            if k.upper() in ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "HOME",
+                             "USERPROFILE", "COMSPEC", "PATHEXT", "WINDIR")}
+    resultado = subprocess.run(
+        [bash, str(DEPLOY / script), *args], cwd=RAIZ, capture_output=True, timeout=timeout,
+        env={**base, "PYTHONUTF8": "1", **entorno},
+    )
+    return subprocess.CompletedProcess(
+        resultado.args, resultado.returncode,
+        resultado.stdout.decode("utf-8", "replace"), resultado.stderr.decode("utf-8", "replace"),
+    )
+
+# -- apuntar el motor de Vercel (con un npx falso) ---------------------------------
+
+
+NPX_FALSO = """#!/bin/bash
+printf '%s\\n' "$*" >> "$NPX_REGISTRO"
+case "$*" in
+  *"env add"*)
+    cat > "$NPX_STDIN"
+    if [ "${NPX_FALLA:-}" = env ]; then echo "Error: proyecto sin link" >&2; exit 1; fi
+    echo "Added Environment Variable" ;;
+  *"deploy"*)
+    if [ "${NPX_FALLA:-}" = deploy ]; then echo "Error: el build falló" >&2; exit 1; fi
+    echo "Production: https://kaiai-motor-abc123-equipo.vercel.app [12s]" ;;
+esac
+"""
+
+
+@pytest.fixture
+def npx_falso(tmp_path, bash) -> dict[str, str]:
+    carpeta_bin = tmp_path / "bin"
+    carpeta_bin.mkdir()
+    npx = carpeta_bin / "npx"
+    npx.write_bytes(NPX_FALSO.encode())
+    npx.chmod(0o755)
+    secretos = _carpeta_secretos(tmp_path)
+    return {
+        "PATH": str(carpeta_bin) + os.pathsep + os.environ.get("PATH", ""),
+        "PY": Path(sys.executable).as_posix(),
+        "SECRETOS": secretos.as_posix(),
+        "NPX_REGISTRO": (tmp_path / "registro.txt").as_posix(),
+        "NPX_STDIN": (tmp_path / "stdin.txt").as_posix(),
+    }
+
+
+def _registro(entorno: dict[str, str]) -> list[str]:
+    ruta = Path(entorno["NPX_REGISTRO"])
+    return ruta.read_text(encoding="utf-8").splitlines() if ruta.exists() else []
+
+
+def test_apuntar_vercel_carga_el_registro_y_redespliega(bash, npx_falso):
+    r = _correr(bash, "vercel/apuntar_vercel.sh", f"https://{PUBLICO}", entorno=npx_falso)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _registro(npx_falso) == ["vercel env add GATEWAY_COMERCIOS_JSON production --force",
+                                    "vercel deploy --prod --yes"]
+    archivo = Path(npx_falso["SECRETOS"]) / "GATEWAY_COMERCIOS_JSON.json"
+    cargado = Path(npx_falso["NPX_STDIN"]).read_text(encoding="utf-8")
+    assert cargado == archivo.read_text(encoding="utf-8").strip()
+    assert json.loads(cargado)["comercios"][0]["a2a_url"] == f"https://{PUBLICO}/{PREFIJO}/a2a/merchant_agent"
+    assert "redesplegada" in r.stdout
+    assert PREFIJO not in r.stdout + r.stderr
+
+
+@pytest.mark.parametrize(("falla", "llamadas"), [("env", 1), ("deploy", 2)])
+def test_apuntar_vercel_corta_y_muestra_el_error(bash, npx_falso, falla, llamadas):
+    r = _correr(bash, "vercel/apuntar_vercel.sh", f"https://{PUBLICO}",
+                entorno={**npx_falso, "NPX_FALLA": falla})
+    assert r.returncode != 0
+    assert len(_registro(npx_falso)) == llamadas  # no sigue después de la falla
+    assert "Error:" in r.stderr  # el de la CLI
+    assert "redesplegada" not in r.stdout
+
+
+def test_apuntar_vercel_sin_dominio_no_toca_nada(bash, npx_falso):
+    r = _correr(bash, "vercel/apuntar_vercel.sh", entorno=npx_falso)
+    assert r.returncode != 0
+    assert _registro(npx_falso) == []
+
+
+def test_tunel_demo_usa_el_mismo_apuntar_vercel():
+    texto = (DEPLOY / "vercel" / "tunel_demo.sh").read_text(encoding="utf-8")
+    assert "deploy/vercel/apuntar_vercel.sh" in texto
+    assert "vercel env add" not in texto  # una sola copia de esa lógica

@@ -77,45 +77,11 @@ esperar_url() {
 }
 
 # Reescribe GATEWAY_COMERCIOS_JSON con $DOMINIO, lo carga en Vercel y
-# redespliega. Si algo falla, muestra el error y devuelve 1 (quien llama
-# corta: no hay que decir "Listo" con Vercel apuntando a otro lado). Se llama
-# con `||`, así que set -e no corre adentro: cada paso se chequea a mano.
+# redespliega (deploy/vercel/apuntar_vercel.sh, el mismo que usa el comercio
+# fijo en Railway). Si algo falla, muestra el error y devuelve 1 (quien llama
+# corta: no hay que decir "Listo" con Vercel apuntando a otro lado).
 apuntar_vercel() {
-  local salida url
-  DOMINIO="$DOMINIO" SECRETOS="$SECRETOS" "$PY" - <<'EOF' || { echo "No pude reescribir GATEWAY_COMERCIOS_JSON." >&2; return 1; }
-import json, os, pathlib
-base = pathlib.Path(os.environ["SECRETOS"])
-prefijo = (base / "TUNEL_PREFIJO.txt").read_text(encoding="utf-8").strip()
-raiz = f"{os.environ['DOMINIO']}/{prefijo}"
-registro = {"por_defecto": "merchant_1", "comercios": [{
-    "id": "merchant_1", "nombre": "Simulación (comercio general detrás del túnel)",
-    "a2a_url": f"{raiz}/a2a/merchant_agent", "catalogo_url": raiz,
-    "merchant_ids": ["merchant_1"], "respaldo_fixture": False,
-}]}
-(base / "GATEWAY_COMERCIOS_JSON.json").write_text(json.dumps(registro, separators=(",", ":")), encoding="utf-8")
-EOF
-  # La salida de la CLI no trae el valor: se muestra solo si falla.
-  if ! salida="$(tr -d '\r\n' < "$SECRETOS/GATEWAY_COMERCIOS_JSON.json" \
-      | npx vercel env add GATEWAY_COMERCIOS_JSON production --force 2>&1)"; then
-    printf '%s\n' "$salida" | tail -n 20 >&2
-    echo "No pude cargar GATEWAY_COMERCIOS_JSON en Vercel (¿npx vercel login y npx vercel link?)." >&2
-    return 1
-  fi
-  echo "$(date +%H:%M:%S) GATEWAY_COMERCIOS_JSON → $DOMINIO; redespliego producción…"
-  # `vercel deploy` espera a que el deploy quede listo y sale con error si el
-  # build falla; si sale bien, imprime la URL del deploy.
-  if ! salida="$(npx vercel deploy --prod --yes 2>&1)"; then
-    printf '%s\n' "$salida" | tail -n 20 >&2
-    echo "El redeploy de producción falló: Vercel sigue con el túnel anterior." >&2
-    return 1
-  fi
-  url="$(printf '%s\n' "$salida" | grep -oE 'https://[A-Za-z0-9.-]+\.vercel\.app' | tail -n 1 || true)"
-  if [ -z "$url" ]; then
-    printf '%s\n' "$salida" | tail -n 20 >&2
-    echo "No encontré la URL del deploy en la salida de vercel: revisalo con npx vercel ls." >&2
-    return 1
-  fi
-  echo "$(date +%H:%M:%S) producción redesplegada ($url)."
+  SECRETOS="$SECRETOS" PY="$PY" bash deploy/vercel/apuntar_vercel.sh "$DOMINIO"
 }
 
 if [ "$TUNEL" = cloudflared ]; then

@@ -24,6 +24,12 @@
   `clave_lectura_<id>.txt` y agrega su entrada (`"permisos": ["lectura"]`)
   al registro y a `vercel.env`; lo demás del registro queda igual. Después
   hay que actualizar `GATEWAY_CLAVES_JSON` en Vercel y redesplegar.
+- `--apuntar <dominio>` (va solo): la simulación cambió de dominio (un túnel
+  nuevo, o el comercio fijo en Railway) y el prefijo secreto es el mismo.
+  Reescribe `GATEWAY_COMERCIOS_JSON.json` con el dominio nuevo y el prefijo
+  que ya está en `TUNEL_PREFIJO.txt`, y su línea en `vercel.env` si está;
+  lo demás queda igual. Lo usa `apuntar_vercel.sh`, que además lo carga en
+  Vercel y redespliega.
 
 Por defecto escribe en `.temp-db/vercel/` (ignorado por git y por
 `.vercelignore`), con permisos 600, y no pisa nada salvo `--forzar`: perder la
@@ -285,6 +291,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--clave-lectura", metavar="INTEGRADOR", default=None,
                    help="solo esto: una clave de solo lectura (panel web) para un integrador que ya "
                    "está en GATEWAY_CLAVES_JSON.json; la agrega al registro y a vercel.env")
+    p.add_argument("--apuntar", metavar="DOMINIO", default=None,
+                   help="solo esto: reescribe GATEWAY_COMERCIOS_JSON.json con el comercio detrás "
+                   "de https://DOMINIO y el prefijo que ya está en TUNEL_PREFIJO.txt (un túnel "
+                   "nuevo, o el comercio fijo en Railway); lo demás queda igual")
     p.add_argument("--forzar", action="store_true",
                    help="pisar archivos existentes (¡la clave del recibo cambia!; con "
                    "--clave-lectura, otra clave de lectura más)")
@@ -293,7 +303,72 @@ def parser() -> argparse.ArgumentParser:
 
 # Opciones que no tienen sentido con --clave-lectura (no genera nada de eso).
 _SIN_CLAVE_LECTURA = (("dominio", "--dominio"), ("webhook_url", "--webhook-url"),
-                      ("comercio", "--comercio"), ("nombre", "--nombre"))
+                      ("comercio", "--comercio"), ("nombre", "--nombre"),
+                      ("apuntar", "--apuntar"))
+# Ni con --apuntar (solo reescribe el registro de comercios).
+_SIN_APUNTAR = (("dominio", "--dominio"), ("webhook_url", "--webhook-url"),
+                ("nombre", "--nombre"), ("sin_prefijo", "--sin-prefijo"),
+                ("sin_recibo", "--sin-recibo"), ("sin_integrador", "--sin-integrador"),
+                ("forzar", "--forzar"))
+
+
+def _normalizar_dominio(crudo: str) -> str | None:
+    """`https://Dominio/` → `dominio`, o None si no es un nombre de dominio."""
+    dominio = crudo.strip().lower().removeprefix("https://").rstrip("/")
+    return dominio if _DOMINIO_RE.fullmatch(dominio) else None
+
+
+def _apuntar(args: argparse.Namespace) -> int:
+    """`--apuntar <dominio>`: el registro de comercios con el dominio nuevo y
+    el prefijo de siempre. No imprime el prefijo."""
+    usadas = [opcion for atributo, opcion in _SIN_APUNTAR if getattr(args, atributo)]
+    if usadas:
+        print(f"--apuntar va solo (con --carpeta y --comercio): sacá {', '.join(usadas)}",
+              file=sys.stderr)
+        return 2
+    dominio = _normalizar_dominio(args.apuntar)
+    if dominio is None:
+        print("--apuntar: solo el nombre (p. ej. kaiai-demo.up.railway.app), sin ruta",
+              file=sys.stderr)
+        return 2
+    comercios = args.comercio or ["merchant_1"]
+    if not all(_ID_RE.fullmatch(c) for c in comercios):
+        print("--comercio: minúsculas, dígitos, '_' o '-', hasta 40", file=sys.stderr)
+        return 2
+    carpeta = args.carpeta if args.carpeta.is_absolute() else Path.cwd() / args.carpeta
+    try:
+        prefijo = (carpeta / "TUNEL_PREFIJO.txt").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        print(f"No está {carpeta / 'TUNEL_PREFIJO.txt'}: generalo una vez con --dominio "
+              "(el prefijo tiene que ser el mismo que usa la simulación).", file=sys.stderr)
+        return 2
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"TUNEL_PREFIJO.txt no se puede leer ({type(e).__name__})", file=sys.stderr)
+        return 2
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", prefijo):
+        print("TUNEL_PREFIJO.txt no tiene un prefijo válido (8 a 128 de [A-Za-z0-9_-])",
+              file=sys.stderr)
+        return 2
+
+    _avisar_si_no_ignorada(carpeta)
+    escritor = Escritor(carpeta)
+    compacto = _compacto(registro_comercios(dominio, prefijo, comercios[0]))
+    escritor.reemplazar("GATEWAY_COMERCIOS_JSON.json", compacto)
+    entorno_path = carpeta / "vercel.env"
+    if entorno_path.exists():
+        texto = entorno_path.read_text(encoding="utf-8")
+        escritor.reemplazar("vercel.env", _con_linea_env(texto, "GATEWAY_COMERCIOS_JSON", compacto))
+    print(f"GATEWAY_COMERCIOS_JSON → https://{dominio} (comercio {comercios[0]}, con el prefijo "
+          "de TUNEL_PREFIJO.txt).")
+    print(f"Archivos (permisos 600) en {carpeta}:")
+    for ruta in escritor.escritos:
+        print(f"  {ruta.name}")
+    print("Para que valga en Vercel, cargalo y redesplegá (o bash deploy/vercel/apuntar_vercel.sh, "
+          "que hace todo):")
+    print(f"  npx vercel env add GATEWAY_COMERCIOS_JSON production --force < "
+          f"{carpeta / 'GATEWAY_COMERCIOS_JSON.json'}")
+    print("  npx vercel deploy --prod")
+    return 0
 
 
 def _clave_lectura(args: argparse.Namespace) -> int:
@@ -360,6 +435,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.clave_lectura is not None:
         return _clave_lectura(args)
+    if args.apuntar is not None:
+        return _apuntar(args)
     comercios = args.comercio or ["merchant_1"]
     if not _KID_RE.fullmatch(args.kid):
         print("--kid: hasta 64 caracteres de [A-Za-z0-9._-]", file=sys.stderr)
