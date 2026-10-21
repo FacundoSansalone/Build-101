@@ -18,7 +18,7 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 
 | Archivo | Qué es |
 |---|---|
-| [`vercel.json`](../../vercel.json) | La función `index.py`: `maxDuration: 300` (el máximo de Hobby) y `excludeFiles` (lo que se sube pero no es runtime; la simulación ya la deja afuera `.vercelignore`; Vercel acepta hasta 256 caracteres) |
+| [`vercel.json`](../../vercel.json) | La función `index.py`: `maxDuration: 300` (el máximo de Hobby) y `excludeFiles` (lo que se sube pero no es runtime; la simulación ya la deja afuera `.vercelignore`; Vercel acepta hasta 256 caracteres); y el cron diario de la purga (`/interno/purgar`, [paso 9](#9-retención-y-purga)) |
 | [`.vercelignore`](../../.vercelignore) | Lo que **no** sube `vercel deploy`: lista blanca en la raíz (solo el motor) y lista negra adentro (secretos, simulación, tests). Lo verifica `proxy/tests/test_despliegue_vercel.py` |
 | `env.ejemplo` | Todas las variables, obligatorias, opcionales y **prohibidas** |
 | `comercios.ejemplo.json` | Formato de `GATEWAY_COMERCIOS_JSON` con la simulación detrás del túnel |
@@ -26,7 +26,7 @@ agente del integrador ──https──▶ Vercel: index.py (motor, varias insta
 | `verificar_supabase.py` | Solo lectura: ¿están las tablas y columnas de las migraciones 003 y 004? |
 | `tunel_router.py` | Un solo puerto (:8090) para la simulación: `/a2a/*` al comercio, el resto al catálogo |
 | `tunel_demo.sh` | Un comando para la demo contra Vercel: enrutador + túnel sin cuenta (`TUNEL=auto`: cloudflared rápido si hay salida al puerto 7844; si no, pinggy por SSH en el 443, que dura 60 min: a los 55 (`TUNEL_RENOVAR_S`) el script abre otro, apunta Vercel al nuevo y recién después corta el viejo; si pinggy no da dos túneles a la vez, espera a que se corte y queda una ventana de 1-2 min sin túnel). Reescribe `GATEWAY_COMERCIOS_JSON` con la URL nueva y redespliega; si `vercel env add` o el deploy fallan, muestra el error y corta. Ctrl+C corta todo |
-| `aplicar_migraciones.py` | 003 y 004 por la API de administración de Supabase, con `SUPABASE_ACCESS_TOKEN` |
+| `aplicar_migraciones.py` | 003, 004 y 005 por la API de administración de Supabase, con `SUPABASE_ACCESS_TOKEN` |
 | `local_multi.py` | Vercel en tu máquina: N instancias de `index:app` y un balanceador por pedido en :8040 |
 | `postgrest_local.py` | PostgREST falso por HTTP en :54321 (las tablas `gw_*` en memoria): la prueba local **sin Supabase** |
 | `local_sin_supabase.env.ejemplo` | El entorno de esa prueba (sin secretos) |
@@ -105,7 +105,15 @@ proyecto (pegar el archivo y correrlo) o con `psql`:
 ```sh
 psql "<connection string>" -f proxy/sql/003_gateway.sql
 psql "<connection string>" -f proxy/sql/004_serverless.sql
+psql "<connection string>" -f proxy/sql/005_historial.sql
 ```
+
+**005 (historial, 2026-10-21) todavía no está aplicada en ningún proyecto:**
+hay que aplicarla en el del motor (`liylqznfyqvyppuupqra`) con
+`aplicar_migraciones.py --solo 005_historial.sql` (o con las de arriba). Solo
+suma índices (los filtros de `GET /v1/compras`, el cursor, `GET /v1/resumen`
+y la purga), es idempotente y no cambia datos: sin ella el motor anda igual,
+más lento con muchas compras.
 
 O con un token de acceso personal (supabase.com/dashboard/account/tokens) en
 el `.env` como `SUPABASE_ACCESS_TOKEN=sbp_…`, por la API de administración
@@ -113,7 +121,8 @@ el `.env` como `SUPABASE_ACCESS_TOKEN=sbp_…`, por la API de administración
 token y se puede correr otra vez:
 
 ```sh
-$PY deploy/vercel/aplicar_migraciones.py        # 003 y después 004
+$PY deploy/vercel/aplicar_migraciones.py        # 003, 004 y después 005
+$PY deploy/vercel/aplicar_migraciones.py --solo 005_historial.sql   # solo la nueva
 ```
 
 Después verificá (solo lectura; lee `SUPABASE_URL` y
@@ -240,6 +249,9 @@ npx vercel env ls production                               # nombres, sin valore
   `: latido`); un error final va como error JSON-RPC con
   `data.http_status`. Se puede bajar (hasta 30 s como mucho); apagarlo
   (`0`, `off`) o subirlo de 30 no arranca.
+- **Retención:** `GATEWAY_RETENCION_DIAS` (90 por defecto; en Vercel, hasta
+  365: más no arranca). La purga la dispara el cron de `vercel.json`, que
+  necesita `CRON_SECRET` (ver el [paso 9](#9-retención-y-purga)).
 - Las variables nuevas valen recién en el deploy siguiente.
 
 ### 5. El túnel a la simulación
@@ -314,6 +326,33 @@ curl -s -o /dev/null -w '%{http_code}
 
 En la prueba local con varias instancias es la misma página:
 `http://127.0.0.1:8040/consola`.
+
+### 9. Retención y purga
+
+Las tablas `gw_*` (compras, contextos, ofertas, últimos veredictos,
+aprobaciones, esperas, eventos del historial y entregas de webhooks) se
+guardan `GATEWAY_RETENCION_DIAS` días (90). Lo más viejo lo borra una purga
+diaria: `vercel.json` tiene un cron (`"crons"`, todos los días a las 07:00
+UTC, lo que permite Hobby) que llama a `GET /interno/purgar`.
+
+- **El secreto:** Vercel manda `Authorization: Bearer $CRON_SECRET` en cada
+  cron. Generá uno (32 caracteres o más, sin espacios) y cargalo:
+
+  ```sh
+  $PY -c "import secrets; print(secrets.token_urlsafe(32))" | npx vercel env add CRON_SECRET production
+  ```
+
+  El motor lo acepta como `CRON_SECRET` o como `GATEWAY_PURGA_SECRETO` (si
+  están las dos, tienen que ser iguales; si no, no arranca). **Sin secreto la
+  ruta no existe** (404) y el cron no borra nada: no hay que apagarlo.
+- **Quién puede:** solo ese secreto. La ruta no está bajo `/v1`: ninguna
+  clave de API (completa ni de solo lectura) la usa (401), no está en la
+  OpenAPI y en el oyente local de `python -m proxy` no existe.
+- **A mano:** `curl -s "$GW/interno/purgar" -H "Authorization: Bearer $CRON_SECRET"`
+  responde `{"antes_de", "retencion_dias", "borradas": {"gw_compras": n, …}}`.
+  Si Supabase falla, 503: lo que ya se borró queda borrado y la próxima
+  sigue.
+- Con `005_historial.sql` aplicada, cada `DELETE` va por un índice de fecha.
 
 ## Prueba local con varias instancias
 

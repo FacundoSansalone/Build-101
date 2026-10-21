@@ -795,6 +795,48 @@ el archivo y correrlo) o con `psql "<connection string>" -f proxy/sql/003_gatewa
 Con `GATEWAY_ESTADO=supabase` y sin las tablas, crear una compra da 503
 (falla cerrado y se ve).
 
+### Historial y retención (panel del cliente)
+
+Lo que consume el panel de una empresa cliente por `/v1` (guía para el
+integrador: [`docs/INTEGRACION.md`](../docs/INTEGRACION.md#historial-y-explicación)):
+
+- **Historial de eventos** (`historial.py`): cada evento de una compra de
+  integrador se guarda en `gw_eventos` (004) en segundo plano y **sin
+  decidir nada** (si no se guarda, la compra sigue), como una proyección
+  saneada con una lista blanca por tipo: ids seguros, montos, monedas,
+  fechas, cronogramas, chequeos saneados y etiquetas fijas. Nada del texto
+  libre del comercio (`item_label`, títulos, descripciones, el JWT, los
+  mandatos, el `motivo` de un veredicto del Guard, el escenario); `error` y
+  `guard_cambiado` no se guardan. Con varias instancias o con el almacén en
+  memoria; con Supabase y **una** instancia no se escribe (la base puede
+  tener solo 003) y la explicación sale sin línea de tiempo.
+- **Veredictos explicables** (`alertas.py`): cada veredicto que guarda la
+  compra suma `chequeos_detalle` saneados (con un `caso` fijo por chequeo),
+  `alertas` y `monto`/`moneda`. La compra guarda además por qué la cortó el
+  filtro (`corte`: `manipulacion` o `sin_revisar`) y el último checkout que
+  el proxy frenó sin veredicto (`bloqueo_proxy`).
+- **La explicación** (`explicacion.py`, funciones puras): resultado,
+  alertas, intento de estafa, resumen, línea de tiempo y un texto por
+  chequeo, con plantillas fijas.
+- **`/v1`**: `GET /v1/compras` con `desde`, `hasta`, `referencia`, `alerta`
+  y `cursor` (y en cada compra `resultado`, `alertas` e
+  `intento_de_estafa`); `GET /v1/compras/{id}/explicacion`; `GET
+  /v1/resumen`. Con varias instancias, los contextos y las aprobaciones de
+  la página salen en una consulta por tabla (`compra_id=in.(…)`), no dos por
+  compra.
+- **Retención** (`retencion.py`): las tablas `gw_*` se guardan
+  `GATEWAY_RETENCION_DIAS` días (90; de 7 a 3650, y más que la vida de una
+  compra). La purga (`AlmacenEstado.purgar`) la dispara un `GET` o `POST` a
+  `/interno/purgar` con `Authorization: Bearer <secreto>`, solo en el oyente
+  público: el secreto es `GATEWAY_PURGA_SECRETO` o, si no está, `CRON_SECRET`
+  (32 caracteres o más; con las dos, iguales). Sin secreto la ruta no existe.
+  No está bajo `/v1`: ninguna clave de API la usa. Responde
+  `{"antes_de", "retencion_dias", "borradas": {tabla: n}}`.
+- **Migración `sql/005_historial.sql`:** solo índices (los filtros del
+  listado, el cursor y la purga), aditiva e idempotente. Sin ella el código
+  anda igual, más lento con muchas compras. Se aplica a mano, después de 003
+  y 004.
+
 ### Variables del gateway
 
 | Variable | Default | Qué es |
@@ -813,6 +855,9 @@ Con `GATEWAY_ESTADO=supabase` y sin las tablas, crear una compra da 503
 | `GATEWAY_MAX_CUERPO_A2A_BYTES` | `5242880` | Tope de un pedido A2A de integrador |
 | `GATEWAY_COMPRA_TTL_S` | `86400` | Vida de una compra de integrador |
 | `GATEWAY_CONSOLA` | `0` | `1`: la consola web (`/consola`, `proxy/consola/`) en los dos oyentes, sin clave (llama a `/v1` con la que pega el usuario). En Vercel está siempre prendida |
+| `GATEWAY_RETENCION_DIAS` | `90` | Días que se guardan las tablas `gw_*` (de 7 a 3650; más que `GATEWAY_COMPRA_TTL_S`). En Vercel, hasta 365 |
+| `GATEWAY_PURGA_SECRETO` | — | Secreto de `/interno/purgar` (32 caracteres o más, sin espacios). Sin él (ni `CRON_SECRET`), no hay purga |
+| `CRON_SECRET` | — | El que Vercel manda en el `Authorization` de cada cron: vale como `GATEWAY_PURGA_SECRETO` si esa no está (si están las dos, iguales) |
 | `GATEWAY_LATIDO_S` | apagado | Latido de un pedido A2A retenido en `/a2a/m/{comercio}`: si la respuesta no está a los N segundos, sale `200` y un espacio cada N antes del JSON (en `message/stream`, un comentario `: latido`); un error final va como error JSON-RPC con `data.http_status`. Más de 0 y hasta 60; `0` u `off`, apagado. En Vercel, 15 (hasta 30; no se apaga) |
 | *(nombres libres)* | — | Secretos de webhook, los que nombra `secreto_env` |
 
@@ -932,10 +977,16 @@ intención queda apagada (pedido literal).
 | `webhooks.py` | `Despachador`: webhooks firmados (HMAC con `t`), reintentos, SSRF con IP fijada; `verificar_firma` para el receptor |
 | `estado.py` | Almacén del gateway: `EstadoMemoria` (default) y `EstadoSupabase` (`GATEWAY_ESTADO=supabase`) |
 | `sin_estado.py` | `/v1/evaluar` (el Guard sobre un checkout que manda el integrador) y `/v1/filtrar` |
-| `tipos_gateway.py` | Tipos compartidos del gateway (config, errores, `vista_veredicto`, protocolos) |
+| `tipos_gateway.py` | Tipos compartidos del gateway (config, errores, `vista_veredicto`, filtros y página del listado, protocolos) |
+| `alertas.py` | Chequeos explicables del veredicto: saneamiento por lista blanca, el `caso` de cada chequeo, las `alertas` y el monto evaluado |
+| `historial.py` | La proyección saneada de cada evento de una compra de integrador que va a `gw_eventos` |
+| `explicacion.py` | La explicación de una compra (resultado, alertas, resumen, línea de tiempo, chequeos) y el resumen de muchas, sin LLM ni I/O |
+| `retencion.py` | La ruta de la purga (`/interno/purgar`, Vercel Cron) |
 | `subir_benchmark.py` | `python -m proxy.subir_benchmark results/*.json`: sube corridas del benchmark a Supabase |
 | `sql/001_persistencia.sql` | Tablas de Supabase |
 | `sql/003_gateway.sql` | Tablas del estado del gateway (`gw_*`); se aplica a mano |
+| `sql/004_serverless.sql` | Varias instancias (esperas, eventos, cola de webhooks, trigger); después de 003 |
+| `sql/005_historial.sql` | Índices del historial y de la purga; después de 004 (no aplicada) |
 | `scripts/smoke_checkout.py` | Prueba real de punta a punta con el cliente A2A del sample (escenarios fijos: exige `PROXY_FICHA_DEMO=1`) |
 | `scripts/smoke_v1_general.py` | Compra de integrador por `/v1` de punta a punta, sin LLM de nuestro lado (gateway de prueba en el proceso o uno levantado) |
 | `scripts/smoke_v1_pausas.py` | Las pausas (porqué y oportunidad) contra un gateway con varias instancias (`deploy/vercel/local_multi.py` o Vercel): las respuestas por `/v1` llegan por otra instancia que la que retiene la búsqueda; casos sin respuesta, sin decisión y con la instancia muerta |
