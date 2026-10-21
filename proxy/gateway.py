@@ -341,7 +341,13 @@ class NucleoProxy:
                     continue
                 elegidas.append(compra)
                 if len(elegidas) >= maximo:
-                    hay_mas = i < len(filas) - 1 or len(filas) == lote
+                    hay_mas = i < len(filas) - 1
+                    if not hay_mas and len(filas) == lote:
+                        # Justo al final de una página llena: ¿hay otra fila?
+                        hay_mas = bool(await self.proxy.almacen.listar_compras(
+                            integrador.id, limite=1, estado=estados, desde=filtros.desde,
+                            hasta=filtros.hasta, referencia=filtros.referencia, antes_de=cursor,
+                        ))
                     return elegidas, cursor if hay_mas else None
             miradas += len(filas)
             if len(filas) < lote:

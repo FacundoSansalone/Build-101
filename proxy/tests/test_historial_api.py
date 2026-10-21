@@ -523,3 +523,33 @@ async def test_el_almacen_no_revienta_con_fechas_extremas():
             await almacen.listar_compras("acme", **filtro)
     with pytest.raises(ErrorAlmacen):
         await almacen.purgar(rara)
+
+
+@pytest.mark.parametrize("compras, completo", [(4, True), (5, False)])
+async def test_el_resumen_completo_con_justo_el_maximo(config_gw, monkeypatch, compras, completo):
+    """Con justo `MAX_COMPRAS_RESUMEN` compras (un múltiplo del lote) entraron
+    todas: `completo` no puede salir false."""
+    from proxy import gateway
+
+    monkeypatch.setattr(gateway, "LOTE_ESCANEO", 2)
+    monkeypatch.setattr(gateway, "MAX_COMPRAS_RESUMEN", 4)
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], almacen=EstadoMemoria())
+    async with cliente_publico(mundo.app) as c:
+        for _ in range(compras):
+            await crear_compra(c)
+        datos = (await c.get("/v1/resumen")).json()
+    assert datos["completo"] is completo and datos["compras"] == min(compras, 4)
+
+
+async def test_la_ultima_pagina_justa_no_tiene_siguiente(config_gw, monkeypatch):
+    from proxy import gateway
+
+    monkeypatch.setattr(gateway, "LOTE_ESCANEO", 2)
+    mundo = armar_gateway(config_gw, evaluador_espia()[0], almacen=EstadoMemoria())
+    async with cliente_publico(mundo.app) as c:
+        for _ in range(4):
+            await crear_compra(c)
+        primera = (await c.get("/v1/compras", params={"limite": "2"})).json()
+        segunda = (await c.get("/v1/compras", params={"limite": "2", "cursor": primera["siguiente"]})).json()
+    assert len(primera["compras"]) == 2 and primera["siguiente"] is not None
+    assert len(segunda["compras"]) == 2 and segunda["siguiente"] is None
