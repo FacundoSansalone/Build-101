@@ -61,6 +61,11 @@ EstadoCompra = Literal[
     "vencida",
 ]
 Decision = Literal["aceptar", "rechazar"]
+# Por qué una compra quedó `bloqueada` (la cortó el filtro de seguridad): el
+# filtro detectó manipulación, o no pudo revisar la respuesta (falló, venció
+# o la marcó sin revisar, `filtro:*`) y se cortó por las dudas (fail-closed).
+CorteSeguridad = Literal["manipulacion", "sin_revisar"]
+CORTES = frozenset(get_args(CorteSeguridad))
 
 MAX_COMPRAS = 200
 LARGO_MAXIMO_RESPUESTA = 1000
@@ -161,6 +166,10 @@ class Compra:
     actualizada: datetime | None = None
     veredictos: list[dict[str, Any]] = field(default_factory=list)  # vista_veredicto
     aprobacion_pendiente: dict[str, Any] | None = None
+    corte: CorteSeguridad | None = None  # con estado `bloqueada` (panel del cliente)
+    # El último checkout que el proxy frenó sin veredicto del Guard (no lo pudo
+    # evaluar): `{"ts", "contexto_id", "cart_id"}`, con ids seguros o None.
+    bloqueo_proxy: dict[str, Any] | None = None
     # -- varias instancias (proxy/esperas.py) ---------------------------------
     # `espera_id`: la espera abierta de la compra (`gw_esperas`), la que va en
     # la fila con `a_fila(espera=True)`. `espera_guardada`: la que esta
@@ -282,6 +291,8 @@ class Compra:
                 else None,
                 "veredictos": copy.deepcopy(self.veredictos),
                 "aprobacion_pendiente": copy.deepcopy(self.aprobacion_pendiente),
+                "corte": self.corte,
+                "bloqueo_proxy": copy.deepcopy(self.bloqueo_proxy),
             },
         }
         if espera:
@@ -485,6 +496,9 @@ class Compra:
             actualizada=_fecha(fila["actualizada"]) if fila.get("actualizada") else None,
             veredictos=copy.deepcopy(veredictos[-MAX_VEREDICTOS_POR_COMPRA:]),
             aprobacion_pendiente=copy.deepcopy(pendiente),
+            # Una fila de antes (sin corte) o con un valor que no es de estos: sin dato.
+            corte=datos.get("corte") if datos.get("corte") in CORTES else None,
+            bloqueo_proxy=_bloqueo_proxy(datos.get("bloqueo_proxy")),
             espera_id=espera_id,
             espera_guardada=espera_id,
         )
@@ -520,6 +534,8 @@ class Compra:
             aprobacion_pendiente=copy.deepcopy(self.aprobacion_pendiente),
             veredictos=tuple(copy.deepcopy(self.veredictos)),
             aprobaciones=tuple(copy.deepcopy(aprobaciones)),
+            corte=self.corte,
+            bloqueo_proxy=copy.deepcopy(self.bloqueo_proxy),
         )
 
     # -- esperas -------------------------------------------------------------
@@ -584,6 +600,31 @@ def _fecha(valor: Any) -> datetime:
         raise TypeError("fecha no es texto")
     fecha = datetime.fromisoformat(valor)
     return fecha if fecha.tzinfo is not None else fecha.replace(tzinfo=timezone.utc)
+
+
+def _bloqueo_proxy(valor: Any) -> dict[str, Any] | None:
+    """`{"ts", "contexto_id", "cart_id"}` de una fila; lo que no tiene esa
+    forma (una fila de antes, otro valor) se lee como sin bloqueo."""
+    if not isinstance(valor, dict) or not isinstance(valor.get("ts"), str):
+        return None
+    try:
+        _fecha(valor["ts"])
+    except ValueError:
+        return None
+    return {
+        "ts": valor["ts"],
+        "contexto_id": valor.get("contexto_id") if isinstance(valor.get("contexto_id"), str) else None,
+        "cart_id": valor.get("cart_id") if isinstance(valor.get("cart_id"), str) else None,
+    }
+
+
+def bloqueo_del_proxy(contexto_id: Any, cart_id: Any, ts: datetime) -> dict[str, Any]:
+    """Lo que guarda la compra de un checkout que el proxy frenó sin veredicto
+    del Guard: el momento y los ids, solo si son seguros."""
+    from proxy.a2a import cart_id_seguro, id_seguro  # a2a no importa este módulo
+
+    return {"ts": ts.isoformat(), "contexto_id": id_seguro(contexto_id),
+            "cart_id": cart_id_seguro(cart_id)}
 
 
 def _texto_o_none(valor: Any) -> str | None:

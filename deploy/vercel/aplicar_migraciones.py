@@ -1,7 +1,7 @@
 """Aplica las migraciones del gateway en Supabase por la API de administración.
 
-    $PY deploy/vercel/aplicar_migraciones.py            # 003 y después 004
-    $PY deploy/vercel/aplicar_migraciones.py --solo 004_serverless.sql
+    $PY deploy/vercel/aplicar_migraciones.py            # 003, 004 y después 005
+    $PY deploy/vercel/aplicar_migraciones.py --solo 005_historial.sql
 
 Usa `POST https://api.supabase.com/v1/projects/<ref>/database/query` con un
 token de acceso personal (`SUPABASE_ACCESS_TOKEN=sbp_…`, de
@@ -26,7 +26,8 @@ import httpx
 
 RAIZ = Path(__file__).resolve().parents[2]
 SQL = RAIZ / "proxy" / "sql"
-MIGRACIONES = ("003_gateway.sql", "004_serverless.sql")
+# En orden: cada una va después de la anterior (005 solo suma índices).
+MIGRACIONES = ("003_gateway.sql", "004_serverless.sql", "005_historial.sql")
 API = "https://api.supabase.com/v1/projects/{ref}/database/query"
 
 

@@ -7,6 +7,12 @@ oportunidad, una aprobación). Además hay dos servicios sin estado:
 gateway) y `/v1/filtrar` (el filtro sobre contenido que el agente lee fuera
 del gateway).
 
+El historial (panel del cliente): `GET /v1/compras` con filtros (`desde`,
+`hasta`, `referencia`, `alerta`) y cursor opaco, y en cada compra su
+`resultado`, sus `alertas` e `intento_de_estafa`;
+`GET /v1/compras/{id}/explicacion` (`proxy/explicacion.py`) y
+`GET /v1/resumen`.
+
 Este módulo no sabe nada del proxy: valida, llama al `NucleoGateway` y arma
 las vistas. Las reglas que dependen del estado (dueño de la compra, estado
 válido, comercio permitido, límite de compras) las aplica el núcleo con
@@ -24,12 +30,15 @@ verificar entera no es una autorización.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import inspect
 import json
 import logging
 import math
 import re
 from collections.abc import Awaitable, Callable
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from pydantic import ValidationError
@@ -39,13 +48,15 @@ from starlette.routing import Match, Route
 from starlette.types import Receive, Scope, Send
 
 from contracts import CheckoutVisto, Ficha, OfertasVistas, Requisito
-from proxy import a2a, openapi, vistas
+from proxy import a2a, explicacion, openapi, vistas
+from proxy.alertas import ALERTAS
 from proxy.tipos_gateway import (
     ID_COMPRA_RE,
     ID_SEGURO_RE,
     ID_SLUG_RE,
     RUTAS_V1_PUBLICAS,
     ErrorApi,
+    FiltrosListado,
     FotoCompra,
     Integrador,
     NucleoGateway,
@@ -80,6 +91,19 @@ MAX_BYTES_FICHA = 32_768
 
 CATEGORIA_RE = re.compile(r"[0-9]{1,12}")
 MONEDA_RE = re.compile(r"[A-Z]{3}")
+# Historial: fechas de los filtros, el cursor y la ventana del resumen.
+FECHA_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+FECHA_HORA_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?"
+)
+CURSOR_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
+# Los años que aceptan los filtros y el cursor: fuera de esto no hay compras, y
+# una fecha extrema (el año 1 con zona, el 9999) desborda al pasarla a UTC.
+ANIO_MINIMO = 2000
+ANIO_MAXIMO = 2100
+VERSION_CURSOR = 1
+DIAS_RESUMEN = 30
+MAX_DIAS_RESUMEN = 366
 
 ESTADOS_COMPRA = frozenset({
     "creada", "esperando_contexto", "negociando", "esperando_decision",
@@ -599,6 +623,133 @@ def _limite(request: Request) -> int:
     return int(crudo)
 
 
+# -- historial: filtros, cursor y ventana ----------------------------------------
+
+
+def _en_utc(momento: datetime) -> datetime:
+    """En UTC y entre `ANIO_MINIMO` y `ANIO_MAXIMO`; si no, `ValueError` (un año
+    extremo con zona desborda: `OverflowError`, que también es fuera de rango)."""
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    try:
+        utc = momento.astimezone(timezone.utc)
+    except OverflowError:
+        raise ValueError("fecha fuera de rango") from None
+    if not ANIO_MINIMO <= utc.year <= ANIO_MAXIMO:
+        raise ValueError("fecha fuera de rango")
+    return utc
+
+
+def _fecha_param(request: Request, nombre: str, *, fin: bool = False) -> datetime | None:
+    """Una fecha ISO 8601 de la query: `YYYY-MM-DD` (un día UTC entero: como
+    `hasta` cuenta hasta el final de ese día) o fecha y hora (sin zona, UTC;
+    un `+` sin codificar llega como espacio y se acepta igual). Entre los años
+    2000 y 2100; si no, 400."""
+    crudo = request.query_params.get(nombre)
+    if crudo is None:
+        return None
+    texto = crudo.strip().replace(" ", "+")
+    problema = _error_validacion(
+        nombre, f"fecha ISO 8601 (YYYY-MM-DD o fecha y hora) entre {ANIO_MINIMO} y {ANIO_MAXIMO}",
+    )
+    try:
+        if FECHA_RE.fullmatch(texto):
+            dia = date.fromisoformat(texto)
+            momento = _en_utc(datetime(dia.year, dia.month, dia.day, tzinfo=timezone.utc))
+            return momento + timedelta(days=1) if fin else momento
+        if FECHA_HORA_RE.fullmatch(texto):
+            return _en_utc(datetime.fromisoformat(texto.replace("Z", "+00:00")))
+    except (ValueError, OverflowError):
+        raise problema from None
+    raise problema
+
+
+def _rango(desde: datetime | None, hasta: datetime | None) -> None:
+    if desde is not None and hasta is not None and desde >= hasta:
+        raise _error_validacion("desde", "tiene que ser anterior a hasta")
+
+
+def codificar_cursor(cursor: tuple[datetime, str] | None) -> str | None:
+    """El cursor opaco de `siguiente`: base64url (sin relleno) de un JSON con
+    la última compra de la página. No se interpreta afuera."""
+    if cursor is None:
+        return None
+    creada, compra_id = cursor
+    crudo = json.dumps(
+        {"v": VERSION_CURSOR, "c": creada.isoformat(), "i": compra_id}, separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(crudo).decode("ascii").rstrip("=")
+
+
+def decodificar_cursor(texto: Any) -> tuple[datetime, str]:
+    """El cursor de `siguiente`, validado (no es un filtro libre: la fecha y
+    el id se vuelven a escribir antes de ir a la base). Si no sirve, 400."""
+    problema = _error_validacion("cursor", "cursor inválido: usá el `siguiente` de la respuesta")
+    if not isinstance(texto, str) or not CURSOR_RE.fullmatch(texto):
+        raise problema
+    try:
+        crudo = base64.urlsafe_b64decode(texto + "=" * (-len(texto) % 4))
+        datos = json.loads(crudo)
+        if not isinstance(datos, dict) or set(datos) != {"v", "c", "i"} or datos["v"] != VERSION_CURSOR:
+            raise ValueError
+        texto_c = datos["c"]
+        if not isinstance(texto_c, str) or not FECHA_HORA_RE.fullmatch(texto_c):
+            raise ValueError
+        creada = datetime.fromisoformat(texto_c.replace("Z", "+00:00"))
+        if creada.tzinfo is None or not es_id(ID_COMPRA_RE, datos["i"]):
+            raise ValueError
+        creada = _en_utc(creada)
+    except (ValueError, TypeError, OverflowError, binascii.Error, UnicodeDecodeError,
+            RecursionError):
+        raise problema from None
+    return creada, datos["i"]
+
+
+def _filtros_listado(request: Request) -> FiltrosListado:
+    limite = _limite(request)
+    estado = request.query_params.get("estado")
+    if estado is not None and estado not in ESTADOS_COMPRA:
+        raise _error_validacion("estado", "estado desconocido")
+    alerta = request.query_params.get("alerta")
+    if alerta is not None and alerta not in ALERTAS:
+        raise _error_validacion("alerta", "una de: " + ", ".join(ALERTAS))
+    problemas = _Problemas()
+    referencia = _texto(
+        problemas, dict(request.query_params), "referencia", "referencia",
+        largo=LARGO_REFERENCIA, obligatorio=False,
+    )
+    if referencia is not None and not referencia.isprintable():
+        problemas.agregar("referencia", "solo caracteres imprimibles")
+    problemas.lanzar()
+    desde = _fecha_param(request, "desde")
+    hasta = _fecha_param(request, "hasta", fin=True)
+    _rango(desde, hasta)
+    crudo = request.query_params.get("cursor")
+    cursor = decodificar_cursor(crudo) if crudo is not None else None
+    return FiltrosListado(
+        limite=limite, estado=estado, desde=desde, hasta=hasta, referencia=referencia,
+        alerta=alerta, cursor=cursor,
+    )
+
+
+def _ventana_resumen(request: Request, ahora: datetime) -> tuple[datetime, datetime]:
+    """[`desde`, `hasta`) del resumen: por defecto los últimos 30 días hasta
+    el final de hoy (UTC), así dos pedidos del mismo día ven la misma
+    ventana; con una sola punta, 30 días desde o hasta ella. Como mucho 366
+    días."""
+    desde = _fecha_param(request, "desde")
+    hasta = _fecha_param(request, "hasta", fin=True)
+    if hasta is None:
+        fin_de_hoy = datetime(ahora.year, ahora.month, ahora.day, tzinfo=timezone.utc) + timedelta(days=1)
+        hasta = fin_de_hoy if desde is None or desde < fin_de_hoy else desde + timedelta(days=DIAS_RESUMEN)
+    if desde is None:
+        desde = hasta - timedelta(days=DIAS_RESUMEN)
+    _rango(desde, hasta)
+    if hasta - desde > timedelta(days=MAX_DIAS_RESUMEN):  # años acotados: no desborda
+        raise _error_validacion("desde", f"el período es de hasta {MAX_DIAS_RESUMEN} días")
+    return desde, hasta
+
+
 def _compra_id(request: Request) -> str:
     """Un id con otro formato no puede existir: el mismo 404 que una compra
     de otro integrador (no se filtra nada)."""
@@ -690,6 +841,26 @@ def rutas_v1(
         a2a_url = nucleo.url_a2a(foto.comercio_id) if foto.comercio_id else None
         return vistas.vista_compra(foto, a2a_url=a2a_url)
 
+    def resumen_de(foto: FotoCompra, vista_compra: dict[str, Any], ahora: datetime) -> dict[str, Any]:
+        return explicacion.resumen_de_compra(
+            vista_compra, ahora=ahora, ttl_s=nucleo.ttl_compra_s, corte=foto.corte,
+            bloqueo_proxy=foto.bloqueo_proxy,
+        )
+
+    def vista_listada(foto: FotoCompra, ahora: datetime) -> dict[str, Any]:
+        """La `VistaCompra` con lo del historial: `resultado`, `alertas` e
+        `intento_de_estafa` (de los veredictos guardados, sin eventos). Sin el
+        `chequeos_detalle` de los veredictos: 200 compras con 20 veredictos
+        cada una no entran en una respuesta (el detalle está en la compra y en
+        su explicación)."""
+        datos = vista(foto)
+        resumen = resumen_de(foto, datos, ahora)
+        datos["veredictos"] = [
+            {k: v for k, v in veredicto.items() if k != "chequeos_detalle"}
+            for veredicto in datos["veredictos"]
+        ]
+        return {**datos, **resumen}
+
     async def crear_compra(request: Request) -> Response:
         integrador = integrador_de(request)
         solicitud = validar_solicitud_compra(await leer_json(request, max_cuerpo_bytes))
@@ -698,12 +869,33 @@ def rutas_v1(
 
     async def listar_compras(request: Request) -> Response:
         integrador = integrador_de(request)
-        limite = _limite(request)
-        estado = request.query_params.get("estado")
-        if estado is not None and estado not in ESTADOS_COMPRA:
-            raise _error_validacion("estado", "estado desconocido")
-        fotos = await nucleo.listar_compras(integrador, limite=limite, estado=estado)
-        return _json({"compras": [vista(f) for f in fotos[:limite]]})
+        filtros = _filtros_listado(request)
+        pagina = await nucleo.listar_compras(integrador, filtros)
+        ahora = datetime.now(timezone.utc)
+        return _json({
+            "compras": [vista_listada(f, ahora) for f in pagina.fotos[:filtros.limite]],
+            "siguiente": codificar_cursor(pagina.siguiente),
+        })
+
+    async def explicar(request: Request) -> Response:
+        integrador = integrador_de(request)
+        foto, eventos = await nucleo.explicacion_compra(integrador, _compra_id(request))
+        return _json(explicacion.explicar(
+            vista(foto), eventos, ahora=datetime.now(timezone.utc), ttl_s=nucleo.ttl_compra_s,
+            corte=foto.corte, bloqueo_proxy=foto.bloqueo_proxy,
+        ))
+
+    async def resumen(request: Request) -> Response:
+        integrador = integrador_de(request)
+        ahora = datetime.now(timezone.utc)
+        desde, hasta = _ventana_resumen(request, ahora)
+        fotos, completo = await nucleo.resumen_compras(integrador, desde, hasta)
+        entradas = []
+        for foto in fotos:
+            datos = vistas.vista_compra(foto, a2a_url=None)
+            monto, moneda = explicacion.monto_de_compra(datos, foto.bloqueo_proxy)
+            entradas.append({**resumen_de(foto, datos, ahora), "monto": monto, "moneda": moneda})
+        return _json({**explicacion.resumir(entradas, desde=desde, hasta=hasta), "completo": completo})
 
     async def obtener_compra(request: Request) -> Response:
         integrador = integrador_de(request)
@@ -794,6 +986,8 @@ def rutas_v1(
         ("/v1/compras", "POST", crear_compra),
         ("/v1/compras", "GET", listar_compras),
         ("/v1/compras/{compra_id}", "GET", obtener_compra),
+        ("/v1/compras/{compra_id}/explicacion", "GET", explicar),
+        ("/v1/resumen", "GET", resumen),
         ("/v1/compras/{compra_id}/respuesta", "POST", responder),
         ("/v1/compras/{compra_id}/decision", "POST", decidir),
         ("/v1/compras/{compra_id}/aprobaciones", "POST", aprobar),

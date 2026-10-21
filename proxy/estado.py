@@ -126,6 +126,20 @@ MAX_BYTES_CUERPO_WEBHOOK = 1024 * 1024   # el cuerpo de una entrega en la cola
 INTENTOS_APROBACION = 3                  # insertar o leer la pendiente que ya existe
 TIPO_EVENTO_RE = re.compile(r"[a-z][a-z0-9_]{0,59}")
 PG_UNICA = "23505"                       # unique_violation (PostgREST responde 409)
+LARGO_REFERENCIA = 200                   # el de `api_v1.LARGO_REFERENCIA`
+IDS_POR_CONSULTA = 100                   # `compra_id=in.(…)`: la URL queda corta
+MAX_FILAS_LECTURA = 20_000               # varias compras: contextos o aprobaciones
+MAX_EVENTOS_RECIENTES = 1000             # los más nuevos de una compra (la explicación)
+# Lo que borra la purga (retención), en este orden: lo que apunta a una compra
+# antes que la compra (los contextos y las esperas además se van en cascada).
+TABLAS_PURGA = (
+    "gw_eventos", "gw_ofertas", "gw_ultimos_veredictos", "gw_aprobaciones",
+    "gw_entregas_webhook", "gw_esperas", "gw_contextos", "gw_compras",
+)
+# Las de 004: con una sola instancia la base puede no tenerlas (la purga las
+# saltea si PostgREST dice que no existen: `PGRST205`, o `42P01` de Postgres).
+TABLAS_004 = frozenset({"gw_eventos", "gw_esperas"})
+TABLA_INEXISTENTE = frozenset({"PGRST205", "42P01"})
 
 
 class _Cualquiera:
@@ -175,12 +189,63 @@ def _estado_compra(estado: Any) -> str:
     return estado
 
 
+def _estados_filtro(estado: Any) -> tuple[str, ...] | None:
+    """El filtro de estado del listado: uno, varios (tupla) o ninguno."""
+    if estado is None:
+        return None
+    return _estados_esperados(estado)
+
+
+def _referencia(valor: Any) -> str | None:
+    if valor is None:
+        return None
+    if not isinstance(valor, str) or not 1 <= len(valor) <= LARGO_REFERENCIA or not valor.isprintable():
+        raise ErrorAlmacen("referencia inválida")
+    return valor
+
+
+def _cursor(antes_de: Any) -> tuple[datetime, str] | None:
+    """(creada, id) de la última compra vista: el listado sigue con las
+    anteriores (orden `creada desc, id desc`)."""
+    if antes_de is None:
+        return None
+    if not isinstance(antes_de, (tuple, list)) or len(antes_de) != 2:
+        raise ErrorAlmacen("cursor inválido")
+    return _momento_utc(antes_de[0]), _id_compra(antes_de[1])
+
+
+def _ids_compras(compra_ids: Any) -> list[str]:
+    """Los ids, validados antes de mandar nada y sin repetir (en orden)."""
+    if isinstance(compra_ids, (str, bytes)) or not hasattr(compra_ids, "__iter__"):
+        raise ErrorAlmacen("compra_ids inválidos")
+    return list(dict.fromkeys(_id_compra(c) for c in compra_ids))
+
+
+def _tipo_evento(tipo: Any) -> str:
+    if not es_id(TIPO_EVENTO_RE, tipo):
+        raise ErrorAlmacen("tipo de evento inválido")
+    return tipo
+
+
+def _antes_que(fila: dict[str, Any], cursor: tuple[datetime, str]) -> bool:
+    creada = _fecha(fila["creada"])
+    return creada < cursor[0] or (creada == cursor[0] and fila["id"] < cursor[1])
+
+
 def _iso(fecha: datetime) -> str:
     """ISO 8601 en UTC con `Z`: un `+00:00` en la query string se lee como
-    espacio si alguien no lo codifica."""
-    if fecha.tzinfo is None:
-        fecha = fecha.replace(tzinfo=timezone.utc)
-    return fecha.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    espacio si alguien no lo codifica. Una fecha que no se puede pasar a UTC
+    (el año 1 con zona) es `ErrorAlmacen`, no un `OverflowError`."""
+    return _momento_utc(fecha).isoformat().replace("+00:00", "Z")
+
+
+def _momento_utc(valor: Any) -> datetime:
+    """Una fecha (`_fecha`) ya en UTC; si desborda, `ErrorAlmacen`."""
+    fecha = _fecha(valor)
+    try:
+        return fecha.astimezone(timezone.utc)
+    except OverflowError:
+        raise ErrorAlmacen("fecha fuera de rango") from None
 
 
 def _fecha(valor: Any) -> datetime:
@@ -818,16 +883,36 @@ class EstadoMemoria:
         return copy.deepcopy(fila) if fila is not None else None
 
     async def listar_compras(
-        self, integrador_id: str, *, limite: int = 50, estado: str | None = None
+        self,
+        integrador_id: str,
+        *,
+        limite: int = 50,
+        estado: str | tuple[str, ...] | None = None,
+        desde: datetime | None = None,
+        hasta: datetime | None = None,
+        referencia: str | None = None,
+        antes_de: tuple[datetime | str, str] | None = None,
     ) -> list[dict[str, Any]]:
+        """Las compras del integrador, la más nueva primero. Filtros: estado
+        (uno o varios), `creada` en [`desde`, `hasta`), la `referencia`
+        exacta y, para seguir un listado, `antes_de` = (creada, id) de la
+        última que se vio."""
         _id_slug(integrador_id, "integrador_id")
         limite = _limite(limite)
-        if estado is not None:
-            _estado_compra(estado)
+        estados = _estados_filtro(estado)
+        desde = _momento_utc(desde) if desde is not None else None
+        hasta = _momento_utc(hasta) if hasta is not None else None
+        referencia = _referencia(referencia)
+        cursor = _cursor(antes_de)
         filas = [
             f
             for f in self._compras.values()
-            if f["integrador_id"] == integrador_id and (estado is None or f["estado"] == estado)
+            if f["integrador_id"] == integrador_id
+            and (estados is None or f["estado"] in estados)
+            and (desde is None or _fecha(f["creada"]) >= desde)
+            and (hasta is None or _fecha(f["creada"]) < hasta)
+            and (referencia is None or f.get("referencia") == referencia)
+            and (cursor is None or _antes_que(f, cursor))
         ]
         # La más nueva primero; a igual `creada` (filas de otro proceso), por id.
         filas.sort(key=lambda f: (_fecha(f["creada"]), f["id"]), reverse=True)
@@ -877,6 +962,49 @@ class EstadoMemoria:
         return [c for c, f in self._contextos.items() if f["compra_id"] == compra_id][
             :LIMITE_LISTADO_MAXIMO
         ]
+
+    async def contextos_de_compras(self, compra_ids: Any) -> dict[str, list[str]]:
+        """Los contextos de varias compras de una vez (el listado): por compra,
+        en orden de atadura, como `contextos_de_compra`."""
+        ids = _ids_compras(compra_ids)
+        return {
+            i: [c for c, f in self._contextos.items() if f["compra_id"] == i][:LIMITE_LISTADO_MAXIMO]
+            for i in ids
+        }
+
+    async def purgar(self, antes_de: datetime) -> dict[str, int]:
+        """Borra lo que es más viejo que `antes_de` (la retención,
+        `GATEWAY_RETENCION_DIAS`): compras, contextos, ofertas, últimos
+        veredictos, aprobaciones, entregas de webhooks, esperas y eventos.
+        Devuelve cuántas filas borró de cada tabla (sin contar lo que se va
+        en cascada con una compra)."""
+        limite = _momento_utc(antes_de)
+
+        def viejas(tabla: OrderedDict[Any, Any] | dict[Any, Any], columna: str) -> list[Any]:
+            return [k for k, f in tabla.items() if f.get(columna) and _fecha(f[columna]) < limite]
+
+        tablas = {
+            "gw_eventos": (self._eventos, "ts"),
+            "gw_ofertas": (self._ofertas, "registradas"),
+            "gw_ultimos_veredictos": (self._veredictos, "ts"),
+            "gw_aprobaciones": (self._aprobaciones, "creada"),
+            "gw_entregas_webhook": (self._entregas, "creada"),
+            "gw_esperas": (self._esperas, "creada"),
+            "gw_contextos": (self._contextos, "creado"),
+            "gw_compras": (self._compras, "creada"),
+        }
+        borradas: dict[str, int] = {}
+        for nombre in TABLAS_PURGA:
+            tabla, columna = tablas[nombre]
+            claves = viejas(tabla, columna)
+            for clave in claves:
+                del tabla[clave]
+            borradas[nombre] = len(claves)
+        # Como `on delete cascade`: lo que apuntaba a una compra borrada.
+        for tabla in (self._contextos, self._esperas):
+            for clave in [k for k, f in tabla.items() if f["compra_id"] not in self._compras]:
+                del tabla[clave]
+        return borradas
 
     # -- ofertas y último veredicto ---------------------------------------------
 
@@ -1001,6 +1129,12 @@ class EstadoMemoria:
         filas.sort(key=lambda f: (_fecha(f["creada"]), f["id"]))
         return copy.deepcopy(filas[:LIMITE_LISTADO_MAXIMO])
 
+    async def aprobaciones_de_compras(self, compra_ids: Any) -> dict[str, list[dict[str, Any]]]:
+        """Las aprobaciones de varias compras de una vez (el listado), como
+        `aprobaciones_de_compra` para cada una."""
+        ids = _ids_compras(compra_ids)
+        return {i: await self.aprobaciones_de_compra(i) for i in ids}
+
     # -- esperas (004) ------------------------------------------------------------
 
     def _abierta(self, compra_id: str) -> dict[str, Any] | None:
@@ -1110,6 +1244,25 @@ class EstadoMemoria:
         ]
         filas.sort(key=lambda f: f["orden"])
         return copy.deepcopy(filas[:limite])
+
+    async def contar_eventos(self, compra_id: str, tipo: str) -> int:
+        """Cuántos eventos de ese tipo tiene la compra (el tope del historial)."""
+        _id_compra(compra_id)
+        _tipo_evento(tipo)
+        return sum(1 for f in self._eventos.values() if f["compra_id"] == compra_id and f["tipo"] == tipo)
+
+    async def listar_eventos_recientes(
+        self, compra_id: str, limite: int = MAX_EVENTOS_RECIENTES
+    ) -> list[dict[str, Any]]:
+        """Los `limite` eventos más nuevos de la compra, en orden (la
+        explicación: el final de la compra no se pierde)."""
+        _id_compra(compra_id)
+        limite = _entero(limite, "limite", minimo=1)
+        filas = sorted(
+            (f for f in self._eventos.values() if f["compra_id"] == compra_id),
+            key=lambda f: f["orden"],
+        )
+        return copy.deepcopy(filas[-limite:])
 
     # -- entregas de webhooks y su cola (004) ---------------------------------
 
@@ -1367,17 +1520,147 @@ class EstadoSupabase:
         )
 
     async def listar_compras(
-        self, integrador_id: str, *, limite: int = 50, estado: str | None = None
+        self,
+        integrador_id: str,
+        *,
+        limite: int = 50,
+        estado: str | tuple[str, ...] | None = None,
+        desde: datetime | None = None,
+        hasta: datetime | None = None,
+        referencia: str | None = None,
+        antes_de: tuple[datetime | str, str] | None = None,
     ) -> list[dict[str, Any]]:
+        """Como `EstadoMemoria.listar_compras`. El cursor es un filtro de
+        PostgREST (`creada < c OR (creada = c AND id < i)`), con las fechas
+        entre comillas dentro del `or`; todo valor se valida antes."""
         params = {
             "integrador_id": f"eq.{_id_slug(integrador_id, 'integrador_id')}",
             "order": "creada.desc,id.desc",  # como EstadoMemoria: a igual fecha, por id
             "limit": str(_limite(limite)),
             "select": "*",
         }
-        if estado is not None:
-            params["estado"] = f"eq.{_estado_compra(estado)}"
+        estados = _estados_filtro(estado)
+        referencia = _referencia(referencia)
+        cursor = _cursor(antes_de)
+        if estados is not None:
+            params["estado"] = (
+                f"eq.{estados[0]}" if len(estados) == 1 else f"in.({','.join(estados)})"
+            )
+        if desde is not None:
+            params["creada"] = f"gte.{_iso(_fecha(desde))}"
+        if hasta is not None:
+            params["and"] = f'(creada.lt."{_iso(_fecha(hasta))}")'
+        if referencia is not None:
+            params["referencia"] = f"eq.{referencia}"
+        if cursor is not None:
+            momento = _iso(cursor[0])
+            params["or"] = f'(creada.lt."{momento}",and(creada.eq."{momento}",id.lt.{cursor[1]}))'
         return await self._filas(TABLA_COMPRAS, params)
+
+    @staticmethod
+    def _total(respuesta: httpx.Response, que: str) -> int:
+        """El total de `Content-Range` (`0-0/57` o `*/0`) de `count=exact`."""
+        rango = respuesta.headers.get("content-range", "")
+        _, _, total = rango.rpartition("/")
+        if not total.isdigit():
+            raise ErrorAlmacen(f"{que}: sin total en Content-Range")
+        return int(total)
+
+    # Filas por página al leer varias compras: el máximo que devuelve
+    # PostgREST por pedido (`db-max-rows`, 1000 en Supabase) puede ser menos
+    # de lo que hay, así que se pagina con el total de `count=exact`.
+    FILAS_POR_PAGINA = 1000
+
+    async def _filas_todas(self, tabla: str, params: dict[str, str]) -> list[dict[str, Any]]:
+        """Todas las filas del filtro, de a páginas (`offset`), hasta el total
+        que informa la base. Más de `MAX_FILAS_LECTURA` es `ErrorAlmacen`."""
+        filas: list[dict[str, Any]] = []
+        while True:
+            respuesta = await self._pedir(
+                "GET", tabla,
+                params={**params, "limit": str(self.FILAS_POR_PAGINA), "offset": str(len(filas))},
+                prefer="count=exact",
+            )
+            pagina = self._lista(respuesta, f"GET {tabla}")
+            total = self._total(respuesta, f"GET {tabla}")
+            if total > MAX_FILAS_LECTURA:
+                raise ErrorAlmacen(f"GET {tabla}: demasiadas filas")
+            filas.extend(pagina)
+            if not pagina or len(filas) >= total:
+                return filas
+
+    async def contextos_de_compras(self, compra_ids: Any) -> dict[str, list[str]]:
+        """Los contextos de varias compras con `compra_id=in.(…)`: una consulta
+        por tabla (de a `IDS_POR_CONSULTA` ids), no una por compra."""
+        ids = _ids_compras(compra_ids)
+        resultado: dict[str, list[str]] = {i: [] for i in ids}
+        for inicio in range(0, len(ids), IDS_POR_CONSULTA):
+            trozo = ids[inicio: inicio + IDS_POR_CONSULTA]
+            filas = await self._filas_todas(TABLA_CONTEXTOS, {
+                "compra_id": f"in.({','.join(trozo)})",
+                "select": "compra_id,contexto_id",
+                "order": "compra_id.asc,creado.asc,contexto_id.asc",
+            })
+            for fila in filas:
+                compra = fila.get("compra_id")
+                if compra in resultado and len(resultado[compra]) < LIMITE_LISTADO_MAXIMO:
+                    resultado[compra].append(_id_seguro(fila.get("contexto_id"), "contexto_id"))
+        return resultado
+
+    async def aprobaciones_de_compras(self, compra_ids: Any) -> dict[str, list[dict[str, Any]]]:
+        """Las aprobaciones de varias compras con `compra_id=in.(…)`, la más
+        vieja primero en cada una (como `aprobaciones_de_compra`)."""
+        ids = _ids_compras(compra_ids)
+        resultado: dict[str, list[dict[str, Any]]] = {i: [] for i in ids}
+        for inicio in range(0, len(ids), IDS_POR_CONSULTA):
+            trozo = ids[inicio: inicio + IDS_POR_CONSULTA]
+            filas = await self._filas_todas(TABLA_APROBACIONES, {
+                "compra_id": f"in.({','.join(trozo)})",
+                "select": "*",
+                "order": "compra_id.asc,creada.asc,id.asc",
+            })
+            for fila in filas:
+                compra = fila.get("compra_id")
+                if compra in resultado and len(resultado[compra]) < LIMITE_LISTADO_MAXIMO:
+                    resultado[compra].append(fila)
+        return resultado
+
+    # La columna de fecha de cada tabla que mira la purga y las de su clave
+    # (lo único que vuelve de cada fila borrada).
+    _PURGA: dict[str, tuple[str, str]] = {
+        "gw_eventos": ("ts", "id"),
+        "gw_ofertas": ("registradas", "contexto_id"),
+        "gw_ultimos_veredictos": ("ts", "contexto_id,cart_id"),
+        "gw_aprobaciones": ("creada", "id"),
+        "gw_entregas_webhook": ("creada", "id"),
+        "gw_esperas": ("creada", "id"),
+        "gw_contextos": ("creado", "contexto_id"),
+        "gw_compras": ("creada", "id"),
+    }
+
+    async def purgar(self, antes_de: datetime) -> dict[str, int]:
+        """Como `EstadoMemoria.purgar`: un `DELETE` por tabla con
+        `<fecha>=lt.<antes_de>` (los contextos y las esperas de una compra
+        borrada se van además en cascada). Una falla en el medio deja lo ya
+        borrado (la próxima purga sigue)."""
+        limite = _iso(_fecha(antes_de))
+        borradas: dict[str, int] = {}
+        for tabla in TABLAS_PURGA:
+            columna, clave = self._PURGA[tabla]
+            respuesta = await self._pedir(
+                "DELETE", tabla, params={columna: f"lt.{limite}", "select": clave},
+                prefer="return=representation",
+                aceptar=frozenset({404}) if tabla in TABLAS_004 else frozenset(),
+            )
+            if respuesta.status_code == 404:
+                # Una sola instancia con una base de solo 003: no hay esa tabla.
+                if self._codigo_pg(respuesta) not in TABLA_INEXISTENTE:
+                    raise ErrorAlmacen(f"DELETE {tabla}: HTTP 404")
+                logger.info("Purga: la tabla %s no está (la base no tiene 004)", tabla)
+                borradas[tabla] = 0
+                continue
+            borradas[tabla] = len(self._lista(respuesta, f"DELETE {tabla}"))
+        return borradas
 
     async def contar_activas(self, integrador_id: str, desde: datetime) -> int:
         """Cuenta con `Prefer: count=exact` y lee el total de `Content-Range`
@@ -1394,11 +1677,7 @@ class EstadoSupabase:
             },
             prefer="count=exact",
         )
-        rango = respuesta.headers.get("content-range", "")
-        _, _, total = rango.rpartition("/")
-        if not total.isdigit():
-            raise ErrorAlmacen("GET gw_compras: sin total en Content-Range")
-        return int(total)
+        return self._total(respuesta, "GET gw_compras")
 
     # -- contextos ----------------------------------------------------------------
 
@@ -1681,6 +1960,40 @@ class EstadoSupabase:
         for fila in filas:
             _entero(fila.get("orden"), "orden", minimo=1)
         return filas
+
+    async def contar_eventos(self, compra_id: str, tipo: str) -> int:
+        """Con `count=exact` y `limit=1` (no baja las filas)."""
+        respuesta = await self._pedir(
+            "GET", TABLA_EVENTOS,
+            params={"compra_id": f"eq.{_id_compra(compra_id)}", "tipo": f"eq.{_tipo_evento(tipo)}",
+                    "select": "id", "limit": "1"},
+            prefer="count=exact",
+        )
+        return self._total(respuesta, "GET gw_eventos")
+
+    async def listar_eventos_recientes(
+        self, compra_id: str, limite: int = MAX_EVENTOS_RECIENTES
+    ) -> list[dict[str, Any]]:
+        """De a páginas, del más nuevo al más viejo (`orden.desc`, `orden=lt.`),
+        hasta `limite`; se devuelven en orden."""
+        compra_id = _id_compra(compra_id)
+        limite = _entero(limite, "limite", minimo=1)
+        filas: list[dict[str, Any]] = []
+        antes: int | None = None
+        while len(filas) < limite:
+            pagina_limite = min(LIMITE_LISTADO_MAXIMO, limite - len(filas))
+            params = {"compra_id": f"eq.{compra_id}", "order": "orden.desc",
+                      "limit": str(pagina_limite), "select": "*"}
+            if antes is not None:
+                params["orden"] = f"lt.{antes}"
+            pagina = await self._filas(TABLA_EVENTOS, params)
+            for fila in pagina:
+                _entero(fila.get("orden"), "orden", minimo=1)
+            filas.extend(pagina)
+            if len(pagina) < pagina_limite:
+                break
+            antes = pagina[-1]["orden"]
+        return list(reversed(filas))
 
     # -- entregas de webhooks y su cola (004) -----------------------------------
 

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from contracts import STATUS_LLEGAN_A_FIRMA, Ficha, OfertasVistas, Oportunidad, Veredicto
-from proxy import a2a
+from proxy import a2a, alertas
 
 # -- headers y prefijos ------------------------------------------------------
 HEADER_COMPRA = "X-Compra-Id"
@@ -141,6 +141,20 @@ class SolicitudFiltrar:
     origen: OrigenContenido
 
 
+@dataclass(frozen=True)
+class FiltrosListado:
+    """`GET /v1/compras` ya validado: el límite, los filtros y el cursor
+    (`(creada, id)` de la última compra de la página anterior)."""
+
+    limite: int = 50
+    estado: str | None = None
+    desde: datetime | None = None
+    hasta: datetime | None = None   # excluido
+    referencia: str | None = None
+    alerta: str | None = None
+    cursor: tuple[datetime, str] | None = None
+
+
 # -- foto de una compra (de compras.Compra a la API y los webhooks) ----------
 @dataclass(frozen=True)
 class FotoCompra:
@@ -162,6 +176,19 @@ class FotoCompra:
     aprobacion_pendiente: dict[str, Any] | None
     veredictos: tuple[dict[str, Any], ...]    # vista_veredicto(...) en orden
     aprobaciones: tuple[dict[str, Any], ...]  # Aprobacion.a_json()
+    # Con estado `bloqueada`: "manipulacion" (el filtro la detectó) o
+    # "sin_revisar" (no pudo revisar y cortó); None en una fila de antes.
+    corte: str | None = None
+    # El último checkout que el proxy frenó sin veredicto (`Compra.bloqueo_proxy`).
+    bloqueo_proxy: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class PaginaCompras:
+    """Una página del listado y, si puede haber más, dónde sigue."""
+
+    fotos: tuple[FotoCompra, ...]
+    siguiente: tuple[datetime, str] | None = None
 
 
 # -- entregas de webhooks ----------------------------------------------------
@@ -198,7 +225,15 @@ class AlmacenEstado(Protocol):
     async def guardar_compra(self, fila: dict[str, Any]) -> None: ...
     async def cargar_compra(self, compra_id: str) -> dict[str, Any] | None: ...
     async def listar_compras(
-        self, integrador_id: str, *, limite: int = 50, estado: str | None = None
+        self,
+        integrador_id: str,
+        *,
+        limite: int = 50,
+        estado: str | tuple[str, ...] | None = None,
+        desde: datetime | None = None,
+        hasta: datetime | None = None,
+        referencia: str | None = None,
+        antes_de: tuple[datetime | str, str] | None = None,
     ) -> list[dict[str, Any]]: ...
     async def contar_activas(self, integrador_id: str, desde: datetime) -> int: ...
     async def atar_contexto(self, contexto_id: str, compra_id: str, comercio_id: str) -> str: ...
@@ -245,9 +280,19 @@ class AlmacenEstado(Protocol):
         self, fila: dict[str, Any]
     ) -> tuple[dict[str, Any], bool]: ...
     async def aprobaciones_de_compra(self, compra_id: str) -> list[dict[str, Any]]: ...
+    # -- historial (panel del cliente) ----------------------------------------
+    async def contextos_de_compras(self, compra_ids: Any) -> dict[str, list[str]]: ...
+    async def aprobaciones_de_compras(
+        self, compra_ids: Any
+    ) -> dict[str, list[dict[str, Any]]]: ...
+    async def purgar(self, antes_de: datetime) -> dict[str, int]: ...
     async def guardar_evento(self, fila: dict[str, Any]) -> None: ...
     async def listar_eventos(
         self, compra_id: str, desde_orden: int = 0, *, limite: int = 100
+    ) -> list[dict[str, Any]]: ...
+    async def contar_eventos(self, compra_id: str, tipo: str) -> int: ...
+    async def listar_eventos_recientes(
+        self, compra_id: str, limite: int = 1000
     ) -> list[dict[str, Any]]: ...
     async def listar_entregas(
         self, integrador_id: str, *, limite: int = 50
@@ -266,13 +311,24 @@ class AlmacenEstado(Protocol):
 
 # -- núcleo que consume la API /v1 (lo implementa la integración) -----------
 class NucleoGateway(Protocol):
+    # La vida de una compra (`GATEWAY_COMPRA_TTL_S`): pasada sin checkout, `sin_compra`.
+    ttl_compra_s: float
+
     def comercios_de(self, integrador: Integrador) -> list[Comercio]: ...
     def url_a2a(self, comercio_id: str) -> str: ...
     async def crear_compra(self, integrador: Integrador, solicitud: SolicitudCompra) -> FotoCompra: ...
     async def obtener_compra(self, integrador: Integrador, compra_id: str) -> FotoCompra: ...
     async def listar_compras(
-        self, integrador: Integrador, *, limite: int, estado: str | None
-    ) -> list[FotoCompra]: ...
+        self, integrador: Integrador, filtros: FiltrosListado
+    ) -> PaginaCompras: ...
+    # Historial (panel del cliente): la compra con sus eventos saneados, y las
+    # compras de un período (con False si no entraron todas).
+    async def explicacion_compra(
+        self, integrador: Integrador, compra_id: str
+    ) -> tuple[FotoCompra, list[dict[str, Any]]]: ...
+    async def resumen_compras(
+        self, integrador: Integrador, desde: datetime, hasta: datetime
+    ) -> tuple[list[FotoCompra], bool]: ...
     async def responder_porque(
         self, integrador: Integrador, compra_id: str, respuesta: str | None
     ) -> FotoCompra: ...
@@ -297,8 +353,15 @@ class NucleoGateway(Protocol):
 def vista_veredicto(
     veredicto: Veredicto, *, contexto_id: str | None, ts: datetime, evaluador: str
 ) -> dict[str, Any]:
+    """La vista reducida del veredicto que guarda la compra (y que devuelven
+    `/v1/compras/{id}`, `/v1/evaluar` y los webhooks).
+
+    Además de `chequeos` (solo `tipo` y `resultado`), lleva lo explicable
+    (`proxy/alertas.py`, aditivo): `chequeos_detalle` saneados, las `alertas`
+    y el `monto`/`moneda` del cart evaluado."""
     base = a2a.veredicto_para_agente(veredicto.model_dump(mode="json"))
     recibo = veredicto.recibo
+    monto, moneda = alertas.monto_evaluado(veredicto.chequeos)
     return {
         "status": base["status"],
         "motivo": base["motivo"],
@@ -311,4 +374,8 @@ def vista_veredicto(
         "contexto_id": contexto_id if es_id(ID_SEGURO_RE, contexto_id) else None,
         "ts": ts.isoformat(),
         "evaluador": evaluador,
+        "chequeos_detalle": alertas.chequeos_detalle(veredicto.chequeos),
+        "alertas": alertas.alertas_de(veredicto.chequeos),
+        "monto": monto,
+        "moneda": moneda,
     }

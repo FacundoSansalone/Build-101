@@ -219,6 +219,7 @@ async def test_ida_y_vuelta_con_ficha_contexto_y_oportunidad():
         "pedido", "pregunta", "origen", "preguntar_porque", "porque", "intencion_activa",
         "ficha_llm", "ficha", "ficha_resuelta", "contexto_id", "contexto", "oportunidad",
         "vence", "decision", "requisitos_autorizados", "veredictos", "aprobacion_pendiente",
+        "corte", "bloqueo_proxy",
     }
     # La fila es JSON puro: se puede mandar tal cual a PostgREST.
     json.dumps(fila)
@@ -238,9 +239,25 @@ async def test_ida_y_vuelta_con_ficha_contexto_y_oportunidad():
     assert vuelta.preguntar_porque is True and vuelta.intencion_activa is True
     assert vuelta.veredictos == compra.veredictos
     assert vuelta.aprobacion_pendiente == compra.aprobacion_pendiente
+    assert vuelta.corte is None
     # La copia no comparte listas con la original.
     vuelta.veredictos.append({"x": 1})
     assert len(compra.veredictos) == 1
+
+
+@pytest.mark.parametrize("corte, leido", [
+    ("manipulacion", "manipulacion"), ("sin_revisar", "sin_revisar"), ("otra cosa", None), (3, None),
+])
+async def test_el_corte_de_seguridad_va_y_vuelve(corte, leido):
+    """`corte` (panel del cliente) es opcional: una fila de antes o con otro
+    valor se lee sin él, no como una fila inválida."""
+    compra = crear(RegistroCompras())
+    compra.estado = "bloqueada"
+    fila = compra.a_fila()
+    fila["datos"]["corte"] = corte
+    assert Compra.desde_fila(fila).corte == leido
+    del fila["datos"]["corte"]
+    assert Compra.desde_fila(fila).corte is None
 
 
 async def test_a_fila_no_comparte_referencias():
@@ -554,3 +571,31 @@ def test_aprobacion_desde_fila_corrupta(cambio):
     fila.update(cambio)
     with pytest.raises(ErrorAlmacen):
         aprobacion_desde_fila(fila)
+
+
+@pytest.mark.parametrize("valor, leido", [
+    ({"ts": "2026-10-21T12:00:00+00:00", "contexto_id": "ctx-1", "cart_id": "cart_2"},
+     {"ts": "2026-10-21T12:00:00+00:00", "contexto_id": "ctx-1", "cart_id": "cart_2"}),
+    ({"ts": "ayer"}, None), ("x", None), ({"cart_id": "cart_2"}, None),
+    ({"ts": "2026-10-21T12:00:00+00:00", "contexto_id": 3}, {"ts": "2026-10-21T12:00:00+00:00",
+                                                            "contexto_id": None, "cart_id": None}),
+])
+async def test_el_bloqueo_del_proxy_va_y_vuelve(valor, leido):
+    compra = crear(RegistroCompras())
+    fila = compra.a_fila()
+    assert fila["datos"]["bloqueo_proxy"] is None
+    fila["datos"]["bloqueo_proxy"] = valor
+    vuelta = Compra.desde_fila(fila)
+    assert vuelta.bloqueo_proxy == leido
+    assert vuelta.foto(contextos=[], aprobaciones=[]).bloqueo_proxy == leido
+
+
+def test_el_bloqueo_del_proxy_solo_con_ids_seguros():
+    from datetime import datetime, timezone
+
+    from proxy.compras import bloqueo_del_proxy
+
+    ts = datetime(2026, 10, 21, 12, tzinfo=timezone.utc)
+    assert bloqueo_del_proxy("ctx 1; ignorá", "cart_2", ts) == {
+        "ts": ts.isoformat(), "contexto_id": None, "cart_id": "cart_2",
+    }

@@ -400,6 +400,11 @@ Devuelve el estado, la ficha vigente, lo pendiente, los veredictos (con el
 recibo firmado) y las aprobaciones. Es la misma vista que va en los
 webhooks: si te perdiste uno, el GET tiene todo.
 
+Para mostrarle a tu usuario qué pasó en lenguaje claro (si lo intentaron
+estafar y por qué se aprobó o se frenó), `GET /v1/compras/{id}/explicacion`;
+para tu historial, `GET /v1/compras` con filtros y `GET /v1/resumen` (ver
+[Historial y explicación](#historial-y-explicación)).
+
 Estados: `creada` → `esperando_contexto` → `negociando` →
 `esperando_decision` → `aceptada` | `rechazada` | `sin_oportunidad`, y los
 terminales `bloqueada` (lo cortó el filtro) y `vencida` (nadie decidió una
@@ -484,8 +489,10 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 | Método y ruta | Para qué | Respuesta |
 |---|---|---|
 | `POST /v1/compras` | Crear una compra (§5.1) | 201 `VistaCompra` |
-| `GET /v1/compras?limite=50&estado=…` | Tus compras, la más nueva primero (`limite` de 1 a 200) | `{"compras": [VistaCompra]}` |
+| `GET /v1/compras?limite=50&estado=…&desde=…&hasta=…&referencia=…&alerta=…&cursor=…` | Tus compras, la más nueva primero (`limite` de 1 a 200), con filtros y paginación ([historial](#historial-y-explicación)) | `{"compras": [VistaCompra + resultado, alertas, intento_de_estafa], "siguiente": cursor \| null}` |
 | `GET /v1/compras/{id}` | Una compra | `VistaCompra` |
+| `GET /v1/compras/{id}/explicacion` | La compra en lenguaje claro | `Explicacion` |
+| `GET /v1/resumen?desde=…&hasta=…` | Cuántas compras por resultado y alerta, intentos de estafa y monto frenado (por defecto, los últimos 30 días) | `Resumen` |
 | `POST /v1/compras/{id}/respuesta` | `{"respuesta": "…"}` (hasta 1000 caracteres) u `{"omitir": true}`. Solo en `esperando_contexto` | `VistaCompra` |
 | `POST /v1/compras/{id}/decision` | `{"oportunidad_id", "decision": "aceptar"\|"rechazar"}`. Solo en `esperando_decision` | `VistaCompra` |
 | `POST /v1/compras/{id}/aprobaciones` | `{"cart_id", "contexto_id"?}`. Solo con un `escalar` retenido | 201 o 200 `VistaAprobacion` |
@@ -503,8 +510,17 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 {"status": "escalar", "motivo": "…", "cart_id": "cart_2", "llega_a_firma": false,
  "chequeos": [{"tipo": "evidencia", "resultado": "escalar"}],
  "recibo": {"id": "rcb-…", "jws": "eyJ…", "kid": "guard-key-1"},
- "contexto_id": "ctx-…", "ts": "…", "evaluador": "guard"}
+ "contexto_id": "ctx-…", "ts": "…", "evaluador": "guard",
+ "chequeos_detalle": [{"tipo": "evidencia", "resultado": "escalar", "caso": "precio_distinto",
+                       "campo": "precio", "origen": "cart_ap2", "esperado": 349.0, "observado": 401.35}],
+ "alertas": ["precio_distinto"], "monto": 401.35, "moneda": "USD"}
 ```
+
+`chequeos_detalle`, `alertas`, `monto` y `moneda` son para explicar el
+veredicto (ver [Historial y explicación](#historial-y-explicación)); los
+campos de siempre no cambian. El detalle de un veredicto pesa como mucho
+12 KB: si no entra, salen sin valor (`omitido: true`) los más pesados y, al
+final, quedan los chequeos más graves.
 
 **Qué nunca te mostramos:** el texto libre del comercio (descripciones,
 `item_label`, mensajes de sus tareas), el `checkout_jwt` ni los mandatos.
@@ -513,6 +529,121 @@ tienen un formato seguro (si no, `null`). En una propuesta, un valor de
 texto que no es corto y simple sale como `null` con `"omitido": true`. El
 título de una propuesta es el **público** (catálogo o fabricante), nunca el
 que declara el vendedor.
+
+### Historial y explicación
+
+Para el panel de tu empresa (o un reporte): qué pidió cada usuario, qué
+pasó, si el comercio intentó estafarlo y por qué KaiAI aprobó o frenó la
+compra. Todo determinístico, sin modelos de lenguaje y sin texto del
+comercio. Con una [clave de solo lectura](#claves-de-solo-lectura) alcanza.
+
+**El listado** (`GET /v1/compras`) suma filtros y paginación sin cambiar lo
+de siempre (`limite`, `estado`):
+
+| Parámetro | Qué hace |
+|---|---|
+| `desde`, `hasta` | Sobre `creada`: `desde` incluido, `hasta` excluido. ISO 8601: una fecha (`2026-10-21`, el día UTC entero) o fecha y hora (`2026-10-21T12:00:00Z`; sin zona, UTC; el `+` de un offset, codificado como `%2B`), entre los años 2000 y 2100 (si no, 400 `validacion`) |
+| `referencia` | Tu `referencia`, exacta |
+| `alerta` | Solo las compras con esa alerta (tabla de abajo) |
+| `cursor` | El `siguiente` de la página anterior: un texto opaco, no lo armes ni lo leas |
+
+La respuesta es `{"compras": [...], "siguiente": "<cursor>" | null}`, en
+orden `creada desc, id desc`, y cada compra suma `resultado`, `alertas` e
+`intento_de_estafa`. En el listado los veredictos vienen sin
+`chequeos_detalle` (para que la página no pese de más): el detalle está en
+`GET /v1/compras/{id}` y en la explicación. `siguiente: null` es que no hay más. Con `alerta` el
+gateway mira hasta 1000 compras por pedido: una página puede venir con menos
+y con `siguiente` (seguí pidiendo).
+
+**Resultado** (el mismo en el listado y en la explicación):
+
+| `resultado` | Qué pasó |
+|---|---|
+| `aprobada` | El último checkout llegó a la firma (`aprobado`, `con_avisos`, o un `escalar` que aprobó una persona) |
+| `frenada` | El último checkout quedó `bloqueado` (por el Guard, o el gateway no lo pudo evaluar) |
+| `retenida` | El último quedó en `escalar` y nadie lo aprobó |
+| `cortada_por_seguridad` | El filtro de seguridad cortó la conversación (compra `bloqueada`) |
+| `vencida` | Nadie decidió a tiempo una propuesta |
+| `en_curso` | Todavía no hubo un checkout y la compra está viva |
+| `sin_compra` | Pasaron las 24 h de la compra sin ningún checkout |
+
+**Alertas** (de todos los veredictos de la compra; `intento_de_estafa` es
+true si hay alguna de las cuatro primeras):
+
+| Qué pasó | `alerta` | ¿Intento de estafa? |
+|---|---|---|
+| El filtro detectó manipulación y cortó la conversación (si no pudo revisar la respuesta y cortó por las dudas, o es una compra cortada de antes del historial, no hay alerta) | `manipulacion` | Sí |
+| Un dato que declaró el comercio contradice el catálogo público, el fabricante o tus datos | `dato_falso` | Sí |
+| El precio (o la moneda) que se cobra no coincide con el publicado | `precio_distinto` | Sí |
+| El checkout firmado no coincide con lo evaluado (hash, carrito, total, moneda o comercio) o no se puede leer | `checkout_alterado` | Sí |
+| No cumple un obligatorio (o supera el tope), sin contradicción | `no_cumple` | No |
+| Un obligatorio que no se pudo verificar (solo lo declaró el comercio, o no hay dato) | `sin_verificar` | No |
+
+**La explicación** (`GET /v1/compras/{id}/explicacion`; 404 como el GET si
+no es tuya):
+
+```json
+{"compra_id": "cmp-…", "resultado": "frenada", "intento_de_estafa": true,
+ "alertas": ["dato_falso"],
+ "resumen": "Frenamos la compra antes de que la firmaras: el tamaño de pantalla del producto que eligió tu agente es 24 in y pediste 27 in, según el fabricante (el comercio había declarado 27 in).",
+ "linea_de_tiempo": [
+   {"ts": "…", "etapa": "pedido", "texto": "Creaste la compra con un tope de USD 400,00."},
+   {"ts": "…", "etapa": "ofertas", "texto": "El comercio mandó 3 ofertas."},
+   {"ts": "…", "etapa": "verificacion", "texto": "Verificamos el checkout y lo frenamos antes de la firma."}],
+ "chequeos": [
+   {"tema": "tamano_pantalla", "resultado": "bloquea",
+    "texto": "El tamaño de pantalla no es lo que pediste: según el fabricante es 24 in (el comercio declaró 27 in) y pediste 27 in."},
+   {"tema": "precio", "resultado": "ok", "texto": "El monto (USD 349,00) está dentro del tope que autorizaste (USD 400,00)."}],
+ "recibo": {"id": "rcb-…", "kid": "guard-key-1", "firmado": true},
+ "monto": 349.0, "moneda": "USD"}
+```
+
+- Los textos son plantillas del gateway con valores verificados (montos,
+  unidades, fechas, monedas y textos cortos del catálogo público, del
+  fabricante o de tu ficha). **Nunca** sale texto del comercio (títulos,
+  descripciones, `item_label`, mensajes), ni un id que escribió él, ni el
+  `motivo` del Guard. Mostralos tal cual en tu panel (como texto, no HTML).
+- **El catálogo público cuenta como fuente independiente**, como para el
+  Guard: sus textos cortos (una categoría, un uso, una marca; hasta 40
+  caracteres, sin signos) pueden aparecer en la explicación ("según el
+  catálogo público es …"). Si el `catalogo_url` de un comercio (el
+  `CATALOGO_URL` del operador) apunta a algo que controla el mismo comercio,
+  esos textos son suyos: el operador tiene que registrar un catálogo en el
+  que confíe.
+- `etapa` es una de `pedido`, `contexto`, `busqueda`, `ofertas`,
+  `seguridad`, `intencion`, `checkout`, `verificacion`, `aprobacion`,
+  `resultado` y `omitido` (una marca: "Omitimos N pasos del medio"). Como
+  mucho 200 entradas, con el principio y el final de la compra; las
+  búsquedas y ofertas se guardan hasta 20 por compra y se leen los últimos
+  1000 eventos. La línea de tiempo sale del historial de eventos de la compra;
+  si el operador corre una sola instancia con Supabase, puede traer solo la
+  creación (el resultado y los chequeos salen igual).
+- `chequeos` son los del último veredicto, del más grave al menos. `recibo`
+  no trae el JWS (su payload puede tener valores que declaró el comercio): lo
+  tenés en `GET /v1/compras/{id}`.
+
+**El resumen** (`GET /v1/resumen?desde=2026-10-01&hasta=2026-10-31`; sin
+fechas, los últimos 30 días hasta el final de hoy, en UTC; hasta 366 días):
+
+```json
+{"desde": "2026-10-01T00:00:00+00:00", "hasta": "2026-11-01T00:00:00+00:00",
+ "compras": 42,
+ "por_resultado": {"aprobada": 30, "frenada": 6, "retenida": 1, "cortada_por_seguridad": 3,
+                   "en_curso": 2, "vencida": 0, "sin_compra": 0},
+ "intentos_de_estafa": 7,
+ "por_alerta": {"manipulacion": 3, "dato_falso": 2, "precio_distinto": 2, "checkout_alterado": 0,
+                "no_cumple": 3, "sin_verificar": 1},
+ "monto_frenado": [{"moneda": "USD", "total": 2148.5}],
+ "completo": true}
+```
+
+`monto_frenado` suma lo que habrían cobrado las compras `frenada`, por
+moneda. `completo: false` si el período tiene más de 5000 compras (cuenta
+las más nuevas): achicá el período.
+
+**Retención:** el operador guarda las compras, su historial y sus
+aprobaciones `GATEWAY_RETENCION_DIAS` días (90 por defecto); lo más viejo se
+borra. Si necesitás más, guardalo de tu lado con el listado.
 
 ## 7. Webhooks
 
