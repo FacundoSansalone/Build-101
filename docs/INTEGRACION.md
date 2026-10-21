@@ -638,7 +638,10 @@ true si hay alguna de las cuatro primeras):
 no es tuya):
 
 ```json
-{"compra_id": "cmp-…", "resultado": "frenada", "intento_de_estafa": true,
+{"compra_id": "cmp-…", "pedido": "un monitor de 27 pulgadas", "referencia": "ord-123",
+ "comercio": "merchant_1", "creada": "2026-10-21T12:00:00+00:00",
+ "tope": {"precio": 400.0, "moneda": "USD"},
+ "resultado": "frenada", "intento_de_estafa": true,
  "alertas": ["dato_falso"],
  "resumen": "Frenamos la compra antes de que la firmaras: el tamaño de pantalla del producto que eligió tu agente es 24 in y pediste 27 in, según el fabricante (el comercio había declarado 27 in).",
  "linea_de_tiempo": [
@@ -673,9 +676,13 @@ no es tuya):
   1000 eventos. La línea de tiempo sale del historial de eventos de la compra;
   si el operador corre una sola instancia con Supabase, puede traer solo la
   creación (el resultado y los chequeos salen igual).
+- `pedido`, `referencia`, `comercio`, `creada` y `tope` son los datos de la
+  compra (los tuyos y el id de la ruta del comercio), para mostrarla con un
+  solo pedido. `tope` es `{"precio", "moneda"}` del precio máximo y la moneda
+  obligatorios de la ficha vigente, o `null` si falta alguno.
 - `chequeos` son los del último veredicto, del más grave al menos. `recibo`
   no trae el JWS (su payload puede tener valores que declaró el comercio): lo
-  tenés en `GET /v1/compras/{id}`.
+  tenés en `GET /v1/compras/{id}`, solo si querés verificar la firma.
 
 **El resumen** (`GET /v1/resumen?desde=2026-10-01&hasta=2026-10-31`; sin
 fechas, los últimos 30 días hasta el final de hoy, en UTC; hasta 366 días):

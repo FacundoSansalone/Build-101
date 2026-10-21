@@ -247,6 +247,10 @@ async def test_explicacion_de_una_compra_frenada_por_un_dato_falso(config_gw, gu
     assert datos["resumen"].startswith("Frenamos la compra antes de que la firmaras:")
     assert "según el catálogo público" in datos["resumen"]
     assert datos["monto"] == 149.0 and datos["moneda"] == "USD"
+    # Los datos de la compra, para mostrarla con un solo pedido.
+    assert datos["pedido"] == "zapatillas Nike para exterior" and datos["referencia"] == "ord-b2"
+    assert datos["comercio"] == "merchant_1" and datos["tope"] == {"precio": 150, "moneda": "USD"}
+    assert datos["creada"] == listado[0]["creada"]
     assert datos["recibo"]["firmado"] is True
     etapas = [e["etapa"] for e in datos["linea_de_tiempo"]]
     assert etapas[0] == "pedido" and "verificacion" in etapas and "checkout" in etapas

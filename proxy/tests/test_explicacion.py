@@ -683,7 +683,34 @@ def test_nada_del_comercio_llega_a_la_explicacion():
         assert set(salida) == {
             "compra_id", "resultado", "intento_de_estafa", "alertas", "resumen",
             "linea_de_tiempo", "chequeos", "recibo", "monto", "moneda",
+            "pedido", "referencia", "comercio", "creada", "tope",
         }
+
+
+def test_la_explicacion_trae_los_datos_de_la_compra():
+    """Lo que necesita el detalle del panel en un solo pedido: el pedido y la
+    referencia (de la empresa), el comercio (el id de su ruta), cuándo se creó
+    y el tope que autorizó (precio y moneda de la ficha)."""
+    salida = _explicar(vista())
+    assert salida["pedido"] == "un monitor de 27 pulgadas"
+    assert salida["referencia"] == "ord-1" and salida["comercio"] == "merchant_1"
+    assert salida["creada"] == CREADA.isoformat()
+    assert salida["tope"] == {"precio": 1500, "moneda": "USD"}
+    # Sin un tope completo (precio máximo y moneda obligatorios), null.
+    sin_moneda = Ficha(pedido_original="x", confirmada=True, requisitos=[
+        Requisito(campo="precio", operador="maximo", valor=10, obligatorio=True),
+    ])
+    assert _explicar(vista(ficha_=sin_moneda))["tope"] is None
+    preferido = Ficha(pedido_original="x", confirmada=True, requisitos=[
+        Requisito(campo="precio", operador="maximo", valor=10, obligatorio=False),
+        Requisito(campo="moneda", operador="igual", valor="USD", obligatorio=True),
+    ])
+    assert _explicar(vista(ficha_=preferido))["tope"] is None
+    # Una vista sin esos datos (o con tipos raros) no rompe: null.
+    rara = {**vista(), "pedido": 3, "referencia": None, "comercio": ["x"], "creada": "ayer", "ficha": "x"}
+    salida = _explicar(rara)
+    datos = (salida["pedido"], salida["referencia"], salida["comercio"], salida["creada"], salida["tope"])
+    assert datos == (None, None, None, None, None)
 
 
 # -- resumen de muchas compras ---------------------------------------------------------

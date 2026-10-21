@@ -331,6 +331,16 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
         "verificados: nunca texto, ids ni el recibo firmado del comercio.",
         "properties": {
             "compra_id": _ID_COMPRA,
+            "pedido": _nullable({"type": "string", "description": "Lo que mandaste en `pedido`."}),
+            "referencia": _nullable({"type": "string"}),
+            "comercio": _nullable(_SLUG),
+            "creada": _nullable(_FECHA),
+            "tope": _nullable({
+                "type": "object",
+                "description": "El tope que autorizaste: el precio máximo y la moneda "
+                "obligatorios de la ficha vigente (null si falta alguno).",
+                "properties": {"precio": {"type": "number"}, "moneda": _MONEDA},
+            }),
             "resultado": _RESULTADO,
             "intento_de_estafa": {"type": "boolean"},
             "alertas": {"type": "array", "items": _ALERTA},
