@@ -625,6 +625,19 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     `moneda` por compra (la regla de la explicación); y en la explicación,
     `pedido`, `referencia`, `comercio`, `creada` y `tope`, así el detalle es
     un solo pedido.
+  - **Pulido tras la prueba en vivo (rama `panel/pulido`):** resultado
+    `sin_ofertas` (la última búsqueda volvió vacía y no hubo checkout; marca
+    en la compra con fusión de tres vías); la línea de tiempo se ordena por
+    `orden` de `gw_eventos`, y un candado por compra guarda las filas del
+    historial en el orden en que se emitieron; `monto_retenido` en
+    `/v1/resumen` (el panel muestra "Frenado o retenido"); una evidencia que
+    repite la conclusión de su chequeo se fusiona en una sola línea.
+  - **Probado de punta a punta (2026-10-21):** motor con varias instancias
+    (`local_multi.py` + `postgrest_local.py`) y la simulación real, siete
+    compras (honesto, precio inflado, miente la categoría, otra categoría,
+    inyección, sin resultados y entrega en partes con la propuesta aceptada)
+    y el panel en el navegador con la clave de lectura: resultados y alertas
+    correctos, firma verificada, consola sin errores.
 
 Tests de las carpetas nuevas, desde la raíz:
 
