@@ -136,6 +136,10 @@ TABLAS_PURGA = (
     "gw_eventos", "gw_ofertas", "gw_ultimos_veredictos", "gw_aprobaciones",
     "gw_entregas_webhook", "gw_esperas", "gw_contextos", "gw_compras",
 )
+# Las de 004: con una sola instancia la base puede no tenerlas (la purga las
+# saltea si PostgREST dice que no existen: `PGRST205`, o `42P01` de Postgres).
+TABLAS_004 = frozenset({"gw_eventos", "gw_esperas"})
+TABLA_INEXISTENTE = frozenset({"PGRST205", "42P01"})
 
 
 class _Cualquiera:
@@ -1638,7 +1642,15 @@ class EstadoSupabase:
             respuesta = await self._pedir(
                 "DELETE", tabla, params={columna: f"lt.{limite}", "select": clave},
                 prefer="return=representation",
+                aceptar=frozenset({404}) if tabla in TABLAS_004 else frozenset(),
             )
+            if respuesta.status_code == 404:
+                # Una sola instancia con una base de solo 003: no hay esa tabla.
+                if self._codigo_pg(respuesta) not in TABLA_INEXISTENTE:
+                    raise ErrorAlmacen(f"DELETE {tabla}: HTTP 404")
+                logger.info("Purga: la tabla %s no está (la base no tiene 004)", tabla)
+                borradas[tabla] = 0
+                continue
             borradas[tabla] = len(self._lista(respuesta, f"DELETE {tabla}"))
         return borradas
 

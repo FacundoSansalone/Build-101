@@ -322,3 +322,32 @@ async def test_contar_eventos_y_los_mas_nuevos(almacen_y_base):
         await almacen.contar_eventos(cmp(1), "tipo raro;")
     with pytest.raises(ErrorAlmacen):
         await almacen.listar_eventos_recientes("cmp-1&x")
+
+
+async def test_purgar_con_una_base_sin_004():
+    """Con una sola instancia la base puede tener solo 003 (sin `gw_eventos` ni
+    `gw_esperas`): la purga borra lo de 003 y saltea esas tablas."""
+    base = BaseFalsa()
+    del base.tablas["gw_eventos"], base.tablas["gw_esperas"]
+    almacen = EstadoSupabase(URL, "clave", transport=base.transporte())
+    await almacen.guardar_compra(fila_compra(cmp(1), creada=AHORA - timedelta(days=100)))
+    borradas = await almacen.purgar(AHORA - timedelta(days=90))
+    assert borradas["gw_compras"] == 1
+    assert borradas["gw_eventos"] == 0 and borradas["gw_esperas"] == 0
+    # Una tabla de 003 que falta sí es un error (la base no es la esperada).
+    del base.tablas["gw_ofertas"]
+    with pytest.raises(ErrorAlmacen):
+        await almacen.purgar(AHORA - timedelta(days=90))
+
+
+async def test_purgar_sin_004_con_el_codigo_de_postgrest():
+    import httpx
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(("/gw_eventos", "/gw_esperas")):
+            return httpx.Response(404, json={"code": "PGRST205", "message": "Could not find the table"})
+        return httpx.Response(200, json=[])
+
+    almacen = EstadoSupabase(URL, "clave", transport=httpx.MockTransport(responder))
+    borradas = await almacen.purgar(AHORA)
+    assert set(borradas.values()) == {0}
