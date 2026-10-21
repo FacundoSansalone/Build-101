@@ -122,10 +122,9 @@ export function crearVista(doc) {
       el("p", { clase: "tarjeta-titulo" }, [icono(t.icono), el("span", { texto: t.titulo })]),
       el("p", { clase: "tarjeta-valor", texto: t.valor }),
     ];
+    if (t.detalle) hijos.push(el("p", { clase: "tarjeta-detalle", texto: t.detalle }));
     if (Array.isArray(t.lineas) && t.lineas.length > 1) {
       hijos.push(el("ul", { clase: "tarjeta-lineas" }, t.lineas.slice(1).map((l) => el("li", { texto: l }))));
-    } else if (t.detalle) {
-      hijos.push(el("p", { clase: "tarjeta-detalle", texto: t.detalle }));
     }
     return el("li", { clase: "tarjeta-resumen", atributos: { "data-tono": tono(t.tono), "data-clave": t.clave } }, hijos);
   }

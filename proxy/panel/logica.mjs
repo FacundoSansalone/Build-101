@@ -385,6 +385,34 @@ function textoCuenta(valor) {
   return n === null ? "—" : String(n);
 }
 
+/**
+ * Lo frenado más lo retenido sin aprobar, por moneda (en orden de moneda):
+ * `[{total, detalle}]`, con el desglose "x frenado · y retenido" (solo las
+ * partes que la API mandó). Un monto o una moneda raros no cuentan.
+ */
+function montosPorMoneda(r) {
+  const sumas = new Map();
+  for (const [clave, parte] of [["monto_frenado", "frenado"], ["monto_retenido", "retenido"]]) {
+    for (const m of Array.isArray(r[clave]) ? r[clave] : []) {
+      if (!m || !esMonto(m.total, m.moneda)) continue;
+      const fila = sumas.get(m.moneda) ?? { frenado: null, retenido: null };
+      fila[parte] = (fila[parte] ?? 0) + m.total;
+      sumas.set(m.moneda, fila);
+    }
+  }
+  return [...sumas.keys()].sort().map((moneda) => {
+    const { frenado, retenido } = sumas.get(moneda);
+    const partes = [];
+    if (frenado !== null) partes.push(`${formatearMonto(frenado, moneda)} frenado`);
+    if (retenido !== null) partes.push(`${formatearMonto(retenido, moneda)} retenido`);
+    return {
+      total: formatearMonto((frenado ?? 0) + (retenido ?? 0), moneda),
+      detalle: partes.join(" · "),
+      partes: partes.length,
+    };
+  });
+}
+
 /** Las tarjetas de arriba: `{clave, titulo, valor, tono, icono, detalle?, lineas?}`. */
 export function tarjetasResumen(resumen) {
   const r = resumen && typeof resumen === "object" ? resumen : {};
@@ -393,9 +421,13 @@ export function tarjetasResumen(resumen) {
   const retenidas = cuenta(por.retenida ?? 0);
   const sumadas = frenadas === null || retenidas === null ? null : frenadas + retenidas;
   const estafas = cuenta(r.intentos_de_estafa);
-  const lineas = (Array.isArray(r.monto_frenado) ? r.monto_frenado : [])
-    .filter((m) => m && esMonto(m.total, m.moneda))
-    .map((m) => formatearMonto(m.total, m.moneda));
+  const montos = montosPorMoneda(r);
+  // La primera moneda va en el valor y su desglose en el detalle; las demás,
+  // una línea cada una (con el desglose si tiene las dos partes).
+  const lineas = montos.map((m, i) => {
+    if (i === 0) return m.total;
+    return m.partes > 1 ? `${m.total} (${m.detalle})` : m.detalle;
+  });
   return [
     { clave: "compras", titulo: "Compras", valor: textoCuenta(r.compras), tono: "neutro", icono: "carro" },
     { clave: "aprobadas", titulo: "Aprobadas", valor: textoCuenta(por.aprobada ?? 0), tono: "ok", icono: "check" },
@@ -413,8 +445,8 @@ export function tarjetasResumen(resumen) {
       tono: estafas === 0 ? "ok" : "crit", icono: "alerta",
     },
     {
-      clave: "monto", titulo: "Monto frenado", valor: lineas[0] ?? "Nada", lineas, tono: "neutro", icono: "moneda",
-      detalle: lineas.length > 1 ? `y ${lineas.length - 1} ${lineas.length === 2 ? "moneda más" : "monedas más"}` : "",
+      clave: "monto", titulo: "Frenado o retenido", valor: lineas[0] ?? "Nada", lineas, tono: "neutro",
+      icono: "moneda", detalle: montos.length ? montos[0].detalle : "",
     },
   ];
 }
