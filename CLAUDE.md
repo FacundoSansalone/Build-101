@@ -581,6 +581,33 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     retención de las tablas `gw_*` y el origen del recibo de `/v1/evaluar`
     (toca `contracts/`).
 
+- **Panel del cliente, fase 1: historial por `/v1` (2026-10-21, ramas
+  `panel/claves` y `panel/historial`, a revisar entre los tres).** Decidido
+  con el usuario: panel en el motor (`/panel`, fase 2), acceso con **clave de
+  solo lectura**, **retención de 90 días**, usuario = la empresa cliente.
+  - **Claves de solo lectura:** `"permisos": ["lectura"]` en la clave del JSON
+    de integradores; solo los `GET` de `RUTAS_LECTURA` (`proxy/claves.py`,
+    lista blanca); todo `POST` de `/v1` y todo `/a2a/*` → 403 `solo_lectura`.
+    `generar_secretos.py --clave-lectura <integrador>`.
+  - **Historial:** los eventos de las compras de integrador van a `gw_eventos`
+    (004) con una proyección saneada (`proxy/historial.py`): la base nunca
+    guarda texto libre del comercio. `busqueda_enviada`/`ofertas_recibidas`,
+    hasta 20 por compra.
+  - **Alertas** (`proxy/alertas.py`, en cada veredicto de la compra con
+    `chequeos_detalle` saneado, `monto` y `moneda`): `manipulacion` (el filtro
+    detectó algo; un corte por falla nuestra no acusa), `dato_falso` (un dato
+    declarado contradice una fuente independiente; si el Guard no pudo
+    comparar, es `sin_verificar`), `precio_distinto`, `checkout_alterado`
+    (las cuatro son "intento de estafa"), `no_cumple` y `sin_verificar`.
+  - **Explicación** (`proxy/explicacion.py`, determinística, plantillas en
+    español): `GET /v1/compras/{id}/explicacion`, `GET /v1/resumen`, y en
+    `GET /v1/compras` filtros `desde`/`hasta`/`referencia`/`alerta` con
+    `cursor` (sin `chequeos_detalle` en el listado). N+1 del listado arreglado.
+  - **Retención:** `GATEWAY_RETENCION_DIAS` (90), `purgar()` y
+    `/interno/purgar` (fuera de `/v1`, solo con `GATEWAY_PURGA_SECRETO` o
+    `CRON_SECRET`, cron diario en `vercel.json`; sin secreto la ruta no
+    existe). `proxy/sql/005_historial.sql` (índices) **no está aplicada**.
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh
