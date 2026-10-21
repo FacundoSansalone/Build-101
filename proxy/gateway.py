@@ -44,7 +44,8 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Literal
 
 from contracts import Evento
-from proxy import explicacion, sin_estado
+from proxy import explicacion, sin_estado, vistas
+from proxy.alertas import es_intento_de_estafa
 from proxy.aprobaciones import Aprobacion, SinEscalar, aprobacion_desde_fila
 from proxy.comercios import politica_de
 from proxy.compras import ESTADOS_ESPERANDO, Compra, EstadoInvalido
@@ -76,6 +77,10 @@ logger = logging.getLogger("proxy.gateway")
 # Estados que `Compra.desde_fila` cierra después de un reinicio: una fila
 # en el estado de la derecha se lee en el de la izquierda.
 _NORMALIZADA_DESDE = {"negociando": "esperando_contexto", "vencida": "esperando_decision"}
+# Los resultados que equivalen a un estado de la compra
+# (`explicacion.resultado_de`): esos van a la base como `estado`; el resto se
+# decide acá al recorrer, como `alerta`.
+_ESTADO_DEL_RESULTADO = {"cortada_por_seguridad": "bloqueada", "vencida": "vencida"}
 
 # Cuánto espera `POST /decision` a que la búsqueda retenida aplique la
 # decisión antes de armar la vista (en la práctica, unas vueltas del loop).
@@ -86,7 +91,8 @@ _PASO_RESOLUCION_S = 0.01
 # a tener).
 ESPERA_RESOLUCION_COMPARTIDA_S = 3.0
 # El listado de `/v1/compras` lee de a `LOTE_ESCANEO` filas. Con un filtro que
-# se aplica acá (`alerta`, o un estado que se normaliza al leer) mira como
+# se aplica acá (`alerta`, `resultado`, `intento_de_estafa`, o un estado que
+# se normaliza al leer) mira como
 # mucho `MAX_ESCANEO_LISTADO` compras por pedido: si no llenó la página, la
 # devuelve con `siguiente` (puede haber más).
 LOTE_ESCANEO = 200
@@ -260,8 +266,10 @@ class NucleoProxy:
         self, integrador: Integrador, filtros: FiltrosListado
     ) -> PaginaCompras:
         """Del almacén, la más nueva primero (`creada desc, id desc`), con los
-        filtros de la base (estado, fechas, referencia, cursor) y los de acá
-        (`alerta`; el estado de una fila que se normaliza al leerla). Con la
+        filtros de la base (estado, fechas, referencia, cursor; también el
+        `resultado` que equivale a un estado) y los de acá (`alerta`,
+        `intento_de_estafa`, el resto de los `resultado`; el estado de una fila
+        que se normaliza al leerla). Con la
         instancia de memoria cuando existe (tiene las esperas vivas). Las
         fotos de la página, de una vez (`ProxyGuard.fotos_actuales`)."""
         try:
@@ -299,13 +307,45 @@ class NucleoProxy:
             return False
         if filtros.estado is not None and compra.estado != filtros.estado:
             return False
-        if filtros.alerta is not None:
+        if filtros.alerta is not None or filtros.intento_de_estafa is not None:
             alertas = explicacion.alertas_de_compra(
                 {"estado": compra.estado, "veredictos": compra.veredictos}, corte=compra.corte,
             )
-            if filtros.alerta not in alertas:
+            if filtros.alerta is not None and filtros.alerta not in alertas:
+                return False
+            if filtros.intento_de_estafa is not None \
+                    and es_intento_de_estafa(alertas) is not filtros.intento_de_estafa:
                 return False
         return True
+
+    async def _resultados(self, compras: list[Compra], ahora: datetime) -> dict[str, str]:
+        """El `resultado` de cada compra, como lo muestra el listado
+        (`explicacion.resultado_de` sobre la vista de la compra). Las
+        aprobaciones solo cambian un `retenida` (un `escalar` que aprobó una
+        persona es `aprobada`): se leen solo para esas, todas de una vez
+        (`fotos_actuales`), no una por compra."""
+        ttl = self.ttl_compra_s
+
+        def resultado(vista: dict[str, Any], corte: Any, bloqueo: Any) -> str:
+            return explicacion.resultado_de(
+                vista, ahora=ahora, ttl_s=ttl, corte=corte, bloqueo_proxy=bloqueo,
+            )
+
+        salida = {
+            c.id: resultado(
+                {"estado": c.estado, "veredictos": c.veredictos, "aprobaciones": [],
+                 "creada": c.creada.isoformat()},
+                c.corte, c.bloqueo_proxy,
+            )
+            for c in compras
+        }
+        dudosas = [c for c in compras if salida[c.id] == "retenida"]
+        if dudosas:
+            for foto in await self.proxy.fotos_actuales(dudosas):
+                salida[foto.compra_id] = resultado(
+                    vistas.vista_compra(foto, a2a_url=None), foto.corte, foto.bloqueo_proxy,
+                )
+        return salida
 
     async def _escanear(
         self, integrador: Integrador, filtros: FiltrosListado, *, maximo: int, maximo_escaneo: int
@@ -320,12 +360,21 @@ class NucleoProxy:
         normalizado aunque la fila todavía no lo diga, así que se pide a la
         base con los dos estados y se filtra acá."""
         estado = filtros.estado
+        del_resultado = _ESTADO_DEL_RESULTADO.get(filtros.resultado or "")
+        if del_resultado is not None:
+            if estado is not None and estado != del_resultado:
+                return [], None  # ese resultado nunca tiene ese estado
+            estado = del_resultado
         normalizado = _NORMALIZADA_DESDE.get(estado) if estado is not None else None
         estados: tuple[str, ...] | None = None
         if estado is not None:
             estados = (estado,) if normalizado is None else (estado, normalizado)
-        filtra_aca = filtros.alerta is not None or normalizado is not None
+        filtra_aca = (
+            filtros.alerta is not None or normalizado is not None or filtros.resultado is not None
+            or filtros.intento_de_estafa is not None
+        )
         lote = LOTE_ESCANEO if filtra_aca else min(LOTE_ESCANEO, maximo + 1)
+        ahora = filtros.ahora or datetime.now(timezone.utc)
         cursor = filtros.cursor
         elegidas: list[Compra] = []
         miradas = 0
@@ -334,10 +383,21 @@ class NucleoProxy:
                 integrador.id, limite=lote, estado=estados, desde=filtros.desde,
                 hasta=filtros.hasta, referencia=filtros.referencia, antes_de=cursor,
             )
+            # Con `resultado`, el de toda la página de una vez (las aprobaciones
+            # de las que hagan falta en una sola lectura).
+            leidas: list[Compra] | None = None
+            resultados: dict[str, str] = {}
+            if filtros.resultado is not None:
+                leidas = [await self._compra_listada(fila) for fila in filas]
+                resultados = await self._resultados(
+                    [c for c in leidas if self._entra(c, integrador, filtros)], ahora,
+                )
             for i, fila in enumerate(filas):
-                compra = await self._compra_listada(fila)
+                compra = leidas[i] if leidas is not None else await self._compra_listada(fila)
                 cursor = (compra.creada, compra.id)
                 if not self._entra(compra, integrador, filtros):
+                    continue
+                if filtros.resultado is not None and resultados.get(compra.id) != filtros.resultado:
                     continue
                 elegidas.append(compra)
                 if len(elegidas) >= maximo:

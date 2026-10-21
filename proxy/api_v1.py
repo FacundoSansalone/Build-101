@@ -714,6 +714,12 @@ def _filtros_listado(request: Request) -> FiltrosListado:
     alerta = request.query_params.get("alerta")
     if alerta is not None and alerta not in ALERTAS:
         raise _error_validacion("alerta", "una de: " + ", ".join(ALERTAS))
+    resultado = request.query_params.get("resultado")
+    if resultado is not None and resultado not in explicacion.RESULTADOS:
+        raise _error_validacion("resultado", "uno de: " + ", ".join(explicacion.RESULTADOS))
+    crudo_estafa = request.query_params.get("intento_de_estafa")
+    if crudo_estafa is not None and crudo_estafa not in ("true", "false"):
+        raise _error_validacion("intento_de_estafa", "true o false")
     problemas = _Problemas()
     referencia = _texto(
         problemas, dict(request.query_params), "referencia", "referencia",
@@ -729,7 +735,9 @@ def _filtros_listado(request: Request) -> FiltrosListado:
     cursor = decodificar_cursor(crudo) if crudo is not None else None
     return FiltrosListado(
         limite=limite, estado=estado, desde=desde, hasta=hasta, referencia=referencia,
-        alerta=alerta, cursor=cursor,
+        alerta=alerta, cursor=cursor, resultado=resultado,
+        intento_de_estafa=None if crudo_estafa is None else crudo_estafa == "true",
+        ahora=datetime.now(timezone.utc),
     )
 
 
@@ -875,7 +883,8 @@ def rutas_v1(
         integrador = integrador_de(request)
         filtros = _filtros_listado(request)
         pagina = await nucleo.listar_compras(integrador, filtros)
-        ahora = datetime.now(timezone.utc)
+        # El mismo momento con el que se filtró por `resultado`.
+        ahora = filtros.ahora or datetime.now(timezone.utc)
         return _json({
             "compras": [vista_listada(f, ahora) for f in pagina.fotos[:filtros.limite]],
             "siguiente": codificar_cursor(pagina.siguiente),

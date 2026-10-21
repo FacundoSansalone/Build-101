@@ -540,7 +540,7 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 | Método y ruta | Para qué | Respuesta |
 |---|---|---|
 | `POST /v1/compras` | Crear una compra (§5.1) | 201 `VistaCompra` |
-| `GET /v1/compras?limite=50&estado=…&desde=…&hasta=…&referencia=…&alerta=…&cursor=…` | Tus compras, la más nueva primero (`limite` de 1 a 200), con filtros y paginación ([historial](#historial-y-explicación)) | `{"compras": [VistaCompra + resultado, alertas, intento_de_estafa, monto, moneda], "siguiente": cursor \| null}` |
+| `GET /v1/compras?limite=50&estado=…&desde=…&hasta=…&referencia=…&alerta=…&resultado=…&intento_de_estafa=…&cursor=…` | Tus compras, la más nueva primero (`limite` de 1 a 200), con filtros y paginación ([historial](#historial-y-explicación)) | `{"compras": [VistaCompra + resultado, alertas, intento_de_estafa, monto, moneda], "siguiente": cursor \| null}` |
 | `GET /v1/compras/{id}` | Una compra | `VistaCompra` |
 | `GET /v1/compras/{id}/explicacion` | La compra en lenguaje claro | `Explicacion` |
 | `GET /v1/resumen?desde=…&hasta=…` | Cuántas compras por resultado y alerta, intentos de estafa y monto frenado (por defecto, los últimos 30 días) | `Resumen` |
@@ -597,6 +597,8 @@ de siempre (`limite`, `estado`):
 | `desde`, `hasta` | Sobre `creada`: `desde` incluido, `hasta` excluido. ISO 8601: una fecha (`2026-10-21`, el día UTC entero) o fecha y hora (`2026-10-21T12:00:00Z`; sin zona, UTC; el `+` de un offset, codificado como `%2B`), entre los años 2000 y 2100 (si no, 400 `validacion`) |
 | `referencia` | Tu `referencia`, exacta |
 | `alerta` | Solo las compras con esa alerta (tabla de abajo) |
+| `resultado` | Solo las compras con ese resultado (tabla de abajo) |
+| `intento_de_estafa` | `true`: solo las que tienen alguna de las cuatro alertas de estafa; `false`: las que no |
 | `cursor` | El `siguiente` de la página anterior: un texto opaco, no lo armes ni lo leas |
 
 La respuesta es `{"compras": [...], "siguiente": "<cursor>" | null}`, en
@@ -606,9 +608,10 @@ explicación: el del último checkout evaluado, o `null` si no hubo (o si el
 gateway frenó uno después sin evaluarlo); así el listado y el detalle
 coinciden siempre. En el listado los veredictos vienen sin
 `chequeos_detalle` (para que la página no pese de más): el detalle está en
-`GET /v1/compras/{id}` y en la explicación. `siguiente: null` es que no hay más. Con `alerta` el
-gateway mira hasta 1000 compras por pedido: una página puede venir con menos
-y con `siguiente` (seguí pidiendo).
+`GET /v1/compras/{id}` y en la explicación. `siguiente: null` es que no hay más. Los
+filtros se combinan entre sí y con el `cursor`. Con `alerta`, `resultado` o
+`intento_de_estafa` el gateway mira hasta 1000 compras por pedido: una página
+puede venir con menos y con `siguiente` (seguí pidiendo).
 
 **Resultado** (el mismo en el listado y en la explicación):
 

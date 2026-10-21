@@ -153,6 +153,12 @@ class FiltrosListado:
     referencia: str | None = None
     alerta: str | None = None
     cursor: tuple[datetime, str] | None = None
+    # El resultado de la compra (`explicacion.RESULTADOS`) y si tiene alguna
+    # alerta de estafa. `ahora` es el momento del pedido: con él se decide
+    # `en_curso` o `sin_compra`, igual para filtrar y para mostrar.
+    resultado: str | None = None
+    intento_de_estafa: bool | None = None
+    ahora: datetime | None = None
 
 
 # -- foto de una compra (de compras.Compra a la API y los webhooks) ----------

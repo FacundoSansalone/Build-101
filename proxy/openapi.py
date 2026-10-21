@@ -306,8 +306,9 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
             "siguiente": _nullable({
                 "type": "string",
                 "description": "Cursor opaco para la página siguiente (`?cursor=`), o null si "
-                "no hay más. Con `alerta`, una página puede venir con menos compras y "
-                "`siguiente`: el gateway mira hasta 1000 por pedido.",
+                "no hay más. Con `alerta`, `resultado` o `intento_de_estafa`, una página "
+                "puede venir con menos compras y `siguiente`: el gateway mira hasta 1000 por "
+                "pedido.",
             }),
         },
     },
@@ -563,8 +564,9 @@ OPERACIONES: list[tuple[str, str, str, str, str | None, _Respuestas, list[str], 
      "Las compras del integrador, la más reciente primero (`creada desc`), cada una con su "
      "`resultado`, sus `alertas` e `intento_de_estafa`. Filtros: `limite` (1 a 200, 50 por "
      "defecto), `estado`, `desde` y `hasta` (sobre `creada`; `hasta` excluido; un día "
-     "`YYYY-MM-DD` es entero, en UTC), `referencia` (exacta) y `alerta`. Para la página "
-     "siguiente, `cursor` con el `siguiente` de la respuesta.",
+     "`YYYY-MM-DD` es entero, en UTC), `referencia` (exacta), `alerta`, `resultado` e "
+     "`intento_de_estafa`, combinables. Para la página siguiente, `cursor` con el "
+     "`siguiente` de la respuesta.",
      None, {"200": ("Compras", "ListaCompras")}, ["400", "401", "503"], False),
     ("get", "/v1/compras/{compra_id}", "Ver una compra",
      "Estado, ficha vigente, lo pendiente, veredictos y aprobaciones. Sirve para "
@@ -647,6 +649,9 @@ PARAMETROS: dict[tuple[str, str], list[dict[str, Any]]] = {
         _query("hasta", _FECHA_QUERY, "Creadas antes de ese momento (un día entero si es una fecha)."),
         _query("referencia", {"type": "string", "maxLength": 200}, "La `referencia` exacta."),
         _query("alerta", {"type": "string", "enum": _ALERTAS}, "Solo las que tienen esa alerta."),
+        _query("resultado", {"type": "string", "enum": _RESULTADOS}, "Solo las de ese resultado."),
+        _query("intento_de_estafa", {"type": "string", "enum": ["true", "false"]},
+               "`true`: solo las que tienen alguna alerta de estafa; `false`: las que no."),
         _query("cursor", {"type": "string"}, "El `siguiente` de la página anterior."),
     ],
     ("get", "/v1/resumen"): [
