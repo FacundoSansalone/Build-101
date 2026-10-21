@@ -829,7 +829,7 @@ integrador: [`docs/INTEGRACION.md`](../docs/INTEGRACION.md#historial-y-explicaci
   compra). La purga (`AlmacenEstado.purgar`) la dispara un `GET` o `POST` a
   `/interno/purgar` con `Authorization: Bearer <secreto>`, solo en el oyente
   público: el secreto es `GATEWAY_PURGA_SECRETO` o, si no está, `CRON_SECRET`
-  (32 caracteres o más; con las dos, iguales). Sin secreto la ruta no existe.
+  (16 caracteres o más; con las dos, iguales). Sin secreto la ruta no existe; uno mal puesto la deja apagada, con el motivo en el log, sin tumbar el motor.
   No está bajo `/v1`: ninguna clave de API la usa. Responde
   `{"antes_de", "retencion_dias", "borradas": {tabla: n}}`.
 - **Migración `sql/005_historial.sql`:** solo índices (los filtros del
@@ -856,7 +856,7 @@ integrador: [`docs/INTEGRACION.md`](../docs/INTEGRACION.md#historial-y-explicaci
 | `GATEWAY_COMPRA_TTL_S` | `86400` | Vida de una compra de integrador |
 | `GATEWAY_CONSOLA` | `0` | `1`: la consola web (`/consola`, `proxy/consola/`) en los dos oyentes, sin clave (llama a `/v1` con la que pega el usuario). En Vercel está siempre prendida |
 | `GATEWAY_RETENCION_DIAS` | `90` | Días que se guardan las tablas `gw_*` (de 7 a 3650; más que `GATEWAY_COMPRA_TTL_S`). En Vercel, hasta 365 |
-| `GATEWAY_PURGA_SECRETO` | — | Secreto de `/interno/purgar` (32 caracteres o más, sin espacios). Sin él (ni `CRON_SECRET`), no hay purga |
+| `GATEWAY_PURGA_SECRETO` | — | Secreto de `/interno/purgar` (16 caracteres o más, sin espacios). Sin él (ni `CRON_SECRET`), o si no sirve, no hay purga (y el motor arranca igual) |
 | `CRON_SECRET` | — | El que Vercel manda en el `Authorization` de cada cron: vale como `GATEWAY_PURGA_SECRETO` si esa no está (si están las dos, iguales) |
 | `GATEWAY_LATIDO_S` | apagado | Latido de un pedido A2A retenido en `/a2a/m/{comercio}`: si la respuesta no está a los N segundos, sale `200` y un espacio cada N antes del JSON (en `message/stream`, un comentario `: latido`); un error final va como error JSON-RPC con `data.http_status`. Más de 0 y hasta 60; `0` u `off`, apagado. En Vercel, 15 (hasta 30; no se apaga) |
 | *(nombres libres)* | — | Secretos de webhook, los que nombra `secreto_env` |

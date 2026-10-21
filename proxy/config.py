@@ -47,7 +47,7 @@ RETENCION_MAXIMA_DIAS = 3650
 # La ruta de la purga (Vercel Cron) y su secreto (`GATEWAY_PURGA_SECRETO`, o
 # `CRON_SECRET`, el que Vercel manda en el `Authorization` de cada cron).
 RUTA_PURGA = "/interno/purgar"
-LARGO_MINIMO_SECRETO_PURGA = 32
+LARGO_MINIMO_SECRETO_PURGA = 16  # lo que pide Vercel para CRON_SECRET
 LARGO_MAXIMO_SECRETO_PURGA = 512
 
 
@@ -465,16 +465,22 @@ def _chequear_secreto_purga(secreto: Any, nombre: str) -> str:
 
 def _secreto_purga(env: Mapping[str, str]) -> str | None:
     """`GATEWAY_PURGA_SECRETO` o, si no está, `CRON_SECRET` (el de Vercel
-    Cron). Con las dos, tienen que ser iguales: si no, el cron no podría
-    purgar y nadie se enteraría."""
+    Cron). Con las dos, tienen que ser iguales.
+
+    Un secreto que no sirve (corto, con espacios, o las dos distintas) no
+    tumba el motor: la purga queda apagada (None) y el motivo va al log, sin
+    el secreto. La purga no decide nada de una compra."""
     propio = (env.get("GATEWAY_PURGA_SECRETO") or "").strip()
     cron = (env.get("CRON_SECRET") or "").strip()
-    if propio and cron and not hmac.compare_digest(propio.encode(), cron.encode()):
-        raise ValueError("GATEWAY_PURGA_SECRETO y CRON_SECRET tienen que ser iguales (o una sola)")
-    if propio:
-        return _chequear_secreto_purga(propio, "GATEWAY_PURGA_SECRETO")
-    if cron:
-        return _chequear_secreto_purga(cron, "CRON_SECRET")
+    try:
+        if propio and cron and not hmac.compare_digest(propio.encode(), cron.encode()):
+            raise ValueError("GATEWAY_PURGA_SECRETO y CRON_SECRET tienen que ser iguales (o una sola)")
+        if propio:
+            return _chequear_secreto_purga(propio, "GATEWAY_PURGA_SECRETO")
+        if cron:
+            return _chequear_secreto_purga(cron, "CRON_SECRET")
+    except ValueError as e:
+        logger.warning("La purga de la retención queda apagada: %s.", e)
     return None
 
 

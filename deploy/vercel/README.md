@@ -336,15 +336,17 @@ diaria: `vercel.json` tiene un cron (`"crons"`, todos los días a las 07:00
 UTC, lo que permite Hobby) que llama a `GET /interno/purgar`.
 
 - **El secreto:** Vercel manda `Authorization: Bearer $CRON_SECRET` en cada
-  cron. Generá uno (32 caracteres o más, sin espacios) y cargalo:
+  cron. Generá uno (16 caracteres o más, sin espacios; Vercel pide 16) y cargalo:
 
   ```sh
   $PY -c "import secrets; print(secrets.token_urlsafe(32))" | npx vercel env add CRON_SECRET production
   ```
 
   El motor lo acepta como `CRON_SECRET` o como `GATEWAY_PURGA_SECRETO` (si
-  están las dos, tienen que ser iguales; si no, no arranca). **Sin secreto la
-  ruta no existe** (404) y el cron no borra nada: no hay que apagarlo.
+  están las dos, tienen que ser iguales). **Sin secreto la ruta no existe**
+  (404) y el cron no borra nada: no hay que apagarlo. Un secreto mal puesto
+  (corto, con espacios, o los dos distintos) deja la purga apagada y lo dice
+  en el log, sin tumbar el motor.
 - **Quién puede:** solo ese secreto. La ruta no está bajo `/v1`: ninguna
   clave de API (completa ni de solo lectura) la usa (401), no está en la
   OpenAPI y en el oyente local de `python -m proxy` no existe.

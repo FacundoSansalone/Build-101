@@ -73,17 +73,26 @@ def test_el_secreto_de_la_purga(env, esperado):
 
 
 @pytest.mark.parametrize("env", [
-    {"GATEWAY_PURGA_SECRETO": "corto"},
-    {"CRON_SECRET": "x" * 31},
+    {"GATEWAY_PURGA_SECRETO": "corto-de-quince"},
+    {"CRON_SECRET": "x" * 15},
     {"GATEWAY_PURGA_SECRETO": "con espacio " + "x" * 40},
     {"GATEWAY_PURGA_SECRETO": "ñ" * 40},
     {"GATEWAY_PURGA_SECRETO": SECRETO, "CRON_SECRET": "t" * 40},
 ])
-def test_un_secreto_que_no_sirve_no_arranca(env):
-    with pytest.raises(ValueError) as error:
-        Config.desde_entorno(env)
+def test_un_secreto_que_no_sirve_deja_la_purga_apagada(env, caplog):
+    """Un secreto mal puesto no tumba el motor: la purga queda apagada y el
+    motivo va al log, sin el secreto."""
+    with caplog.at_level("WARNING", logger="proxy.config"):
+        config = Config.desde_entorno(env)
+    assert config.purga_secreto is None
+    assert "purga" in caplog.text
     for valor in env.values():
-        assert valor.strip() not in str(error.value) or len(valor.strip()) < 8
+        assert valor.strip() not in caplog.text
+
+
+def test_dieciseis_caracteres_alcanzan():
+    """Lo que pide Vercel para `CRON_SECRET`."""
+    assert Config.desde_entorno({"CRON_SECRET": "a" * 16}).purga_secreto == "a" * 16
 
 
 def test_el_secreto_no_sale_en_el_repr():
@@ -214,9 +223,20 @@ def test_en_vercel_la_retencion_tiene_tope(valor):
     assert "GATEWAY_RETENCION_DIAS" in app.motivo
 
 
-def test_en_vercel_un_secreto_corto_no_arranca():
-    app, _, _ = _app_vercel(CRON_SECRET="corto")
-    assert isinstance(app, vercel.AppNoConfigurada) and "corto" not in app.motivo
+async def test_en_vercel_un_secreto_corto_deja_la_purga_apagada():
+    app, _, url = _app_vercel(CRON_SECRET="corto")
+    assert not isinstance(app, vercel.AppNoConfigurada)
+    async with _cliente(app, url, Authorization="Bearer corto") as c:
+        assert (await c.get(RUTA_PURGA)).status_code == 404
+
+
+@pytest.mark.parametrize("secreto", ["", "x" * 15, None, 7])
+def test_la_ruta_de_la_purga_no_acepta_un_secreto_corto(almacen, secreto):
+    """Defensa en profundidad: aunque se la arme directo, sin la configuración."""
+    from proxy.retencion import ruta_purga
+
+    with pytest.raises(ValueError):
+        ruta_purga(almacen, secreto=secreto, retencion_dias=90)
 
 
 async def test_el_cron_de_vercel_purga_con_cron_secret():

@@ -9,8 +9,9 @@ webhooks) se guarda `GATEWAY_RETENCION_DIAS` días (90 por defecto; de 7 a
 La purga la dispara afuera un pedido a `RUTA_PURGA` (`GET` o `POST`: Vercel
 Cron llama con `GET`), solo en el oyente público y solo con
 `Authorization: Bearer <secreto>`. El secreto es `GATEWAY_PURGA_SECRETO` o,
-si no está, `CRON_SECRET` (el que Vercel manda solo en cada cron); de 32
-caracteres o más. Sin secreto la ruta no existe (404, como cualquier otra).
+si no está, `CRON_SECRET` (el que Vercel manda solo en cada cron); de 16
+caracteres o más. Sin secreto la ruta no existe (404, como cualquier otra);
+uno mal puesto la deja apagada, con el motivo en el log (el motor arranca).
 La ruta no está bajo `/v1`: ninguna clave de API (completa ni de solo
 lectura) la puede usar, y no aparece en la OpenAPI de los integradores.
 """
@@ -26,7 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from proxy.config import RUTA_PURGA
+from proxy.config import LARGO_MINIMO_SECRETO_PURGA, RUTA_PURGA
 from proxy.tipos_gateway import AlmacenEstado, ErrorAlmacen
 
 logger = logging.getLogger("proxy.retencion")
@@ -59,6 +60,9 @@ def ruta_purga(almacen: AlmacenEstado, *, secreto: str, retencion_dias: int) -> 
     y devuelve cuántas filas de cada tabla (`{"antes_de", "retencion_dias",
     "borradas"}`). 404 fuera del oyente público, 401 sin el secreto (en
     tiempo constante) y 503 si el almacén falla (la próxima sigue)."""
+    if not isinstance(secreto, str) or len(secreto) < LARGO_MINIMO_SECRETO_PURGA:
+        # Defensa en profundidad: la configuración ya lo valida.
+        raise ValueError(f"el secreto de la purga tiene que tener {LARGO_MINIMO_SECRETO_PURGA} caracteres o más")
     esperado = secreto.encode("utf-8")
 
     async def purgar(request: Request) -> Response:
