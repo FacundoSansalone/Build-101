@@ -68,6 +68,8 @@ MAX_LINEA = 200
 LINEA_PRINCIPIO = 50
 MAX_EVENTOS = 1000
 _RECIBO_RE = re.compile(r"rcb-[0-9a-f]{8,64}")
+# Un valor técnico (`basketball_shoes`): en los textos va con espacios.
+_ENUM_RE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)+")
 _KID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 
 # -- nombres ---------------------------------------------------------------------
@@ -225,6 +227,8 @@ def _valor(valor: Any) -> str | None:
             return _fecha(valor)
         if alertas.FECHA_HORA_RE.fullmatch(valor) or not valor.strip():
             return None
+        if _ENUM_RE.fullmatch(valor):
+            return valor.replace("_", " ")  # "lifestyle_sneakers" → "lifestyle sneakers"
         return valor
     if isinstance(valor, dict):
         if set(valor) == {"cantidad", "fecha"}:
@@ -249,15 +253,16 @@ def _valor(valor: Any) -> str | None:
 
 
 def _categoria(valor: Any) -> str | None:
-    """"Laptops, 328": el nombre del árbol (es nuestro) y el ID."""
+    """"Laptops": el nombre de la taxonomía de Google (el árbol del motor, es
+    nuestro); si no está en el árbol (o no hay árbol), el ID."""
     if not isinstance(valor, str) or not alertas.DIGITOS_RE.fullmatch(valor):
         return None
     arbol, _ = alertas._arbol()
     categoria = arbol.get(valor) if arbol is not None else None
     if categoria is None:
         return valor
-    nombre = "".join(c for c in categoria.nombre if c.isprintable())[:60]
-    return f"{nombre}, {valor}"
+    nombre = "".join(c for c in categoria.nombre if c.isprintable())[:60].strip()
+    return nombre or valor
 
 
 def _fuente(origen: Any) -> str:
@@ -401,6 +406,9 @@ def _texto_categoria(c: dict[str, Any]) -> str:
     if caso == "contradicho":
         return (f"El comercio declaró una categoría que no coincide con {fuente}: según esa fuente "
                 f"es {ofrecida} y pediste {pedida}.")
+    if pedida and ofrecida:
+        return (f"No pudimos ubicar la categoría del producto ({ofrecida}) respecto de la que "
+                f"pediste ({pedida}).")
     return "No pudimos verificar la categoría del producto."
 
 

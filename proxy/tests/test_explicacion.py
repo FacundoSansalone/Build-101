@@ -485,14 +485,14 @@ def test_categorias_con_el_nombre_del_arbol():
         pytest.skip("sin el árbol de la taxonomía")
     fuera = _texto([ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="328",
                        observado="4745", origen="catalogo_publico")], status="escalar")
-    assert ("El producto es de otra categoría (Tablet Computers, 4745) que la que pediste "
-            "(Laptops, 328), según el catálogo público.") in [c["texto"] for c in fuera["chequeos"]]
+    assert ("El producto es de otra categoría (Tablet Computers) que la que pediste "
+            "(Laptops), según el catálogo público.") in [c["texto"] for c in fuera["chequeos"]]
     general = _texto([ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="328",
                          observado="278", origen="catalogo_publico")], status="escalar")
     assert any("más general" in c["texto"] for c in general["chequeos"])
     dentro = _texto([ch("cumplimiento", "ok", "categoria_taxonomia", esperado="278",
                         observado="328", origen="fabricante")], status="aprobado")
-    assert ("El producto está dentro de la categoría que pediste (Laptops, 328), según el fabricante."
+    assert ("El producto está dentro de la categoría que pediste (Laptops), según el fabricante."
             in [c["texto"] for c in dentro["chequeos"]])
     solo = _texto([ch("cumplimiento", "aviso", "categoria_taxonomia", esperado="278",
                       observado="328", origen="declarado")], status="con_avisos")
@@ -770,3 +770,20 @@ def test_una_compra_cortada_de_antes_sin_corte_no_acusa():
     assert salida["alertas"] == [] and salida["intento_de_estafa"] is False
     assert salida["resumen"] == ("El filtro de seguridad cortó la conversación con el comercio "
                                  "y no se compró nada.")
+
+
+def test_los_valores_tecnicos_salen_legibles():
+    """Los enums `snake_case` van con espacios en los textos (en `esperado` y
+    `observado`, tal cual); una categoría que no está en el árbol, con su id."""
+    salida = _texto([
+        ch("cumplimiento", "bloquea", "categoria", esperado="basketball_shoes",
+           observado="lifestyle_sneakers", origen="catalogo_publico"),
+        ch("cumplimiento", "escalar", "categoria_taxonomia", esperado="999999",
+           observado="888888", origen="catalogo_publico"),
+    ])
+    textos = [c["texto"] for c in salida["chequeos"]]
+    assert ("La categoría no cumple lo que pediste: pediste basketball shoes y el catálogo "
+            "público indica lifestyle sneakers.") in textos
+    assert "lifestyle_sneakers" not in salida["resumen"]
+    assert "lifestyle sneakers" in salida["resumen"]
+    assert any("999999" in t for t in textos)
