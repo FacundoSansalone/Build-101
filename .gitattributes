@@ -1,3 +1,5 @@
 # Los scripts de bash con LF siempre: con CRLF, bash falla en Linux y en la VM de
 # Tenki (tenki.sh empaqueta los archivos tal cual están en el disco).
 *.sh text eol=lf
+# El Dockerfile de Railway también: una continuación de línea con CRLF rompe el RUN.
+Dockerfile text eol=lf

@@ -466,7 +466,10 @@ def bash() -> str:
     return encontrado
 
 
-@pytest.mark.parametrize("script", ["vercel/apuntar_vercel.sh", "vercel/tunel_demo.sh", "start_all.sh"])
+@pytest.mark.parametrize("script", [
+    "railway/arrancar.sh", "railway/apuntar_vercel.sh", "vercel/apuntar_vercel.sh",
+    "vercel/tunel_demo.sh", "start_all.sh",
+])
 def test_los_scripts_son_bash_valido_y_con_lf(bash, script):
     ruta = DEPLOY / script
     assert b"\r" not in ruta.read_bytes()
@@ -559,3 +562,440 @@ def test_tunel_demo_usa_el_mismo_apuntar_vercel():
     texto = (DEPLOY / "vercel" / "tunel_demo.sh").read_text(encoding="utf-8")
     assert "deploy/vercel/apuntar_vercel.sh" in texto
     assert "vercel env add" not in texto  # una sola copia de esa lógica
+
+
+# ---------------------------------------------------------------------------
+# .dockerignore (semántica de Docker)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PatronDocker:
+    regex: re.Pattern[str]
+    negado: bool
+    texto: str
+
+
+def _regex_docker(patron: str) -> re.Pattern[str]:
+    """Como `patternmatcher` de moby: `*` y `?` no cruzan `/`; `**` cruza
+    niveles (también ninguno); anclado a la raíz del contexto."""
+    salida = ["^"]
+    i, n = 0, len(patron)
+    while i < n:
+        c = patron[i]
+        if c == "*":
+            if patron.startswith("**", i):
+                i += 2
+                if i < n and patron[i] == "/":
+                    i += 1
+                salida.append(".*" if i >= n else "(?:.*/)?")
+                continue
+            salida.append("[^/]*")
+        elif c == "?":
+            salida.append("[^/]")
+        elif c == "\\" and i + 1 < n:
+            salida.append(re.escape(patron[i + 1]))
+            i += 2
+            continue
+        else:
+            salida.append(re.escape(c))
+        i += 1
+    return re.compile("".join(salida) + "$")
+
+
+def leer_dockerignore(texto: str) -> list[PatronDocker]:
+    """Como `ignorefile.ReadAll`: `#` en la columna 0 es comentario, se
+    recorta, `!` niega, y el patrón se limpia (`filepath.Clean`, sin la `/`
+    inicial)."""
+    patrones = []
+    for linea in texto.splitlines():
+        if linea.startswith("#"):
+            continue
+        linea = linea.strip()
+        if not linea:
+            continue
+        negado = linea.startswith("!")
+        if negado:
+            linea = linea[1:].strip()
+        assert "[" not in linea, "el emulador no soporta clases de caracteres"
+        limpio = posixpath.normpath(linea)
+        if len(limpio) > 1 and limpio.startswith("/"):
+            limpio = limpio[1:]
+        patrones.append(PatronDocker(_regex_docker(limpio), negado, linea))
+    return patrones
+
+
+class ExcluidosDocker:
+    """`MatchesOrParentMatches`: un patrón vale si coincide con la ruta o con
+    alguna de sus carpetas; gana el último que coincide."""
+
+    def __init__(self, patrones: list[PatronDocker]) -> None:
+        self.patrones = patrones
+
+    def excluido(self, ruta: str) -> bool:
+        partes = ruta.split("/")
+        padres = ["/".join(partes[:i]) for i in range(1, len(partes))]
+        excluido = False
+        for p in self.patrones:
+            if p.regex.match(ruta) or any(p.regex.match(d) for d in padres):
+                excluido = not p.negado
+        return excluido
+
+    def podar(self, carpeta: str) -> bool:
+        """¿Se puede no bajar a `carpeta`? Si está excluida y ninguna
+        negación puede volver a sumar algo de adentro."""
+        if not self.excluido(carpeta):
+            return False
+        partes = carpeta.split("/")
+        rutas = ["/".join(partes[:i]) for i in range(1, len(partes) + 1)]
+        ultimo = max(n for n, p in enumerate(self.patrones) if any(p.regex.match(r) for r in rutas))
+        for p in self.patrones[ultimo + 1:]:  # solo una negación posterior puede volver a sumar
+            if not p.negado:
+                continue
+            # Lo literal antes del primer comodín: si cae adentro de la
+            # carpeta (o la contiene), la negación puede sumar algo de ahí.
+            literal = re.split(r"[*?]", p.texto.lstrip("/"), maxsplit=1)[0]
+            if literal.startswith(carpeta + "/") or (carpeta + "/").startswith(literal):
+                return False
+        return True
+
+
+@lru_cache(maxsize=1)
+def _dockerignore() -> ExcluidosDocker:
+    return ExcluidosDocker(leer_dockerignore(DOCKERIGNORE.read_text(encoding="utf-8")))
+
+
+def entra(ruta: str) -> bool:
+    return not _dockerignore().excluido(ruta)
+
+
+@pytest.mark.parametrize(
+    ("reglas", "ruta", "excluido"),
+    [
+        (".env", ".env", True),
+        (".env", "world/.env", False),  # sin **/ no baja: no es .gitignore
+        ("**/.env", "world/ap2/.env", True),
+        ("**/.env", ".env", True),
+        ("**/.env.*", "proxy/.env.production", True),
+        ("results", "results/a.json", True),
+        ("results", "world/results/a.json", False),
+        ("/docs/", "docs/a.md", True),
+        ("**/.venv", "world/ap2/.venv/bin/python", True),
+        ("*\n!world", "world/run_world.sh", False),
+        ("*\n!world", "secretos.json", True),
+        ("*\n!world\n**/.temp-db", "world/ap2/.temp-db/clave.pem", True),
+        ("**/*.pem\n!world/certs/*.pem", "world/certs/a.pem", False),
+        ("**/*.pem\n!world/certs/*.pem", ".temp-db/a.pem", True),
+        ("# comentario\n  x.txt  ", "x.txt", True),
+    ],
+)
+def test_el_emulador_sigue_la_semantica_de_docker(reglas, ruta, excluido):
+    assert ExcluidosDocker(leer_dockerignore(reglas)).excluido(ruta) is excluido
+
+
+@pytest.mark.parametrize("ruta", [
+    ".env", ".env.local", ".env.example", "world/ap2/.env", "proxy/.env.production",
+    ".temp-db/guard_signing_key.pem", ".temp-db/guard_api_token", ".temp-db/deploy.env",
+    ".temp-db/vercel/TUNEL_PREFIJO.txt", ".temp-db/vercel/vercel.env",
+    ".temp-db/vercel/clave_integrador_demo.txt", "world/ap2/.temp-db/merchant_signing_key.pem",
+    "world/ap2/.temp-db/scenario.json", ".logs/proxy.log", ".logs/guard_events.jsonl",
+    "world/ap2/.logs/merchant_agent.log", "results/benchmark-20261017-185835-4f5d16.json",
+    "world/ap2/results/benchmark.json", ".venv/bin/python", "world/ap2/.venv/bin/python",
+    "world/ap2/.venv/Scripts/python.exe", "venv/lib/x.py", "world/ap2/venv/x.py",
+    ".vercel/project.json", ".git", ".git/HEAD", "world/ap2/.git/config",
+    "proxy/__pycache__/app.cpython-312.pyc", "world/ap2/code/samples/python/src/roles/__pycache__/x.pyc",
+    "guard_api_token", "proxy/guard_api_token", "proxy/clave.pem", "guard/firma.key",
+    # Cualquier archivo nuevo en la raíz (un volcado, un JSON de claves) no entra.
+    "secretos.json", "gateway_claves.json", "dump.sql", ".claude/settings.local.json", ".mcp.json",
+    "node_modules/x/index.js",
+])
+def test_dockerignore_deja_afuera_los_secretos_y_lo_local(ruta):
+    assert not entra(ruta), f"{ruta} entraría a la imagen"
+
+
+# Lo que usa el contenedor en runtime (start_all.sh, run_world.sh, el proxy,
+# el panel y el enrutador).
+CARPETAS_RUNTIME = ("contracts", "guard", "filtro", "intencion", "decisiones", "taxonomia",
+                    "fabricante", "proxy", "dashboard", "world", "deploy", "fixtures")
+
+
+@pytest.mark.parametrize("ruta", [
+    "deploy/start_all.sh", "deploy/railway/arrancar.sh", "deploy/vercel/tunel_router.py",
+    "world/run_world.sh", "world/ap2/pyproject.toml", "world/ap2/uv.lock", "world/ap2/README.md",
+    "world/ap2/code/samples/python/pyproject.toml", "world/ap2/code/samples/python/README.md",
+    # Los certificados públicos del sample (la raíz de confianza de las SD-JWT).
+    "world/ap2/code/samples/certs/issuer_cert_sdjwt.pem", "world/ap2/code/samples/certs/ds_cert_sdjwt.pem",
+    "proxy/__main__.py", "dashboard/server.py", "fixtures/public_catalog.json",
+    "taxonomia/datos/taxonomy-with-ids.en-US.subconjunto.txt",
+])
+def test_dockerignore_deja_lo_que_usa_el_contenedor(ruta):
+    assert (RAIZ / ruta).exists(), ruta
+    assert entra(ruta), f"{ruta} no entraría a la imagen"
+
+
+def _git_ls_files() -> list[str]:
+    try:
+        salida = subprocess.run(["git", "ls-files", "-z"], cwd=RAIZ, capture_output=True,
+                                check=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("git no está disponible")
+    return [r for r in salida.decode("utf-8").split("\0") if r]
+
+
+SECRETO = re.compile(r"(^|/)(\.env($|\.)|\.temp-db/|\.logs/|guard_api_token)|\.(pem|key|p12|pfx)$|_key", re.I)
+CERTS_DEL_SAMPLE = frozenset({
+    "world/ap2/code/samples/certs/issuer_cert_sdjwt.pem", "world/ap2/code/samples/certs/ds_cert_sdjwt.pem",
+})
+
+
+def test_entra_todo_el_codigo_de_runtime_de_git():
+    archivos = _git_ls_files()
+    faltan = [r for r in archivos if r.split("/")[0] in CARPETAS_RUNTIME and not entra(r)
+              and "__pycache__" not in r and not r.startswith("world/ap2/results/")]
+    assert not faltan, f"no entrarían a la imagen: {faltan[:20]}"
+
+
+def test_lo_que_entra_de_git_no_tiene_secretos():
+    entran = [r for r in _git_ls_files() if entra(r)]
+    assert any(r.startswith("proxy/") for r in entran)
+    con_secreto = [r for r in entran if SECRETO.search(r) and r not in CERTS_DEL_SAMPLE]
+    assert not con_secreto, f"entrarían archivos con forma de secreto: {con_secreto}"
+    assert not [r for r in entran if r.startswith("results/")]
+
+
+def test_lo_que_entra_desde_el_disco_no_tiene_secretos():
+    """El contexto del build es la carpeta tal cual (`railway up` y
+    `docker build`), con el `.env`, `.temp-db/` y `.logs/` que haya."""
+    entran: list[str] = []
+    for actual, dirs, archivos in os.walk(RAIZ):
+        base = Path(actual).relative_to(RAIZ).as_posix()
+        base = "" if base == "." else base + "/"
+        dirs[:] = [d for d in dirs if not _dockerignore().podar(base + d)]
+        entran += [base + a for a in archivos if entra(base + a)]
+    assert any(r.startswith("proxy/") for r in entran)
+    malos = [r for r in entran
+             if (SECRETO.search(r) and r not in CERTS_DEL_SAMPLE)
+             or re.search(r"(^|/)(\.venv|venv|__pycache__|\.vercel|\.git|results)(/|$)", r)]
+    assert not malos, f"entrarían a la imagen: {malos[:20]}"
+
+
+# ---------------------------------------------------------------------------
+# Dockerfile y railway.json (sin Docker ni Railway: lo que se puede fijar)
+# ---------------------------------------------------------------------------
+
+
+def _instrucciones_dockerfile() -> list[tuple[str, str]]:
+    """(INSTRUCCIÓN, resto) con las líneas continuadas unidas."""
+    texto = (RAILWAY / "Dockerfile").read_text(encoding="utf-8")
+    assert "\r" not in texto
+    unidas, actual = [], ""
+    for linea in texto.splitlines():
+        if not actual and (not linea.strip() or linea.lstrip().startswith("#")):
+            continue
+        if linea.rstrip().endswith("\\"):
+            actual += linea.rstrip()[:-1] + " "
+            continue
+        actual += linea
+        unidas.append(actual.strip())
+        actual = ""
+    return [(l.split(None, 1)[0].upper(), l.split(None, 1)[1] if " " in l else "") for l in unidas]
+
+
+def test_el_dockerfile_usa_python_y_uv_fijos_y_el_venv_de_world():
+    inst = _instrucciones_dockerfile()
+    froms = [r for i, r in inst if i == "FROM"]
+    assert froms and re.match(r"python:3\.12(\.\d+)?-slim", froms[0]), froms
+    copias = " ".join(r for i, r in inst if i == "COPY")
+    uv = re.search(r"--from=ghcr\.io/astral-sh/uv:(\S+)", copias)
+    assert uv and re.fullmatch(r"\d+\.\d+\.\d+", uv.group(1)), "uv con versión exacta"
+    runs = " ".join(r for i, r in inst if i == "RUN")
+    assert "uv sync --package ap2-samples" in runs  # como run_world.sh
+    paquetes = ["bash", "curl", "tini"]
+    # uv clona con el git del sistema las dependencias que vienen de un repo.
+    if "git+https://" in (RAIZ / "world" / "ap2" / "uv.lock").read_text(encoding="utf-8"):
+        paquetes.append("git")
+    for paquete in paquetes:
+        assert re.search(rf"apt-get install[^&]*\b{paquete}\b", runs), paquete
+    # Los .sh con LF aunque el contexto venga de un checkout con CRLF.
+    assert "sed -i 's/\\r$//'" in runs
+
+
+def test_el_dockerfile_corre_sin_root_y_sin_secretos_en_la_imagen():
+    inst = _instrucciones_dockerfile()
+    usuarios = [r.strip() for i, r in inst if i == "USER"]
+    assert usuarios and usuarios[-1] not in ("root", "0", "0:0")
+    ultimo_user = max(n for n, (i, _) in enumerate(inst) if i == "USER")
+    entrada = [n for n, (i, _) in enumerate(inst) if i in ("ENTRYPOINT", "CMD")]
+    assert entrada and min(entrada) > ultimo_user
+    assert any("arrancar.sh" in r for i, r in inst if i in ("ENTRYPOINT", "CMD"))
+    assert any("tini" in r for i, r in inst if i == "ENTRYPOINT")
+    declarados = " ".join(r for i, r in inst if i in ("ENV", "ARG"))
+    for secreto in ("GOOGLE_API_KEY", "DASHBOARD_ACCESS_TOKEN", "TUNEL_PREFIJO", "OPENAI_API_KEY"):
+        assert secreto not in declarados, f"{secreto} va en las variables de Railway, no en la imagen"
+    assert not [r for i, r in inst if i in ("COPY", "ADD") and re.search(r"\.env|\.temp-db", r)]
+
+
+def test_railway_json_build_salud_reinicio_y_una_sola_replica():
+    datos = json.loads((RAILWAY / "railway.json").read_text(encoding="utf-8"))
+    build, deploy = datos["build"], datos["deploy"]
+    assert build["builder"] == "DOCKERFILE"
+    assert build["dockerfilePath"] == "deploy/railway/Dockerfile"
+    assert (RAIZ / build["dockerfilePath"]).is_file()
+    assert deploy["healthcheckPath"] == _router().RUTA_SALUD
+    assert deploy["healthcheckTimeout"] >= 300  # ADK tarda en arrancar
+    assert deploy["restartPolicyType"] == "ON_FAILURE"
+    assert deploy.get("sleepApplication") is False  # siempre prendida
+    # El estado vive en memoria (sesiones de ADK, compras): una sola réplica.
+    regiones = deploy["multiRegionConfig"]
+    assert len(regiones) == 1 and next(iter(regiones.values())) == {"numReplicas": 1}
+    assert next(iter(regiones)).startswith("us-east")  # cerca de iad1 (Vercel)
+    assert "startCommand" not in deploy  # lo fija el Dockerfile
+
+
+# ---------------------------------------------------------------------------
+# el contenedor de Railway
+# ---------------------------------------------------------------------------
+
+
+
+CLAVE_PANEL = "clave-del-panel-de-prueba-0001"
+CLAVE_GEMINI = "AIza-clave-de-gemini-de-prueba"
+VALIDAS = {
+    "GOOGLE_API_KEY": CLAVE_GEMINI,
+    "DASHBOARD_ACCESS_TOKEN": CLAVE_PANEL,
+    "TUNEL_PREFIJO": PREFIJO,
+    "DASHBOARD_PUBLIC_ORIGINS": f"https://{PUBLICO}",
+}
+
+
+def test_arrancar_con_todo_valido_pasa_la_validacion(bash):
+    r = _correr(bash, "railway/arrancar.sh", "--solo-validar", entorno={**VALIDAS, "PORT": "8080"})
+    assert r.returncode == 0, r.stderr
+    for secreto in (CLAVE_PANEL, CLAVE_GEMINI, PREFIJO):
+        assert secreto not in r.stdout + r.stderr
+
+
+@pytest.mark.parametrize(("cambios", "nombre"), [
+    ({"GOOGLE_API_KEY": ""}, "GOOGLE_API_KEY"),
+    ({"DASHBOARD_ACCESS_TOKEN": "corta-123"}, "DASHBOARD_ACCESS_TOKEN"),
+    ({"DASHBOARD_ACCESS_TOKEN": "   "}, "DASHBOARD_ACCESS_TOKEN"),
+    ({"TUNEL_PREFIJO": "abc"}, "TUNEL_PREFIJO"),
+    ({"TUNEL_PREFIJO": "prefijo con espacios"}, "TUNEL_PREFIJO"),
+    ({"DASHBOARD_PUBLIC_ORIGINS": ""}, "DASHBOARD_PUBLIC_ORIGINS"),
+    ({"DASHBOARD_PUBLIC_ORIGINS": f"http://{PUBLICO}"}, "DASHBOARD_PUBLIC_ORIGINS"),
+    ({"DASHBOARD_PUBLIC_ORIGINS": f"https://{PUBLICO}/demo"}, "DASHBOARD_PUBLIC_ORIGINS"),
+    ({"PORT": "8020"}, "PORT"),
+    ({"PORT": "8001"}, "PORT"),
+    ({"PORT": "ochenta"}, "PORT"),
+    ({"DASHBOARD_EXTRA_HOSTS": "a b"}, "DASHBOARD_EXTRA_HOSTS"),
+    ({"ESCENARIO": "../x"}, "ESCENARIO"),
+])
+def test_arrancar_sin_lo_obligatorio_no_arranca_ni_muestra_secretos(bash, cambios, nombre):
+    r = _correr(bash, "railway/arrancar.sh", entorno={**VALIDAS, **cambios})
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert nombre in r.stderr
+    assert "start_all" not in r.stdout  # no arrancó nada
+    for secreto in (CLAVE_PANEL, CLAVE_GEMINI, PREFIJO, "corta-123", "prefijo con espacios"):
+        assert secreto not in r.stdout + r.stderr
+
+
+def test_arrancar_sin_nada_nombra_todas_las_obligatorias(bash):
+    r = _correr(bash, "railway/arrancar.sh", entorno={})
+    assert r.returncode == 2
+    for nombre in VALIDAS:
+        assert nombre in r.stderr
+
+
+def test_arrancar_levanta_la_demo_y_el_enrutador_con_respaldo_y_salud():
+    texto = (RAILWAY / "arrancar.sh").read_text(encoding="utf-8")
+    assert "deploy/start_all.sh" in texto
+    assert "deploy/vercel/tunel_router.py" in texto
+    for opcion in ("--resto http://127.0.0.1:8020", "--salud", '--host "${ENRUTADOR_HOST:-0.0.0.0}"'):
+        assert opcion in texto
+    assert "DASHBOARD_SOLO_LOOPBACK=1" in texto  # el panel, solo detrás del enrutador
+    assert "unset GATEWAY_CLAVES_ARCHIVO" in texto
+    # Si un proceso muere, el contenedor termina (Railway lo reinicia).
+    assert "wait -n" in texto
+
+
+def test_start_all_deja_el_panel_en_loopback_si_se_pide():
+    texto = (DEPLOY / "start_all.sh").read_text(encoding="utf-8")
+    assert 'DASHBOARD_SOLO_LOOPBACK:-0}" = 1' in texto
+    # Sin la variable, como antes (Tenki publica el :8020 directo).
+    assert "export DASHBOARD_HOST=0.0.0.0 DASHBOARD_ALLOW_REMOTE=1" in texto
+
+
+def test_apuntar_desde_railway_dice_listo_solo_si_salio_bien(bash, npx_falso):
+    bien = _correr(bash, "railway/apuntar_vercel.sh", "--sin-salud", PUBLICO, entorno=npx_falso)
+    assert bien.returncode == 0, (bien.stdout, bien.stderr)
+    assert "Listo" in bien.stdout
+    mal = _correr(bash, "railway/apuntar_vercel.sh", "--sin-salud", PUBLICO,
+                  entorno={**npx_falso, "NPX_FALLA": "deploy"})
+    assert mal.returncode != 0
+    assert "Listo" not in mal.stdout + mal.stderr
+
+
+CURL_FALSO = """#!/bin/bash
+# Contesta el status que piden CURL_SALUD y CURL_CATALOGO (sin red).
+for url in "$@"; do :; done
+printf '%s\\n' "$url" >> "$CURL_REGISTRO"
+case "$url" in
+  */salud) printf '%s' "${CURL_SALUD:-200}" ;;
+  */products) printf '%s' "${CURL_CATALOGO:-200}" ;;
+  *) printf '000'; exit 7 ;;
+esac
+"""
+
+
+def _con_curl_falso(bash: str, tmp_path: Path, entorno: dict[str, str], *args: str,
+                    **variables: str) -> subprocess.CompletedProcess[str]:
+    """railway/apuntar_vercel.sh con un curl falso adelante en el PATH (se pone
+    adentro de bash: el bash de Git pone su curl antes que el PATH heredado)."""
+    falsos = tmp_path / "falsos"
+    falsos.mkdir(exist_ok=True)
+    (falsos / "curl").write_bytes(CURL_FALSO.encode())
+    (falsos / "curl").chmod(0o755)
+    script = (DEPLOY / "railway" / "apuntar_vercel.sh").as_posix()
+    lanzador = ('d="$FALSOS"; command -v cygpath >/dev/null && d="$(cygpath -u "$d")"; '
+                'PATH="$d:$PATH" exec bash "$0" "$@"')
+    resultado = subprocess.run(
+        [bash, "-c", lanzador, script, *args], cwd=RAIZ, capture_output=True, timeout=60,
+        env={**os.environ, "PYTHONUTF8": "1", **entorno, **variables, "FALSOS": falsos.as_posix(),
+             "CURL_REGISTRO": (tmp_path / "curl.txt").as_posix()},
+    )
+    return subprocess.CompletedProcess(resultado.args, resultado.returncode,
+                                       resultado.stdout.decode("utf-8", "replace"),
+                                       resultado.stderr.decode("utf-8", "replace"))
+
+
+def test_apuntar_desde_railway_primero_comprueba_salud_y_prefijo(bash, npx_falso, tmp_path):
+    r = _con_curl_falso(bash, tmp_path, npx_falso, PUBLICO)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "Listo" in r.stdout
+    pedidos = (tmp_path / "curl.txt").read_text(encoding="utf-8").splitlines()
+    assert pedidos == [f"https://{PUBLICO}/salud", f"https://{PUBLICO}/{PREFIJO}/products"]
+    assert PREFIJO not in r.stdout + r.stderr
+    assert len(_registro(npx_falso)) == 2
+
+
+@pytest.mark.parametrize(("variables", "dice"), [
+    ({"CURL_SALUD": "503"}, "salud contestó 503"),
+    ({"CURL_CATALOGO": "401"}, "TUNEL_PREFIJO"),  # lo atendió el panel: otro prefijo
+    ({"CURL_CATALOGO": "502"}, "contestó 502"),
+])
+def test_apuntar_desde_railway_no_toca_vercel_si_la_demo_no_responde(bash, npx_falso, tmp_path,
+                                                                      variables, dice):
+    r = _con_curl_falso(bash, tmp_path, npx_falso, PUBLICO, **variables)
+    assert r.returncode != 0
+    assert dice in r.stderr
+    assert "Listo" not in r.stdout + r.stderr
+    assert PREFIJO not in r.stdout + r.stderr
+    assert _registro(npx_falso) == []
+
+
+@pytest.mark.parametrize("dominio", ["", "https://x.up.railway.app/ruta", "no es un dominio"])
+def test_apuntar_desde_railway_valida_el_dominio(bash, npx_falso, dominio):
+    r = _correr(bash, "railway/apuntar_vercel.sh", "--sin-salud", *([dominio] if dominio else []),
+                entorno=npx_falso)
+    assert r.returncode != 0
+    assert _registro(npx_falso) == []
