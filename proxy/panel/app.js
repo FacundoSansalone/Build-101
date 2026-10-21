@@ -41,6 +41,7 @@ const estado = {
   // Contadores: una respuesta de una sesión, una carga o un detalle viejos
   // se descarta.
   sesion: 0,
+  cargaResumen: 0,
   cargaLista: 0,
   cargaDetalle: 0,
   ultimaReiniciaba: true,
@@ -248,10 +249,12 @@ function pintarResumen(datos) {
 
 async function cargarResumen() {
   const sesion = estado.sesion;
+  const carga = ++estado.cargaResumen;
   $("#tarjetas").setAttribute("aria-busy", "true");
   estadoEn("#resumen-estado", "Cargando el resumen…", "espera");
   const r = await pedirApi("GET", `/v1/resumen${queryResumen(estado.ventana)}`);
-  if (sesion !== estado.sesion) return;
+  // Si cambiaron el período mientras tanto, esta respuesta es de otro.
+  if (sesion !== estado.sesion || carga !== estado.cargaResumen) return;
   $("#tarjetas").removeAttribute("aria-busy");
   if (r.status === 401) {
     salir(CLAVE_CAIDA);

@@ -157,6 +157,11 @@ test("icono: solo los de la lista, como SVG sin eventos", () => {
   assert.ok(svg.hijos.every((p) => p.tagName === "PATH" && p.namespaceURI === SVG_NS));
   // Uno desconocido cae en el guion (no se arma nada con el nombre).
   assert.deepEqual(v.icono("<x>").hijos.map((p) => p.getAttribute("d")), ICONOS.guion);
+  for (const raro of ["__proto__", "constructor", "toString", undefined]) {
+    assert.deepEqual(v.icono(raro).hijos.map((p) => p.getAttribute("d")), ICONOS.guion, String(raro));
+  }
+  // Un tono que no es de la lista queda neutro.
+  assert.equal(v.chip({ texto: "x", tono: "<b>", icono: "check" }).getAttribute("data-tono"), "neutro");
   assert.ok(Object.isFrozen(ICONOS));
 });
 

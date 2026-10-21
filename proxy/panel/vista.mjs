@@ -59,7 +59,7 @@ export function crearVista(doc) {
     svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("focusable", "false");
     svg.setAttribute("class", "icono");
-    for (const d of ICONOS[nombre] || ICONOS.guion) {
+    for (const d of Object.hasOwn(ICONOS, nombre) ? ICONOS[nombre] : ICONOS.guion) {
       const trazo = doc.createElementNS(SVG_NS, "path");
       trazo.setAttribute("d", d);
       svg.append(trazo);
