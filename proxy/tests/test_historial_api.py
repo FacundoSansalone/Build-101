@@ -417,3 +417,57 @@ async def test_el_listado_por_alerta_mira_mas_alla_de_una_pagina(config_gw):
     assert datos["siguiente"] is None
     assert nada == {"compras": [], "siguiente": None}
     await asyncio.sleep(0)
+
+
+# -- el tamaño: el listado sin el detalle y el peor caso de una compra ---------------
+
+
+async def test_el_listado_no_trae_el_detalle_de_los_chequeos(cliente, nucleo):
+    from proxy.tests.test_api_v1 import _foto
+
+    veredicto = {"status": "bloqueado", "cart_id": "cart_2", "chequeos": [],
+                 "chequeos_detalle": [{"tipo": "mandato", "resultado": "ok", "caso": "cumple"}],
+                 "alertas": ["no_cumple"], "monto": 10.0, "moneda": "USD"}
+    nucleo.foto = _foto(veredictos=(veredicto,))
+    listado = (await cliente.get("/v1/compras")).json()["compras"][0]
+    assert listado["veredictos"] and "chequeos_detalle" not in listado["veredictos"][0]
+    assert listado["veredictos"][0]["alertas"] == ["no_cumple"]
+    assert listado["alertas"] == ["no_cumple"]
+    # El GET de la compra (y los webhooks, que usan la misma vista) lo siguen trayendo.
+    una = (await cliente.get(f"/v1/compras/{COMPRA_ID}")).json()
+    assert una["veredictos"][0]["chequeos_detalle"] == veredicto["chequeos_detalle"]
+
+
+def _veredicto_pesado(n_chequeos: int):
+    from contracts import Chequeo, Veredicto
+
+    largo = ["Texto de cuarenta caracteres del catalog"[:40]] * 20
+    chequeos = [
+        Chequeo(tipo="cumplimiento", resultado="aviso", detalle="x" * 500,
+                campo=f"atributo:{'a' * 30}{i}", esperado=largo, observado=largo,
+                origen="catalogo_publico")
+        for i in range(n_chequeos)
+    ]
+    return Veredicto(status="bloqueado", cart_id_elegido="c" * 64, cart_id_recomendado=None,
+                     ranking=[], chequeos=chequeos, motivo="m" * 2000)
+
+
+@pytest.mark.parametrize("n_chequeos", [32, 150])
+def test_el_peor_caso_de_una_compra_entra_holgado(n_chequeos):
+    """20 veredictos (el máximo de la compra) con chequeos de los valores más
+    pesados que pasan la lista blanca: la compra entra holgada en el cuerpo de
+    un webhook (1 MB) y en la respuesta de Vercel (4,5 MB)."""
+    from proxy.alertas import PRESUPUESTO_DETALLE_BYTES
+    from proxy.estado import MAX_BYTES_CUERPO_WEBHOOK
+    from proxy.tests.test_api_v1 import _foto
+    from proxy.tipos_gateway import vista_veredicto
+    from proxy.vistas import vista_compra
+
+    vista = vista_veredicto(_veredicto_pesado(n_chequeos), contexto_id="c" * 200,
+                            ts=datetime.now(timezone.utc), evaluador="guard")
+    detalle = json.dumps(vista["chequeos_detalle"], ensure_ascii=False, separators=(",", ":"))
+    assert len(detalle.encode("utf-8")) <= PRESUPUESTO_DETALLE_BYTES
+    assert vista["alertas"] == []  # los avisos no alertan, aunque el detalle se recorte
+    compra = vista_compra(_foto(veredictos=tuple([vista] * 20)), a2a_url=None)
+    total = len(json.dumps(compra, ensure_ascii=False).encode("utf-8"))
+    assert total < MAX_BYTES_CUERPO_WEBHOOK / 2, total

@@ -518,7 +518,9 @@ van en ISO 8601 UTC. Los errores tienen siempre la misma forma:
 
 `chequeos_detalle`, `alertas`, `monto` y `moneda` son para explicar el
 veredicto (ver [Historial y explicación](#historial-y-explicación)); los
-campos de siempre no cambian.
+campos de siempre no cambian. El detalle de un veredicto pesa como mucho
+12 KB: si no entra, salen sin valor (`omitido: true`) los más pesados y, al
+final, quedan los chequeos más graves.
 
 **Qué nunca te mostramos:** el texto libre del comercio (descripciones,
 `item_label`, mensajes de sus tareas), el `checkout_jwt` ni los mandatos.
@@ -547,7 +549,9 @@ de siempre (`limite`, `estado`):
 
 La respuesta es `{"compras": [...], "siguiente": "<cursor>" | null}`, en
 orden `creada desc, id desc`, y cada compra suma `resultado`, `alertas` e
-`intento_de_estafa`. `siguiente: null` es que no hay más. Con `alerta` el
+`intento_de_estafa`. En el listado los veredictos vienen sin
+`chequeos_detalle` (para que la página no pese de más): el detalle está en
+`GET /v1/compras/{id}` y en la explicación. `siguiente: null` es que no hay más. Con `alerta` el
 gateway mira hasta 1000 compras por pedido: una página puede venir con menos
 y con `siguiente` (seguí pidiendo).
 

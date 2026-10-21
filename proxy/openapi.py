@@ -279,6 +279,8 @@ ESQUEMAS: dict[str, dict[str, Any]] = {
         },
     },
     "CompraListada": {
+        "description": "La `VistaCompra` con el resumen del historial. Sus veredictos vienen sin "
+        "`chequeos_detalle` (está en `GET /v1/compras/{id}` y en la explicación).",
         "allOf": [
             _ref("VistaCompra"),
             {

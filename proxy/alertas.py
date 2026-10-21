@@ -53,6 +53,7 @@ Sin I/O, sin entorno y sin reloj. El Guard se importa recién al usarlo
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Iterable
@@ -131,6 +132,10 @@ FECHA_HORA_RE = re.compile(
 CART_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")  # = a2a.cart_id_seguro
 UNIDAD_RE = re.compile(r"[^\s\x00-\x1f]{1,12}")
 MAX_ELEMENTOS = 20
+# El detalle de un veredicto, en JSON compacto: 20 veredictos (el máximo de la
+# compra) entran holgados en un webhook (1 MB) y en una respuesta de Vercel.
+PRESUPUESTO_DETALLE_BYTES = 12_000
+_GRAVEDAD = {"bloquea": 0, "escalar": 1, "aviso": 2, "ok": 3}
 
 # Los montos que el checkout firmado compara con lo evaluado.
 _MONTOS_CHECKOUT = frozenset({"total", "amount", "amount_cents"})
@@ -476,8 +481,45 @@ def _valores_cart_id(valor: Any) -> tuple[Any, bool]:
     return valor_saneado(valor, confiable=False)
 
 
+def _bytes(valor: Any) -> int:
+    return len(json.dumps(valor, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _omitir(item: dict[str, Any], tipos: tuple[type, ...]) -> None:
+    for clave in ("esperado", "observado"):
+        if item[clave] is not None and isinstance(item[clave], tipos):
+            item[clave] = None
+            item["omitido"] = True
+
+
+def _dentro_del_presupuesto(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """El detalle de un veredicto en `PRESUPUESTO_DETALLE_BYTES` como mucho: la
+    compra guarda hasta 20 veredictos y va entera en cada webhook (1 MB). Si
+    no entra, se sacan los valores más pesados (listas, después objetos,
+    después todos, con `omitido`) y, al final, los chequeos menos graves. Las
+    `alertas` no cambian: salen de los chequeos completos."""
+    if _bytes(items) <= PRESUPUESTO_DETALLE_BYTES:
+        return items
+    for tipos in ((list, tuple), (dict,), (str, int, float, bool)):
+        for item in items:
+            _omitir(item, tipos)
+        if _bytes(items) <= PRESUPUESTO_DETALLE_BYTES:
+            return items
+    orden = sorted(range(len(items)), key=lambda i: _GRAVEDAD.get(items[i]["resultado"], 9))
+    quedan: set[int] = set()
+    total = 2  # los corchetes
+    for i in orden:
+        peso = _bytes(items[i]) + 1
+        if total + peso > PRESUPUESTO_DETALLE_BYTES:
+            break
+        quedan.add(i)
+        total += peso
+    return [items[i] for i in sorted(quedan)]
+
+
 def chequeos_detalle(chequeos: Any) -> list[dict[str, Any]]:
-    """Los chequeos del veredicto, saneados y con su `caso` (sin `detalle`)."""
+    """Los chequeos del veredicto, saneados y con su `caso` (sin `detalle`),
+    en `PRESUPUESTO_DETALLE_BYTES` como mucho."""
     pares = _chequeos(chequeos)
     contradichos = _contradichos([c for c, _ in pares])
     salida: list[dict[str, Any]] = []
@@ -504,7 +546,7 @@ def chequeos_detalle(chequeos: Any) -> list[dict[str, Any]]:
         if (c.campo is not None and campo is None) or falta_e or falta_o:
             item["omitido"] = True
         salida.append(item)
-    return salida
+    return _dentro_del_presupuesto(salida)
 
 
 def alertas_de(chequeos: Any) -> list[str]:

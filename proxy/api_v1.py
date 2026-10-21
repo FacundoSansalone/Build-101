@@ -824,9 +824,17 @@ def rutas_v1(
 
     def vista_listada(foto: FotoCompra, ahora: datetime) -> dict[str, Any]:
         """La `VistaCompra` con lo del historial: `resultado`, `alertas` e
-        `intento_de_estafa` (de los veredictos guardados, sin eventos)."""
+        `intento_de_estafa` (de los veredictos guardados, sin eventos). Sin el
+        `chequeos_detalle` de los veredictos: 200 compras con 20 veredictos
+        cada una no entran en una respuesta (el detalle está en la compra y en
+        su explicación)."""
         datos = vista(foto)
-        return {**datos, **resumen_de(foto, datos, ahora)}
+        resumen = resumen_de(foto, datos, ahora)
+        datos["veredictos"] = [
+            {k: v for k, v in veredicto.items() if k != "chequeos_detalle"}
+            for veredicto in datos["veredictos"]
+        ]
+        return {**datos, **resumen}
 
     async def crear_compra(request: Request) -> Response:
         integrador = integrador_de(request)
