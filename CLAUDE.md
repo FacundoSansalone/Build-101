@@ -615,10 +615,16 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   (validada con `GET /v1/resumen`) y ve resumen, lista con filtros y "Cargar
   más", y el detalle con estafa, línea de tiempo, chequeos y la firma del
   recibo verificada en el navegador (`recibo.mjs`, extraído de la consola y
-  servido por las dos). Sin permisos propios ni `POST`; avisa si la clave es
-  completa con un `HEAD /v1/comercios` (403 `solo_lectura` vs 200). La API no
-  filtra por `resultado`: dos van como `estado` y el resto lo filtra el
-  navegador. Guía: `docs/INTEGRACION.md` §5.9.
+  servido por las dos). Sin permisos propios ni `POST`. Guía:
+  `docs/INTEGRACION.md` §5.9.
+  - **Lo que sumó a `/v1` (aditivo):** `GET /v1/clave` (integrador, `kid` y
+    `permisos`; en `RUTAS_LECTURA`): el panel avisa si la clave es completa;
+    en `GET /v1/compras`, los filtros `resultado` e `intento_de_estafa`
+    (`cortada_por_seguridad` y `vencida` van a la base como `estado`; el resto
+    se filtra en el gateway con el tope de escaneo de `alerta`) y `monto` y
+    `moneda` por compra (la regla de la explicación); y en la explicación,
+    `pedido`, `referencia`, `comercio`, `creada` y `tope`, así el detalle es
+    un solo pedido.
 
 Tests de las carpetas nuevas, desde la raíz:
 

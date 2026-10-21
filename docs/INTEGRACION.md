@@ -484,17 +484,17 @@ También tiene una pestaña para probar `/v1/filtrar`.
 empresa, no para tu agente: el historial de las compras que hicieron tus
 agentes con KaiAI, qué pidió cada uno, qué pasó, por qué aprobamos o
 frenamos cada compra y si el comercio intentó estafarlos. Lo mismo que
-`GET /v1/compras`, `GET /v1/compras/{id}/explicacion` y `GET /v1/resumen`
-([Historial y explicación](#historial-y-explicación)), en una página.
+`GET /v1/compras`, `GET /v1/compras/{id}/explicacion`, `GET /v1/resumen` y
+`GET /v1/clave` ([Historial y explicación](#historial-y-explicación)), en una
+página: todo lo filtra y lo calcula la API, el panel solo lo muestra.
 
 **Cómo entrar:** pegás tu [clave de solo lectura](#claves-de-solo-lectura)
 (`psg_…`, te la da el operador: `generar_secretos.py --clave-lectura`).
 Se valida con `GET /v1/resumen`; si no vale o está dada de baja, la página
 lo dice y no entra. Con una clave completa el panel funciona igual, pero
 muestra un aviso: conviene la de lectura, porque si alguien la copia solo
-puede mirar. Para saber cuál es, el panel manda un `HEAD /v1/comercios`,
-que no cambia nada (con la de lectura es 403 `solo_lectura`; con la
-completa, 200). El navegador anota ese 403 en su consola: es esperado.
+puede mirar. Para saber cuál es (y mostrar el nombre de tu empresa), el
+panel lee `GET /v1/clave`.
 
 **Qué muestra:**
 
@@ -502,20 +502,20 @@ completa, 200). El navegador anota ese 403 en su consola: es esperado.
   medianoche de tu hora local): compras, aprobadas, frenadas o retenidas,
   cortadas por seguridad, intentos de estafa y el monto frenado por moneda.
 - **La lista de compras**, la más nueva primero: fecha (en tu hora local),
-  pedido, tu `referencia`, comercio, monto (el del último checkout o, si no
-  hubo, el tope), resultado y alertas, con "Cargar más" (`siguiente`).
-  Filtros por resultado, por alerta y por referencia exacta. La API no filtra
-  por resultado: `cortada_por_seguridad` y `vencida` van como `estado`
-  (`bloqueada`, `vencida`) y el resto lo busca el navegador entre las
-  compras que va trayendo (hasta 5 páginas por clic).
+  pedido, tu `referencia`, comercio, monto (el `monto` del listado, el mismo
+  de la explicación; si no hubo checkout, el tope), resultado y alertas, con
+  "Cargar más" (`siguiente`). Filtros por resultado, por alerta (o "cualquier
+  intento de estafa", `intento_de_estafa=true`) y por referencia exacta: los
+  aplica la API.
 - **El detalle de cada compra** (`/panel#/compra/cmp-…`, un enlace que podés
   compartir con alguien que tenga la clave): el resumen en una frase; si hubo
   intento de estafa, de qué tipo (intentaron manipular a tu agente, datos
   falsos del comercio, precio distinto al publicado o checkout alterado;
   `no_cumple` y `sin_verificar` no son estafa y salen como aviso); la línea
   de tiempo; qué revisamos, chequeo por chequeo; y el recibo, con un botón que
-  verifica la firma ES256 en tu navegador contra `GET /v1/public-key` (el JWS
-  sale de `GET /v1/compras/{id}`).
+  verifica la firma ES256 en tu navegador contra `GET /v1/public-key`. El
+  detalle es un solo pedido (la explicación trae los datos de la compra); el
+  JWS sale de `GET /v1/compras/{id}`, que se pide solo al verificar.
 
 **Cómo cuida la clave y los datos** (como la consola): la clave queda en la
 memoria de la pestaña (o en `sessionStorage` si marcás "recordar en esta

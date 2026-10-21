@@ -818,12 +818,17 @@ integrador: [`docs/INTEGRACION.md`](../docs/INTEGRACION.md#historial-y-explicaci
 - **La explicación** (`explicacion.py`, funciones puras): resultado,
   alertas, intento de estafa, resumen, línea de tiempo y un texto por
   chequeo, con plantillas fijas.
-- **`/v1`**: `GET /v1/compras` con `desde`, `hasta`, `referencia`, `alerta`
-  y `cursor` (y en cada compra `resultado`, `alertas` e
-  `intento_de_estafa`); `GET /v1/compras/{id}/explicacion`; `GET
-  /v1/resumen`. Con varias instancias, los contextos y las aprobaciones de
-  la página salen en una consulta por tabla (`compra_id=in.(…)`), no dos por
-  compra.
+- **`/v1`**: `GET /v1/compras` con `desde`, `hasta`, `referencia`, `alerta`,
+  `resultado`, `intento_de_estafa` y `cursor` (y en cada compra `resultado`,
+  `alertas`, `intento_de_estafa`, `monto` y `moneda`);
+  `GET /v1/compras/{id}/explicacion` (con `pedido`, `referencia`, `comercio`,
+  `creada` y `tope`); `GET /v1/resumen`; `GET /v1/clave` (integrador, `kid` y
+  `permisos` de la clave). `resultado` va a la base como `estado` cuando
+  equivale (`cortada_por_seguridad`, `vencida`); el resto, `alerta` e
+  `intento_de_estafa` se filtran en el gateway al recorrer (hasta
+  `MAX_ESCANEO_LISTADO` compras por pedido). Con varias instancias, los
+  contextos y las aprobaciones de la página salen en una consulta por tabla
+  (`compra_id=in.(…)`), no dos por compra.
 - **Retención** (`retencion.py`): las tablas `gw_*` se guardan
   `GATEWAY_RETENCION_DIAS` días (90; de 7 a 3650, y más que la vida de una
   compra). La purga (`AlmacenEstado.purgar`) la dispara un `GET` o `POST` a

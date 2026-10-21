@@ -349,14 +349,14 @@ firma verificada en el navegador). Detalle para el integrador:
    Cargá el `GATEWAY_CLAVES_JSON` nuevo en Vercel y redesplegá (paso 3), y
    pasale a la empresa la clave de `.temp-db/vercel/clave_lectura_<integrador>.txt`
    por un canal seguro.
-2. Comprobá la página y que la clave sea de lectura (el `HEAD` es lo mismo que
-   usa el panel para avisar si entraron con una completa):
+2. Comprobá la página y que la clave sea de lectura (`GET /v1/clave` es lo
+   mismo que usa el panel para avisar si entraron con una completa):
 
    ```sh
    LECTURA=$(cat .temp-db/vercel/clave_lectura_<integrador>.txt)
    curl -s -o /dev/null -w '%{http_code}\n' "$GW/panel"                                         # 200
    curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $LECTURA" "$GW/v1/resumen"  # 200
-   curl -s -o /dev/null -w '%{http_code}\n' -I -H "Authorization: Bearer $LECTURA" "$GW/v1/comercios"  # 403
+   curl -s -H "Authorization: Bearer $LECTURA" "$GW/v1/clave"     # {"integrador": …, "kid": …, "permisos": ["lectura"]}
    ```
 
 Misma CSP que la consola (`default-src 'none'`, `connect-src 'self'`),
