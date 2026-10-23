@@ -29,8 +29,11 @@
 #                             uno de los de adentro
 #   ESCENARIO                 comportamiento del comercio al arrancar (general)
 #   DASHBOARD_EXTRA_HOSTS     Host extra, si el borde de Railway lo cambiara
-#   ENRUTADOR_HOST            interfaz del enrutador (0.0.0.0); solo para
-#                             probar en tu máquina
+#   ENRUTADOR_HOST            interfaz del enrutador (0.0.0.0); 127.0.0.1 en un
+#                             Codespace (lo reenvía GitHub) o para probar en tu
+#                             máquina
+#   KAIAI_PLATAFORMA          Railway (por defecto) o Codespace: solo cambia
+#                             los mensajes (deploy/codespaces/prender.sh)
 #   y las de deploy/README.md ("Variables"): DEMO_PAUSA_AUTO_S,
 #   FILTRO_SOLO_HEURISTICAS, OPENAI_API_KEY o TYPESAFE_API_KEY, SUPABASE_*…
 set -euo pipefail
@@ -43,6 +46,19 @@ case "${1:-}" in
   "") ;;
   --solo-validar) SOLO_VALIDAR=1 ;;
   *) echo "Uso: bash deploy/railway/arrancar.sh [--solo-validar]" >&2; exit 2 ;;
+esac
+
+PLATAFORMA="${KAIAI_PLATAFORMA:-Railway}"
+case "$PLATAFORMA" in
+  Railway)
+    DONDE_VARIABLES="estas variables del servicio (Railway → Variables)"
+    APUNTAR="bash deploy/railway/apuntar_vercel.sh"
+    AL_TERMINAR="apago todo para que Railway reinicie el contenedor" ;;
+  Codespace)
+    DONDE_VARIABLES="estos secretos de Codespaces (deploy/codespaces/README.md)"
+    APUNTAR="bash deploy/codespaces/apuntar_vercel.sh"
+    AL_TERMINAR="apago todo; volvé a prenderla con bash deploy/codespaces/prender.sh" ;;
+  *) echo "KAIAI_PLATAFORMA: Railway o Codespace." >&2; exit 2 ;;
 esac
 
 # Los puertos de adentro (start_all.sh): el enrutador no puede usar ninguno.
@@ -93,7 +109,7 @@ done
 if [ "$origen_malo" = 1 ]; then
   errores+=("DASHBOARD_PUBLIC_ORIGINS: cada origen tiene que ser https://dominio[:puerto], sin ruta.")
 elif [ -z "$ORIGEN" ]; then
-  errores+=("DASHBOARD_PUBLIC_ORIGINS: falta (https://<el dominio de Railway>, sin ruta).")
+  errores+=("DASHBOARD_PUBLIC_ORIGINS: falta (https://<el dominio público>, sin ruta).")
 fi
 
 PUERTO="$(recortar "${PORT:-8080}")"
@@ -117,7 +133,7 @@ if ! [[ "$ESCENARIO" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
 fi
 
 if [ "${#errores[@]}" -gt 0 ]; then
-  echo "KaiAI no arranca: revisá estas variables del servicio (Railway → Variables)." >&2
+  echo "KaiAI no arranca: revisá $DONDE_VARIABLES." >&2
   for e in "${errores[@]}"; do echo "  - $e" >&2; done
   exit 2
 fi
@@ -193,11 +209,11 @@ nombres+=("el enrutador")
 esperar "el enrutador :$PUERTO" "http://127.0.0.1:$PUERTO/salud" 60
 
 echo ""
-echo "KaiAI en Railway (comercio: $ESCENARIO)."
+echo "KaiAI en $PLATAFORMA (comercio: $ESCENARIO)."
 echo "  Comprar:  $ORIGEN/demo   (usuario cualquiera; la contraseña es DASHBOARD_ACCESS_TOKEN)"
 echo "  Panel:    $ORIGEN/"
 echo "  Motor:    el comercio está en $ORIGEN/<TUNEL_PREFIJO>/a2a/merchant_agent"
-echo "            (bash deploy/railway/apuntar_vercel.sh, desde tu máquina)"
+echo "            ($APUNTAR, desde tu máquina)"
 echo "  Salud:    $ORIGEN/salud"
 
 # Si un proceso termina, se apaga todo (el trap de EXIT) y el contenedor sale
@@ -206,7 +222,7 @@ codigo=0
 wait -n "${pids[@]}" || codigo=$?
 for j in "${!pids[@]}"; do
   if ! kill -0 "${pids[$j]}" 2>/dev/null; then
-    echo "${nombres[$j]} terminó (código $codigo): apago todo para que Railway reinicie el contenedor." >&2
+    echo "${nombres[$j]} terminó (código $codigo): $AL_TERMINAR." >&2
   fi
 done
 exit 1

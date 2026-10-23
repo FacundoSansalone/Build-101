@@ -678,6 +678,41 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
     caída de un proceso y `SIGTERM`), ~1 GB de RAM quieta. La imagen no se
     construyó todavía.
 
+- **Demo a pedido en GitHub Codespaces (2026-10-23, rama
+  `deploy/codespaces`, a revisar entre los tres).** Decidido con el usuario:
+  el producto es el motor (Vercel, siempre prendido); la simulación solo hace
+  falta para probar o mostrar, así que va a un Codespace gratis que se prende
+  a pedido. Railway gratis no alcanza (0,5 GB; la demo usa ~1 GB) y Tenki
+  quedó para la hackatón. Vercel Hobby sigue mientras sea para mostrar; con
+  clientes, se cambia. Guía: `deploy/codespaces/README.md`.
+  - **Mismo arranque que Railway:** `.devcontainer/devcontainer.json` (Python
+    3.12 sobre trixie, 2 núcleos y 8 GB) corre `instalar.sh` al crear.
+    `prender.sh` lanza `deploy/railway/arrancar.sh` en segundo plano con
+    `KAIAI_PLATAFORMA=Codespace` (solo cambia los mensajes),
+    `ENRUTADOR_HOST=127.0.0.1` y los orígenes
+    `https://<codespace>-8080.app.github.dev,https://localhost:8080`, y deja
+    público el 8080 con `gh` (adentro tiene permiso: probado).
+  - **Medido en un Codespace real (2026-10-23):**
+    - lo que deja corriendo el `postStartCommand`, GitHub lo mata al terminar
+      esa etapa, aun con `setsid` y `nohup`. Por eso el `postStartCommand`
+      (`prender.sh --avisar`) solo valida y avisa, y la demo la prende el
+      vigía de la feature local `.devcontainer/kaiai-arranque/`, que arranca
+      con el contenedor;
+    - el reenvío cambia el `Host` por `localhost:8080` y, solo si el
+      `Origin` es el del propio Codespace, lo cambia por
+      `https://localhost:8080`; los de otros sitios llegan tal cual. Por eso
+      el panel acepta los dos orígenes y la protección contra otros sitios
+      sigue.
+  - **La salida va a `.logs/codespaces.log`, nunca a la terminal:** lo que se
+    escribe en una terminal cuenta como uso y el Codespace no se apagaría. El
+    tráfico a la demo no cuenta: el tiempo sin uso va en 60 minutos o más.
+  - **Secretos de Codespaces del usuario, solo para este repo**
+    (`GOOGLE_API_KEY`, `DASHBOARD_ACCESS_TOKEN`, `TUNEL_PREFIJO`): los carga
+    `cargar_secretos.sh` por la entrada estándar de `gh`. El motor se apunta
+    una vez por Codespace con `deploy/codespaces/apuntar_vercel.sh`. Si el
+    8080 vuelve a privado (gh sin permiso adentro, o un reinicio),
+    `apuntar_vercel.sh --solo-publicar` lo arregla sin tocar Vercel.
+
 Tests de las carpetas nuevas, desde la raíz:
 
 ```sh

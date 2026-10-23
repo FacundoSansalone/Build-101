@@ -1,0 +1,7 @@
+{
+  "id": "kaiai-arranque",
+  "version": "1.0.0",
+  "name": "KaiAI: la demo prende con el Codespace",
+  "description": "Deja un vigía que corre con el contenedor (como el sshd de su feature) y prende la demo cuando el postStartCommand avisa. Lo que lanza el postStartCommand, GitHub lo mata al terminar esa etapa.",
+  "entrypoint": "/usr/local/share/kaiai-arranque/entrypoint.sh"
+}

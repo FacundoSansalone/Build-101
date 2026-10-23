@@ -13,8 +13,9 @@ para integradores externos. Solo con un archivo de claves: ver
 |---|---|
 | `start_all.sh [escenario]` | Levanta todo en esta máquina con el agente pasando por el proxy, espera a que responda y, si un proceso muere, apaga todo. Logs en `.logs/`. Escenario por defecto `general` (el comercio general: cualquier pedido, cualquier día). Funciona en Linux, macOS y Windows con Git Bash. |
 | `tenki.sh [escenario]` | Crea una VM en Tenki Sandbox, sube el código y el `.env`, instala dependencias, publica el :8020 (y el :8030 si hay archivo de claves) y corre `start_all.sh` adentro. |
+| `codespaces/` | La demo entera **a pedido y gratis** en un GitHub Codespace: lo prendés para probar y se apaga solo. Adentro, el mismo arranque que Railway. Ver [Codespaces](#github-codespaces-a-pedido-gratis). |
 | `railway/` | La demo entera **siempre prendida** en un servicio de Railway: un contenedor con `start_all.sh` adentro y el enrutador del túnel como única puerta (el comercio con prefijo secreto para el motor de Vercel, el resto al panel con contraseña). Ver [Railway](#railway-siempre-prendida). |
-| `vercel/` | El **motor solo** (gateway, filtro, intención y Guard) en Vercel, con el estado en Supabase; la simulación queda detrás de un túnel desde tu máquina o en Railway. Ver [Vercel](#vercel-solo-el-motor). |
+| `vercel/` | El **motor solo** (gateway, filtro, intención y Guard) en Vercel, con el estado en Supabase; la simulación queda detrás de un túnel desde tu máquina, en un Codespace o en Railway. Ver [Vercel](#vercel-solo-el-motor). |
 
 ## Local
 
@@ -93,6 +94,27 @@ prendida todo el tiempo. Se puede cambiar con `TENKI_CPU` y
 - Si el túnel le cambia el `Host` al panel. Si `/api/*` da 403
   `host_no_permitido`, agregá el host que aparece en
   `.logs/dashboard.log` con `DASHBOARD_EXTRA_HOSTS`.
+
+## GitHub Codespaces (a pedido, gratis)
+
+Para probar o mostrar KaiAI sin tu máquina y sin pagar: la demo entera en un
+**Codespace** de GitHub, que prendés cuando querés y se apaga solo después de
+un rato sin uso. Adentro corre el mismo arranque que Railway
+([`railway/arrancar.sh`](railway/arrancar.sh)), y GitHub publica el puerto
+8080 (el enrutador) en `https://<codespace>-8080.app.github.dev`: `/demo` con
+contraseña y el comercio con el prefijo secreto para el motor de Vercel.
+
+```sh
+gh auth login -s codespace                     # una vez
+bash deploy/codespaces/cargar_secretos.sh      # una vez: los 3 secretos, solo para este repo
+# Code → Codespaces → Create codespace on main (en github.com)
+bash deploy/codespaces/apuntar_vercel.sh       # una vez por Codespace: el motor de Vercel → el Codespace
+```
+
+El cupo gratis de una cuenta personal son 120 horas-núcleo por mes (unas 60
+horas prendido) y, con el límite de gasto en US$0, GitHub nunca cobra. El
+paso a paso (el tiempo sin uso, las URLs, los logs y qué hacer si algo
+falla) está en [`codespaces/README.md`](codespaces/README.md).
 
 ## Railway (siempre prendida)
 
