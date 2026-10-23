@@ -42,6 +42,21 @@ case "${1:-}" in
   *) echo "Uso: bash deploy/codespaces/prender.sh [--solo-validar]" >&2; exit 2 ;;
 esac
 
+# GitHub pone las variables del Codespace (CODESPACE_NAME, GITHUB_TOKEN, los
+# secretos…) en las sesiones del editor y de SSH, pero no en los procesos del
+# contenedor, como el vigía de .devcontainer/kaiai-arranque/. Las deja en
+# este archivo (CLAVE=valor, una por línea): se completan las que falten, sin
+# pisar las que ya vienen y sin pasarlas por ninguna línea de comandos.
+ENV_CODESPACE="${KAIAI_ENV_CODESPACE:-/workspaces/.codespaces/shared/.env}"
+if [ -r "$ENV_CODESPACE" ]; then
+  while IFS= read -r linea || [ -n "$linea" ]; do
+    linea="${linea%$'\r'}"
+    clave="${linea%%=*}"
+    [[ "$clave" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && [ "$clave" != "$linea" ] || continue
+    [ -n "${!clave:-}" ] || export "$clave=${linea#*=}"
+  done < "$ENV_CODESPACE"
+fi
+
 PUERTO=8080
 NOMBRE="${CODESPACE_NAME:-}"
 DOMINIO_GH="${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}"

@@ -159,9 +159,30 @@ def test_prender_valida_con_el_origen_del_codespace_sin_mostrar_secretos(bash):
         assert secreto not in r.stdout + r.stderr
 
 
+def test_prender_completa_lo_que_falta_desde_el_env_del_codespace(bash, tmp_path):
+    """El vigía corre sin las variables del Codespace: GitHub solo las pone en
+    las sesiones del editor y de SSH, y las deja en
+    /workspaces/.codespaces/shared/.env (medido en un Codespace real)."""
+    archivo = tmp_path / ".env"
+    lineas = [f"{k}={v}" for k, v in {**EN_CODESPACE, **SECRETOS}.items()]
+    archivo.write_bytes(("\r\n".join(["CODESPACES=true", "no es una línea", *lineas]) + "\r\n").encode())
+    r = _correr(bash, "codespaces/prender.sh", "--solo-validar",
+                entorno={"KAIAI_ENV_CODESPACE": archivo.as_posix()})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert f"{ORIGEN}/demo" in r.stdout
+    for secreto in SECRETOS.values():
+        assert secreto not in r.stdout + r.stderr
+    # Lo que ya viene en el entorno gana.
+    otro = _correr(bash, "codespaces/prender.sh", "--solo-validar",
+                   entorno={"KAIAI_ENV_CODESPACE": archivo.as_posix(), "CODESPACE_NAME": "otro-nombre-1"})
+    assert otro.returncode == 0, (otro.stdout, otro.stderr)
+    assert "https://otro-nombre-1-8080.app.github.dev/demo" in otro.stdout
+
+
 @pytest.mark.parametrize("falta", sorted(SECRETOS))
-def test_prender_sin_un_secreto_no_arranca_y_dice_como_cargarlo(bash, falta):
-    entorno = {**EN_CODESPACE, **SECRETOS, falta: ""}
+def test_prender_sin_un_secreto_no_arranca_y_dice_como_cargarlo(bash, tmp_path, falta):
+    sin_archivo = (tmp_path / "no-existe.env").as_posix()
+    entorno = {**EN_CODESPACE, **SECRETOS, falta: "", "KAIAI_ENV_CODESPACE": sin_archivo}
     r = _correr(bash, "codespaces/prender.sh", entorno=entorno)  # el modo de verdad
     assert r.returncode == 1, (r.stdout, r.stderr)
     assert falta in r.stderr
