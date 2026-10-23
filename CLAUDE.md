@@ -686,11 +686,23 @@ Paso 0 cerrado el 2026-10-17. Modelos en `contracts/models.py`.
   quedó para la hackatón. Vercel Hobby sigue mientras sea para mostrar; con
   clientes, se cambia. Guía: `deploy/codespaces/README.md`.
   - **Mismo arranque que Railway:** `.devcontainer/devcontainer.json` (Python
-    3.12 sobre trixie, 2 núcleos y 8 GB) corre `instalar.sh` al crear y
-    `prender.sh` al prender. `prender.sh` lanza `deploy/railway/arrancar.sh`
-    en segundo plano con `KAIAI_PLATAFORMA=Codespace` (solo cambia los
-    mensajes), `ENRUTADOR_HOST=127.0.0.1` y el origen
-    `https://<codespace>-8080.app.github.dev`, y deja público el 8080 con `gh`.
+    3.12 sobre trixie, 2 núcleos y 8 GB) corre `instalar.sh` al crear.
+    `prender.sh` lanza `deploy/railway/arrancar.sh` en segundo plano con
+    `KAIAI_PLATAFORMA=Codespace` (solo cambia los mensajes),
+    `ENRUTADOR_HOST=127.0.0.1` y los orígenes
+    `https://<codespace>-8080.app.github.dev,https://localhost:8080`, y deja
+    público el 8080 con `gh` (adentro tiene permiso: probado).
+  - **Medido en un Codespace real (2026-10-23):**
+    - lo que deja corriendo el `postStartCommand`, GitHub lo mata al terminar
+      esa etapa, aun con `setsid` y `nohup`. Por eso el `postStartCommand`
+      (`prender.sh --avisar`) solo valida y avisa, y la demo la prende el
+      vigía de la feature local `.devcontainer/kaiai-arranque/`, que arranca
+      con el contenedor;
+    - el reenvío cambia el `Host` por `localhost:8080` y, solo si el
+      `Origin` es el del propio Codespace, lo cambia por
+      `https://localhost:8080`; los de otros sitios llegan tal cual. Por eso
+      el panel acepta los dos orígenes y la protección contra otros sitios
+      sigue.
   - **La salida va a `.logs/codespaces.log`, nunca a la terminal:** lo que se
     escribe en una terminal cuenta como uso y el Codespace no se apagaría. El
     tráfico a la demo no cuenta: el tiempo sin uso va en 60 minutos o más.

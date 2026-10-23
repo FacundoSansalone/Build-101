@@ -1,9 +1,15 @@
 #!/bin/bash
-# postStartCommand del Codespace (.devcontainer/devcontainer.json): corre cada
-# vez que el Codespace prende. Levanta la demo entera con
+# La demo en el Codespace. Levanta la demo entera con
 # deploy/railway/arrancar.sh (el mismo arranque del contenedor de Railway:
 # start_all.sh y el enrutador como única puerta) en segundo plano, y deja
-# público el puerto 8080:
+# público el puerto 8080.
+#
+# Cada vez que el Codespace prende, el postStartCommand corre --avisar: valida
+# los secretos y le avisa al vigía de la feature kaiai-arranque
+# (.devcontainer/kaiai-arranque/), que corre con el contenedor y llama a este
+# script sin opciones. Lanzarla desde el postStartCommand no sirve: GitHub
+# mata lo que queda corriendo al terminar esa etapa.
+#
 #
 #   https://<codespace>-8080.app.github.dev/demo               → /demo (con contraseña)
 #   https://<codespace>-8080.app.github.dev/<TUNEL_PREFIJO>/…   → el comercio y el
@@ -12,8 +18,9 @@
 # La salida va a .logs/codespaces.log y no a la terminal: lo que se escribe en
 # una terminal cuenta como actividad, y el Codespace nunca se apagaría solo.
 #
-#   bash deploy/codespaces/prender.sh                 # lo corre el Codespace al prender; a
-#                                                     # mano, si ya anda, muestra las URLs
+#   bash deploy/codespaces/prender.sh                 # la prende (el vigía, o a mano); si
+#                                                     # ya anda, muestra las URLs
+#   bash deploy/codespaces/prender.sh --avisar        # el postStartCommand
 #   bash deploy/codespaces/prender.sh --solo-validar  # solo revisa los secretos
 #
 # Los secretos (GOOGLE_API_KEY, DASHBOARD_ACCESS_TOKEN, TUNEL_PREFIJO) son los
@@ -30,6 +37,7 @@ MODO=prender
 case "${1:-}" in
   "") ;;
   --solo-validar) MODO=validar ;;
+  --avisar) MODO=avisar ;;      # el postStartCommand: valida y le avisa al vigía
   --publicar) MODO=publicar ;;  # interno: lo lanza el modo prender en segundo plano
   *) echo "Uso: bash deploy/codespaces/prender.sh [--solo-validar]" >&2; exit 2 ;;
 esac
@@ -50,8 +58,13 @@ ORIGEN="https://$NOMBRE-$PUERTO.$DOMINIO_GH"
 # Lo que arrancar.sh necesita y en un Codespace no es un secreto. El
 # enrutador escucha solo en 127.0.0.1: el reenvío de puertos de GitHub llega
 # por ahí.
+#
+# El reenvío de GitHub cambia el Host por localhost:8080 y, solo si el Origin
+# es el del propio Codespace, lo cambia por https://localhost:8080. Los
+# Origin de otros sitios llegan tal cual (medido el 2026-10-23). Por eso el
+# panel acepta los dos orígenes como suyos, y el resto sigue afuera.
 export KAIAI_PLATAFORMA=Codespace PORT="$PUERTO" ENRUTADOR_HOST=127.0.0.1 \
-  DASHBOARD_PUBLIC_ORIGINS="$ORIGEN"
+  DASHBOARD_PUBLIC_ORIGINS="$ORIGEN,https://localhost:$PUERTO"
 
 LOG=.logs/codespaces.log
 PID=.temp-db/codespaces.pid
@@ -115,6 +128,24 @@ if ! bash deploy/railway/arrancar.sh --solo-validar; then
   exit 1
 fi
 [ "$MODO" = validar ] && exit 0
+
+if [ "$MODO" = avisar ]; then
+  # Lo que se lanzara desde acá, GitHub lo mataría al terminar el
+  # postStartCommand. Le avisa al vigía de la feature kaiai-arranque
+  # (.devcontainer/kaiai-arranque/), que corre con el contenedor y la prende
+  # con este mismo script.
+  mkdir -p .temp-db
+  touch .temp-db/codespaces.aviso
+  vigia="$(cat /tmp/kaiai-vigia.pid 2>/dev/null || true)"
+  if ! [[ "$vigia" =~ ^[0-9]+$ ]] || [ ! -d "/proc/$vigia" ]; then
+    echo "No encontré el vigía que prende la demo (la feature kaiai-arranque de .devcontainer/)." >&2
+    echo "Reconstruí el Codespace (Rebuild Container) o prendela a mano: bash deploy/codespaces/prender.sh" >&2
+    exit 1
+  fi
+  echo "La demo prende en segundo plano (uno o dos minutos). Seguila con: tail -f $LOG"
+  urls
+  exit 0
+fi
 
 mkdir -p .logs .temp-db
 # De a uno: el postStartCommand y alguien que lo corre a mano al mismo tiempo.

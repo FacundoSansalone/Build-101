@@ -38,6 +38,7 @@ RAIZ = Path(__file__).resolve().parents[2]
 DEPLOY = RAIZ / "deploy"
 CODESPACES = DEPLOY / "codespaces"
 DEVCONTAINER = RAIZ / ".devcontainer" / "devcontainer.json"
+FEATURE = RAIZ / ".devcontainer" / "kaiai-arranque"
 NOMBRE = "cuddly-space-umbrella-x7v9q4w5j3"
 ORIGEN = f"https://{NOMBRE}-8080.app.github.dev"
 REPO = "equipo/kaiai"
@@ -83,7 +84,7 @@ def test_devcontainer_declara_los_secretos_de_arrancar_sin_valores():
 def test_devcontainer_instala_al_crear_y_prende_en_cada_arranque():
     dc = _devcontainer()
     assert dc["postCreateCommand"] == "bash deploy/codespaces/instalar.sh"
-    assert dc["postStartCommand"] == "bash deploy/codespaces/prender.sh"
+    assert dc["postStartCommand"] == "bash deploy/codespaces/prender.sh --avisar"
     assert (CODESPACES / "instalar.sh").is_file()
     assert (CODESPACES / "prender.sh").is_file()
     # Python 3.12 sobre trixie, como el Dockerfile de Railway, con la versión
@@ -103,12 +104,43 @@ def test_instalar_usa_el_mismo_uv_que_el_dockerfile():
     assert "uv sync --package ap2-samples" in instalar
 
 
-@pytest.mark.parametrize("script", ["instalar.sh", "prender.sh", "cargar_secretos.sh",
-                                    "apuntar_vercel.sh"])
-def test_los_scripts_son_bash_valido_y_con_lf(bash, script):
-    ruta = CODESPACES / script
+@pytest.mark.parametrize("ruta", [
+    *(CODESPACES / s for s in ("instalar.sh", "prender.sh", "cargar_secretos.sh", "apuntar_vercel.sh")),
+    *(FEATURE / s for s in ("install.sh", "entrypoint.sh", "vigia.sh")),
+], ids=lambda r: f"{r.parent.name}/{r.name}")
+def test_los_scripts_son_bash_valido_y_con_lf(bash, ruta):
     assert b"\r" not in ruta.read_bytes()
     subprocess.run([bash, "-n", str(ruta)], check=True, timeout=30)
+
+
+def test_la_feature_deja_el_vigia_con_el_contenedor_y_prende_con_prender():
+    """Lo que lanza el postStartCommand, GitHub lo mata al terminar esa etapa
+    (medido en un Codespace real, aun con setsid y nohup): la demo la prende
+    un vigía que arranca con el contenedor, como el sshd de su feature."""
+    dc = _devcontainer()
+    assert "./kaiai-arranque" in dc["features"]
+    feature = json.loads((FEATURE / "devcontainer-feature.json").read_text(encoding="utf-8"))
+    assert feature["id"] == "kaiai-arranque"
+    install = (FEATURE / "install.sh").read_text(encoding="utf-8")
+    assert feature["entrypoint"] == "/usr/local/share/kaiai-arranque/entrypoint.sh"
+    assert "DIR=/usr/local/share/kaiai-arranque" in install
+    assert "cp entrypoint.sh vigia.sh" in install
+    entrypoint = (FEATURE / "entrypoint.sh").read_text(encoding="utf-8")
+    # No bloquea el arranque del contenedor: el vigía va en segundo plano.
+    assert 'nohup setsid sh "$DIR/vigia.sh" "$USUARIO" > /tmp/kaiai-vigia.log 2>&1 < /dev/null &' in entrypoint
+    assert entrypoint.rstrip().endswith('exec "$@"')
+    vigia = (FEATURE / "vigia.sh").read_text(encoding="utf-8")
+    assert "/workspaces/*/.temp-db/codespaces.aviso" in vigia
+    assert "echo \"$$\" > /tmp/kaiai-vigia.pid" in vigia
+    # Como el usuario del Codespace, con su HOME (ahí está uv) y shell de login
+    # (CODESPACE_NAME, GITHUB_TOKEN y los secretos de este arranque).
+    assert 'runuser -u "$USUARIO" -- env HOME=' in vigia
+    assert "bash -lc \"cd '$raiz' && bash deploy/codespaces/prender.sh\"" in vigia
+    # Un aviso de antes de este arranque no cuenta.
+    assert '[ "$cuando" -lt "$inicio" ]' in vigia
+    prender = (CODESPACES / "prender.sh").read_text(encoding="utf-8")
+    assert "touch .temp-db/codespaces.aviso" in prender
+    assert "/tmp/kaiai-vigia.pid" in prender
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +190,31 @@ def test_prender_lanza_arrancar_en_segundo_plano_con_la_salida_en_el_log():
     assert 'setsid nohup bash deploy/railway/arrancar.sh >> "$LOG" 2>&1 < /dev/null 9>&- &' in texto
     assert "LOG=.logs/codespaces.log" in texto
     for opcion in ("KAIAI_PLATAFORMA=Codespace", "ENRUTADOR_HOST=127.0.0.1", 'PORT="$PUERTO"',
-                   'DASHBOARD_PUBLIC_ORIGINS="$ORIGEN"'):
+                   'DASHBOARD_PUBLIC_ORIGINS="$ORIGEN,https://localhost:$PUERTO"'):
         assert opcion in texto
     assert 'gh codespace ports visibility "$PUERTO:public" -c "$NOMBRE"' in texto
+
+
+def test_el_panel_acepta_lo_que_reescribe_github_y_nada_mas(tmp_path):
+    """GitHub manda `Host: localhost:8080` y, si el Origin es el del propio
+    Codespace, `Origin: https://localhost:8080`; los de otros sitios llegan tal
+    cual (medido en un Codespace real). Con los orígenes de prender.sh el
+    panel acepta eso y sigue rechazando otros sitios."""
+    from dashboard.server import origenes_publicos
+    from dashboard.tests.test_dominio_publico import ESCENARIO, _cliente, _post
+
+    origenes = origenes_publicos(f"{ORIGEN},https://localhost:8080")
+    c = _cliente(tmp_path, "https://localhost:8080", origenes_publicos=origenes)
+    assert c.get("/api/demo/escenarios").status_code == 200
+    propio = _post(c, ESCENARIO, {"escenario": "B"}, "https://localhost:8080",
+                   **{"Sec-Fetch-Site": "same-origin"})
+    assert propio.status_code != 403
+    for ajeno in ("https://evil.example", "https://otro-8080.app.github.dev", "null"):
+        r = _post(c, ESCENARIO, {"escenario": "B"}, ajeno)
+        assert r.status_code == 403, ajeno
+        assert r.json()["error"] == "origen_no_permitido"
+    otro_host = _cliente(tmp_path, "https://evil.example", origenes_publicos=origenes)
+    assert otro_host.get("/api/demo/escenarios").json()["error"] == "host_no_permitido"
 
 
 def test_arrancar_en_un_codespace_habla_de_sus_secretos_y_no_de_railway(bash):

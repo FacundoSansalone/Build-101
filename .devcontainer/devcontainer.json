@@ -3,7 +3,8 @@
   "image": "mcr.microsoft.com/devcontainers/python:3-3.12-trixie",
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/sshd:1": {}
+    "ghcr.io/devcontainers/features/sshd:1": {},
+    "./kaiai-arranque": {}
   },
   "hostRequirements": {
     "cpus": 2,
@@ -18,7 +19,7 @@
     "UV_LINK_MODE": "copy"
   },
   "postCreateCommand": "bash deploy/codespaces/instalar.sh",
-  "postStartCommand": "bash deploy/codespaces/prender.sh",
+  "postStartCommand": "bash deploy/codespaces/prender.sh --avisar",
   "forwardPorts": [8080],
   "portsAttributes": {
     "8080": {

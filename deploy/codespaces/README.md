@@ -27,6 +27,7 @@ adentro, solo en 127.0.0.1: :8000 ADK · :8002 credenciales · :8003 pagos · :8
 | [`../../.devcontainer/devcontainer.json`](../../.devcontainer/devcontainer.json) | La definición del Codespace: Python 3.12 (Debian trixie, como Railway), 2 núcleos y 8 GB, solo el puerto 8080, los tres secretos que pide y los scripts de abajo |
 | [`instalar.sh`](instalar.sh) | Al **crear** el Codespace (una vez): uv con la misma versión que el Dockerfile de Railway y el venv de `world/ap2` |
 | [`prender.sh`](prender.sh) | Cada vez que **prende**: valida los secretos, levanta la demo en segundo plano (log en `.logs/codespaces.log`) y deja público el 8080. A mano, si ya anda, muestra las URLs |
+| [`../../.devcontainer/kaiai-arranque/`](../../.devcontainer/kaiai-arranque/) | Una feature local con un vigía que arranca con el contenedor (como el `sshd` de su feature). El `postStartCommand` (`prender.sh --avisar`) valida y le avisa, y el vigía corre `prender.sh`. Hace falta porque lo que deja corriendo el `postStartCommand`, GitHub lo mata al terminar esa etapa (lo medimos: aun con `setsid` y `nohup`) |
 | [`cargar_secretos.sh`](cargar_secretos.sh) | Desde tu máquina, una vez: carga los tres secretos en GitHub |
 | [`apuntar_vercel.sh`](apuntar_vercel.sh) | Desde tu máquina, una vez por Codespace: apunta el motor de Vercel al comercio del Codespace. Con `--solo-publicar`, solo deja público el 8080 y comprueba la demo |
 
@@ -136,8 +137,9 @@ mes siguiente.
 
 ## Logs
 
-- En el Codespace: `tail -f .logs/codespaces.log` (el arranque) y
-  `.logs/*.log` (cada proceso, como en `start_all.sh`).
+- En el Codespace: `tail -f .logs/codespaces.log` (el arranque),
+  `.logs/*.log` (cada proceso, como en `start_all.sh`) y
+  `/tmp/kaiai-vigia.log` (el vigía: cuándo recibió el aviso).
 - Desde tu máquina: `gh codespace ssh -c <nombre> -- tail -n 40 .logs/codespaces.log`.
 
 La demo escribe en archivos y no en la terminal: lo que se escribe en una
@@ -164,6 +166,14 @@ terminal cuenta como uso, y el Codespace nunca se apagaría solo.
   el Codespace: pestaña **Puertos** → clic derecho en el 8080 → **Port
   Visibility → Public**. Mientras esté privado, las compras por el motor se
   bloquean (falla cerrado).
+- **"No encontré el vigía que prende la demo"**: el contenedor es de antes de
+  la feature `kaiai-arranque`. **Rebuild Container** (paleta de comandos) o
+  `gh codespace rebuild -c <nombre>`. Mientras tanto,
+  `bash deploy/codespaces/prender.sh` en la terminal la prende igual.
 - **La demo se cayó** (un proceso terminó y `arrancar.sh` apagó todo): en la
   terminal del Codespace, `bash deploy/codespaces/prender.sh`.
+- **El panel contesta 403 `host_no_permitido`:** el reenvío de GitHub cambia
+  el `Host` por `localhost:8080` y el `Origin` propio por
+  `https://localhost:8080`. `prender.sh` ya suma ese origen; si GitHub
+  cambiara la forma, se ajusta ahí.
 - **`/demo` es una sola conversación compartida**, como en Railway y Tenki.
