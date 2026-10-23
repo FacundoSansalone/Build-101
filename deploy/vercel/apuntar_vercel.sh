@@ -9,8 +9,9 @@
 # 2. La carga en Vercel (vercel env add … production --force).
 # 3. Redespliega producción (vercel deploy --prod) y espera a que quede listo.
 #
-# Lo usan tunel_demo.sh (cada túnel nuevo) y deploy/railway/apuntar_vercel.sh
-# (el comercio fijo en Railway). Si un paso falla, muestra el error y sale con
+# Lo usan tunel_demo.sh (cada túnel nuevo), deploy/railway/apuntar_vercel.sh
+# (el comercio fijo en Railway) y deploy/codespaces/apuntar_vercel.sh (el
+# comercio en un Codespace). Si un paso falla, muestra el error y sale con
 # 1 sin seguir: Vercel queda como estaba (o con la variable nueva y el deploy
 # anterior, si falló el redeploy). No imprime secretos.
 #

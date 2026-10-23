@@ -1,0 +1,48 @@
+{
+  "name": "KaiAI (demo a pedido)",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.12-trixie",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/sshd:1": {}
+  },
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "8gb"
+  },
+  "containerEnv": {
+    "PYTHONUTF8": "1",
+    "PYTHONUNBUFFERED": "1",
+    "UV_PYTHON": "/usr/local/bin/python3.12",
+    "UV_PYTHON_DOWNLOADS": "never",
+    "UV_FROZEN": "1",
+    "UV_LINK_MODE": "copy"
+  },
+  "postCreateCommand": "bash deploy/codespaces/instalar.sh",
+  "postStartCommand": "bash deploy/codespaces/prender.sh",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "KaiAI: /demo y el comercio del motor",
+      "onAutoForward": "silent"
+    }
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "ignore"
+  },
+  "secrets": {
+    "GOOGLE_API_KEY": {
+      "description": "La clave de Gemini (la del .env): los agentes del sample y la intención."
+    },
+    "DASHBOARD_ACCESS_TOKEN": {
+      "description": "La contraseña de /demo (HTTP Basic, usuario cualquiera), de 16 caracteres o más."
+    },
+    "TUNEL_PREFIJO": {
+      "description": "El prefijo secreto de ruta: el de .temp-db/vercel/TUNEL_PREFIJO.txt, el mismo que usa el motor de Vercel."
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["deploy/codespaces/README.md"]
+    }
+  }
+}
